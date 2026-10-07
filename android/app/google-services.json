@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "82967236601",
+    "project_id": "synq-chat-de4c1",
+    "storage_bucket": "synq-chat-de4c1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:82967236601:android:e13b29760b86506652f728",
+        "android_client_info": {
+          "package_name": "com.shis.securecalc"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCc8g0GR0g1P8RzORFkoJgc993Tyx0yjGo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
