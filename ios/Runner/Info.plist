@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Securecalc</string>
+	<string>Calculator</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,6 +26,23 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+
+	<!-- Required Active Privacy Permissions -->
+	<key>NSCameraUsageDescription</key>
+	<string>This app requires camera access to capture photos and videos for your private vault storage and profile avatar.</string>
+
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app requires access to your photo library to select photos, videos, and media files to send in encrypted chats or store in your vault.</string>
+
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>This app requires permission to save photos and videos from encrypted messages and your vault to your photo library.</string>
+
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app requires microphone access to record voice messages in chat conversations.</string>
+
+	<key>NSMotionUsageDescription</key>
+	<string>This app uses motion sensors to detect shake gestures to trigger emergency panic mode and quickly lock your vault.</string>
+
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

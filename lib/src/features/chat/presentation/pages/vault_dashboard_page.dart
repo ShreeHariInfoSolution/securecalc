@@ -11,6 +11,22 @@ import '../../domain/services/local_chat_storage.dart';
 import '../widgets/vault_action_card.dart';
 import '../widgets/vault_dashboard_header.dart';
 import '../widgets/vault_security_status_card.dart';
+import 'package:upgrader/upgrader.dart';
+
+class _CustomUpgraderMessages extends UpgraderMessages {
+  @override
+  String get title => 'Update Available';
+
+  @override
+  String get body => 'New feature and bug fixes you can update anytime.';
+  
+  @override
+  String get prompt => 'Would you like to update now?';
+
+  @override
+  String get buttonTitleUpdate => 'Update Now';
+}
+
 
 class VaultDashboardPage extends StatefulWidget {
   final VoidCallback onOpenChat;
@@ -100,6 +116,18 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
                           isDuressMode: widget.isDuressMode,
                           onOpenSettings: widget.onOpenSettings,
                         ),
+                        if (!widget.isDuressMode) ...[
+                          const SizedBox(height: 16),
+                          UpgradeCard(
+                            margin: EdgeInsets.zero,
+                            showIgnore: false,
+                            showLater: false,
+                            showReleaseNotes: false,
+                            upgrader: Upgrader(
+                              messages: _CustomUpgraderMessages(),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 28),
                         const Text(
                           'MAIN VAULT UTILITIES',

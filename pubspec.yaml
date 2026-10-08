@@ -2,7 +2,7 @@ name: securecalc
 description: "A secure and private calculator application."
 publish_to: 'none'
 
-version: 1.0.1+2
+version: 1.0.2+3
 
 environment:
   sdk: '>=3.13.2 <4.0.0'
@@ -30,6 +30,8 @@ dependencies:
   encrypt: ^5.0.3
   share_plus: ^13.3.0
   fluttertoast: ^10.0.0
+  upgrader: ^13.7.0
+  package_info_plus: ^10.2.2
 
 dev_dependencies:
   flutter_test:
