@@ -1,6 +1,7 @@
 
 import 'dart:convert';
 import '../services/e2e_crypto_service.dart';
+import '../services/server_api_service.dart';
 
 /// The API stores `chat_react` as JSON text and may return a quoted JSON
 /// string (for example, `"\"👍\""`). Convert it back to the emoji for UI.
@@ -318,3 +319,292 @@ class AuthResponseModel {
     );
   }
 }
+
+/// Represents an uploaded file item in the Private Vault Storage.
+class UploadItemModel {
+  final int id;
+  final String filePath;
+  final String folder;
+  final String fileName;
+  final String fileType;
+  final int fileSize;
+  final String createdAt;
+  final String url;
+
+  UploadItemModel({
+    required this.id,
+    required this.filePath,
+    required this.folder,
+    required this.fileName,
+    required this.fileType,
+    required this.fileSize,
+    required this.createdAt,
+    required this.url,
+  });
+
+  factory UploadItemModel.fromJson(Map<String, dynamic> json) {
+    return UploadItemModel(
+      id: json['id'] is int
+          ? json['id'] as int
+          : int.tryParse(json['id']?.toString() ?? '0') ?? 0,
+      filePath: (json['file_path'] ?? json['filePath'] ?? json['path'])?.toString() ?? '',
+      folder: json['folder']?.toString() ?? '',
+      fileName: (json['file_name'] ?? json['fileName'] ?? json['name'])?.toString() ?? 'File',
+      fileType: (json['file_type'] ?? json['fileType'] ?? json['type'])?.toString() ?? 'application/octet-stream',
+      fileSize: json['file_size'] is int
+          ? json['file_size'] as int
+          : json['fileSize'] is int
+              ? json['fileSize'] as int
+              : json['size'] is int
+                  ? json['size'] as int
+                  : int.tryParse((json['file_size'] ?? json['fileSize'] ?? json['size'])?.toString() ?? '0') ?? 0,
+      createdAt: (json['created_at'] ?? json['createdAt'])?.toString() ?? '',
+      url: (json['url'] ?? json['path'] ?? json['file_path'])?.toString() ?? '',
+    );
+  }
+
+  /// Construct full absolute media URL
+  String get fullUrl {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    final apiBase = ServerApiService.baseUrl.replaceFirst(RegExp(r'/+$'), '');
+    final origin = apiBase.replaceFirst(RegExp(r'/api$'), '');
+
+    if (url.isNotEmpty && url.contains('/')) {
+      if (url.startsWith('/')) {
+        return '$origin$url';
+      }
+      return '$origin/$url';
+    }
+
+    final targetPath = filePath.isNotEmpty ? filePath : url;
+    if (targetPath.isNotEmpty) {
+      final clean = targetPath.replaceFirst(RegExp(r'^/+'), '');
+      if (clean.startsWith('api/files/')) {
+        return '$origin/$clean';
+      }
+      if (clean.startsWith('files/')) {
+        return '$apiBase/$clean';
+      }
+      return '$apiBase/files/$clean';
+    }
+
+    return '';
+  }
+
+  String get formattedSize {
+    if (fileSize <= 0) return '0 B';
+    const suffixes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var i = (fileSize.toString().length - 1) ~/ 3;
+    if (i >= suffixes.length) i = suffixes.length - 1;
+    final value = fileSize / (1 << (i * 10));
+    return '${value.toStringAsFixed(value < 10 && i > 0 ? 1 : 0)} ${suffixes[i]}';
+  }
+
+  String get formattedDate {
+    if (createdAt.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(createdAt).toLocal();
+      final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return '${months[dt.month - 1]} ${dt.day}, ${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return createdAt;
+    }
+  }
+
+  bool get isImage {
+    final f = folder.toLowerCase();
+    if (f == 'image' || f == 'images') return true;
+    final lowerType = fileType.toLowerCase();
+    if (lowerType.startsWith('image/')) return true;
+    final ext = fileName.split('.').last.toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp', 'svg'].contains(ext);
+  }
+
+  bool get isVideo {
+    final f = folder.toLowerCase();
+    if (f == 'video' || f == 'videos') return true;
+    final lowerType = fileType.toLowerCase();
+    if (lowerType.startsWith('video/')) return true;
+    final ext = fileName.split('.').last.toLowerCase();
+    return ['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', '3gp', 'flv'].contains(ext);
+  }
+
+  bool get isAudio {
+    final f = folder.toLowerCase();
+    if (f == 'audio' || f == 'audios' || f == 'music' || f == 'sound' || f == 'voice') return true;
+    final lowerType = fileType.toLowerCase();
+    if (lowerType.startsWith('audio/')) return true;
+    final ext = fileName.split('.').last.toLowerCase();
+    return ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'flac', 'opus', 'amr', 'wma'].contains(ext);
+  }
+
+  bool get isDoc {
+    final f = folder.toLowerCase();
+    if (f == 'doc' || f == 'document' || f == 'documents' || f == 'file' || f == 'files') return true;
+    return !isImage && !isVideo && !isAudio;
+  }
+}
+
+/// Paginated Uploads Response from GET /uploads?folder={folder}&page={page}&limit={limit}
+class UploadsResponseModel {
+  final int page;
+  final int limit;
+  final int total;
+  final List<UploadItemModel> items;
+
+  UploadsResponseModel({
+    required this.page,
+    required this.limit,
+    required this.total,
+    required this.items,
+  });
+
+  factory UploadsResponseModel.fromJson(Map<String, dynamic> json, {String? requestedFolder}) {
+    final page = json['page'] is int
+        ? json['page'] as int
+        : int.tryParse(json['page']?.toString() ?? '1') ?? 1;
+    final limit = json['limit'] is int
+        ? json['limit'] as int
+        : int.tryParse(json['limit']?.toString() ?? '20') ?? 20;
+    int total = json['total'] is int
+        ? json['total'] as int
+        : int.tryParse(json['total']?.toString() ?? '0') ?? 0;
+    List<UploadItemModel> items = [];
+
+    final folders = json['folders'];
+    if (folders is Map) {
+      final foldersMap = Map<String, dynamic>.from(folders);
+
+      if (requestedFolder != null && requestedFolder.isNotEmpty) {
+        final req = requestedFolder.toLowerCase();
+        Map<String, dynamic>? targetFolderMap;
+
+        for (final entry in foldersMap.entries) {
+          final kLower = entry.key.toString().toLowerCase();
+          if (kLower == req ||
+              (req == 'doc' && (kLower == 'document' || kLower == 'documents' || kLower == 'files')) ||
+              (req == 'image' && kLower == 'images') ||
+              (req == 'video' && kLower == 'videos') ||
+              (req == 'audio' && (kLower == 'audios' || kLower == 'music'))) {
+            if (entry.value is Map) {
+              targetFolderMap = Map<String, dynamic>.from(entry.value as Map);
+              break;
+            }
+          }
+        }
+
+        if (targetFolderMap != null) {
+          if (targetFolderMap['total'] != null) {
+            total = targetFolderMap['total'] is int
+                ? targetFolderMap['total'] as int
+                : int.tryParse(targetFolderMap['total'].toString()) ?? total;
+          }
+          final rawItems = targetFolderMap['items'];
+          if (rawItems is List) {
+            items = rawItems
+                .whereType<Map>()
+                .map((e) => UploadItemModel.fromJson(Map<String, dynamic>.from(e)))
+                .toList();
+          }
+        }
+      } else {
+        for (final entry in foldersMap.entries) {
+          if (entry.value is Map) {
+            final fMap = Map<String, dynamic>.from(entry.value as Map);
+            final rawItems = fMap['items'];
+            if (rawItems is List) {
+              items.addAll(
+                rawItems
+                    .whereType<Map>()
+                    .map((e) => UploadItemModel.fromJson(Map<String, dynamic>.from(e))),
+              );
+            }
+          }
+        }
+      }
+    } else if (json['items'] is List) {
+      final rawItems = json['items'] as List;
+      items = rawItems
+          .whereType<Map>()
+          .map((e) => UploadItemModel.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    }
+
+    if (requestedFolder != null && requestedFolder.isNotEmpty) {
+      final req = requestedFolder.toLowerCase();
+      if (req == 'image') {
+        items = items.where((item) => item.isImage).toList();
+      } else if (req == 'video') {
+        items = items.where((item) => item.isVideo).toList();
+      } else if (req == 'audio') {
+        items = items.where((item) => item.isAudio).toList();
+      } else if (req == 'doc' || req == 'document' || req == 'documents') {
+        items = items.where((item) => item.isDoc).toList();
+      }
+      total = items.length > total ? items.length : total;
+    }
+
+    return UploadsResponseModel(
+      page: page,
+      limit: limit,
+      total: total,
+      items: items,
+    );
+  }
+}
+
+/// Paginated Server Messages Response from GET /chats/:chatId/messages?page={page}&limit={limit}
+class ServerMessagesPageModel {
+  final int page;
+  final int limit;
+  final int total;
+  final int totalPages;
+  final List<ServerMessageModel> messages;
+
+  ServerMessagesPageModel({
+    required this.page,
+    required this.limit,
+    required this.total,
+    required this.totalPages,
+    required this.messages,
+  });
+
+  bool get hasMore => page < totalPages;
+
+  factory ServerMessagesPageModel.fromJson(Map<String, dynamic> json) {
+    final page = json['page'] is int
+        ? json['page'] as int
+        : int.tryParse(json['page']?.toString() ?? '1') ?? 1;
+    final limit = json['limit'] is int
+        ? json['limit'] as int
+        : int.tryParse(json['limit']?.toString() ?? '20') ?? 20;
+    final total = json['total'] is int
+        ? json['total'] as int
+        : int.tryParse(json['total']?.toString() ?? '0') ?? 0;
+    final totalPages = json['total_pages'] is int
+        ? json['total_pages'] as int
+        : (json['totalPages'] is int
+            ? json['totalPages'] as int
+            : int.tryParse((json['total_pages'] ?? json['totalPages'])?.toString() ?? '1') ?? 1);
+
+    List<ServerMessageModel> msgs = [];
+    final items = json['items'] ?? json['messages'];
+    if (items is List) {
+      msgs = items
+          .whereType<Map>()
+          .map((m) => ServerMessageModel.fromJson(Map<String, dynamic>.from(m)))
+          .toList();
+    }
+
+    return ServerMessagesPageModel(
+      page: page,
+      limit: limit,
+      total: total,
+      totalPages: totalPages,
+      messages: msgs,
+    );
+  }
+}
+

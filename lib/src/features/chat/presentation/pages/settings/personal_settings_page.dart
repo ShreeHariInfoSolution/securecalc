@@ -20,10 +20,10 @@ class PersonalSettingsPage extends StatefulWidget {
 class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
   late TextEditingController _displayNameController;
   late TextEditingController _passcodeController;
-  late TextEditingController _dummyPasscodeController;
+  late TextEditingController _duressPasscodeController;
   String? _profileImagePath;
   bool _obscurePasscode = true;
-  bool _obscureDummyPasscode = true;
+  bool _obscureDuressPasscode = true;
   bool _fakeHistoryEnabled = false;
   final ImagePicker _picker = ImagePicker();
 
@@ -37,8 +37,8 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     _passcodeController = TextEditingController(
       text: CalculatorLogic.secretPasscode,
     );
-    _dummyPasscodeController = TextEditingController(
-      text: CalculatorLogic.dummyCode,
+    _duressPasscodeController = TextEditingController(
+      text: CalculatorLogic.duressPasscode,
     );
   }
 
@@ -237,23 +237,23 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     _showToast('Secret trigger code set to "$newPass="');
   }
 
-  void _saveDummyCode() {
-    final newDummy = _dummyPasscodeController.text.trim();
+  void _saveDuressCode() {
+    final newDuress = _duressPasscodeController.text.trim();
     HapticFeedback.mediumImpact();
     setState(() {
-      CalculatorLogic.dummyCode = newDummy;
+      CalculatorLogic.duressPasscode = newDuress;
     });
-    AppPreferences.setDummyCode(newDummy);
-    _showToast(newDummy.isEmpty
-        ? 'Dummy crash code cleared.'
-        : 'Dummy crash code set to "$newDummy="');
+    AppPreferences.setDuressPasscode(newDuress);
+    _showToast(newDuress.isEmpty
+        ? 'Duress passcode cleared.'
+        : 'Duress decoy passcode set to "$newDuress="');
   }
 
   @override
   void dispose() {
     _displayNameController.dispose();
     _passcodeController.dispose();
-    _dummyPasscodeController.dispose();
+    _duressPasscodeController.dispose();
     super.dispose();
   }
 
@@ -477,15 +477,15 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
 
                     const SizedBox(height: 24),
 
-                    // Section 3: Dummy / Fake Crash Passcode
-                    _buildSectionHeader('FAKE CRASH / PANIC PASSCODE'),
+                    // Section 3: Duress / Decoy Passcode
+                    _buildSectionHeader('DURESS / DECOY PASSCODE'),
                     _buildGroupedCard(
                       isDark: isDark,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'When this dummy code is entered into the calculator, it triggers a fake app crash screen. The app becomes unresponsive until closed.',
+                            'Entering this duress passcode (e.g. 4321=) into the calculator opens a decoy empty vault. This protects your actual private messages if forced to unlock the app.',
                             style: TextStyle(
                               fontSize: 12,
                               color: AppTheme.subtitleGrey,
@@ -494,16 +494,16 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                           ),
                           const SizedBox(height: 12),
                           TextField(
-                            controller: _dummyPasscodeController,
+                            controller: _duressPasscodeController,
                             keyboardType: TextInputType.number,
-                            obscureText: _obscureDummyPasscode,
+                            obscureText: _obscureDuressPasscode,
                             style: TextStyle(
                               fontSize: 16,
-                              letterSpacing: _obscureDummyPasscode ? 3.0 : 1.0,
+                              letterSpacing: _obscureDuressPasscode ? 3.0 : 1.0,
                               color: isDark ? Colors.white : Colors.black,
                             ),
                             decoration: InputDecoration(
-                              labelText: 'Dummy Crash Code (Optional)',
+                              labelText: 'Duress Passcode (Default: 4321)',
                               labelStyle: const TextStyle(color: AppTheme.subtitleGrey),
                               filled: true,
                               fillColor: isDark
@@ -517,7 +517,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                   horizontal: 14, vertical: 12),
                               suffixIcon: IconButton(
                                 icon: Icon(
-                                  _obscureDummyPasscode
+                                  _obscureDuressPasscode
                                       ? Icons.visibility_off_outlined
                                       : Icons.visibility_outlined,
                                   color: AppTheme.subtitleGrey,
@@ -525,7 +525,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                 ),
                                 onPressed: () {
                                   setState(() =>
-                                      _obscureDummyPasscode = !_obscureDummyPasscode);
+                                      _obscureDuressPasscode = !_obscureDuressPasscode);
                                 },
                               ),
                             ),
@@ -543,9 +543,9 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              onPressed: _saveDummyCode,
+                              onPressed: _saveDuressCode,
                               child: const Text(
-                                'Save Dummy Crash Code',
+                                'Save Duress Passcode',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14,

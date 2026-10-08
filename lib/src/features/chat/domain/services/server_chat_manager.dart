@@ -13,6 +13,23 @@ import 'local_chat_storage.dart';
 import 'server_api_service.dart';
 import 'socket_chat_service.dart';
 
+/// Container for paginated chat message history
+class PaginatedMessagesResult {
+  final List<ChatMessage> messages;
+  final int page;
+  final int totalPages;
+  final int total;
+  final bool hasMore;
+
+  PaginatedMessagesResult({
+    required this.messages,
+    required this.page,
+    required this.totalPages,
+    required this.total,
+    required this.hasMore,
+  });
+}
+
 /// Central Server-based Chat Manager orchestrating REST API & Socket.IO.
 class ServerChatManager {
   ServerChatManager._();
@@ -210,121 +227,128 @@ class ServerChatManager {
     return '${parsed.day}/${parsed.month}/${parsed.year}';
   }
 
-  /// Loads complete message history from GET /api/chats/:id/messages.
-  Future<List<ChatMessage>> loadMessages(String chatId) async {
+  /// Loads a single page of message history from GET /api/chats/:id/messages?page={page}&limit={limit}
+  Future<PaginatedMessagesResult> loadMessagesPage(
+    String chatId, {
+    int page = 1,
+    int limit = 20,
+  }) async {
     final requestUserId = ServerApiService.instance.currentUserId;
     final requestToken = ServerApiService.instance.authToken;
     final numericId = int.tryParse(chatId) ?? 0;
     if (numericId <= 0) {
-      return LocalChatStorage.instance.loadMessages(chatId);
+      final cached = await LocalChatStorage.instance.loadMessages(chatId);
+      return PaginatedMessagesResult(
+        messages: cached,
+        page: 1,
+        totalPages: 1,
+        total: cached.length,
+        hasMore: false,
+      );
     }
 
-    // Fetch every page. The API's `before` cursor points to older message IDs;
-    // a repeated page stops the loop safely if the server ignores the cursor.
-    final serverMessagesById = <String, ServerMessageModel>{};
-    String? before;
-    while (true) {
-      final page = await ServerApiService.instance.getMessages(
+    try {
+      final pageRes = await ServerApiService.instance.getMessagesPage(
         numericId,
-        before: before,
+        page: page,
+        limit: limit,
       );
+
       if (requestUserId != ServerApiService.instance.currentUserId ||
           requestToken != ServerApiService.instance.authToken) {
-        return LocalChatStorage.instance.loadMessages(chatId);
+        final cached = await LocalChatStorage.instance.loadMessages(chatId);
+        return PaginatedMessagesResult(
+          messages: cached,
+          page: 1,
+          totalPages: 1,
+          total: cached.length,
+          hasMore: false,
+        );
       }
-      if (page.isEmpty) break;
 
-      final previousCount = serverMessagesById.length;
-      for (final message in page) {
-        final key = '${message.id}:${message.createdAt}';
-        serverMessagesById[key] = message;
-      }
-      if (serverMessagesById.length == previousCount) break;
+      final cachedMessages = await LocalChatStorage.instance.loadMessages(chatId);
+      final cachedById = {
+        for (final message in cachedMessages) message.id: message,
+      };
+      final currentUserId = ServerApiService.instance.currentUserId;
 
-      int? oldestId;
-      for (final message in page) {
-        if (message.id > 0 && (oldestId == null || message.id < oldestId)) {
-          oldestId = message.id;
+      final messages = <ChatMessage>[];
+      for (final sm in pageRes.messages) {
+        final isMe = currentUserId != null && sm.senderId == currentUserId;
+        final plaintext = sm.decryptedContent('chat_key_${sm.chatHeadId}');
+
+        DateTime ts;
+        try {
+          ts = DateTime.parse(sm.createdAt).toLocal();
+        } catch (_) {
+          ts = DateTime.now();
         }
+
+        final cachedMessage = cachedById[sm.id.toString()];
+        messages.add(
+          ChatMessage(
+            id: sm.id.toString(),
+            senderId: isMe ? 'user' : sm.senderId.toString(),
+            content: sm.isDeleted
+                ? 'This message was deleted'
+                : (plaintext.isEmpty ? cachedMessage?.content ?? '' : plaintext),
+            timestamp: ts,
+            type:
+                inferAttachmentType(
+                  fileType: sm.fileType,
+                  fileName: sm.fileName,
+                  filePath: sm.filePath,
+                ) ??
+                (sm.filePath != null
+                    ? 'application/octet-stream'
+                    : cachedMessage?.type ?? 'text'),
+            mediaUrl: sm.filePath ?? cachedMessage?.mediaUrl,
+            fileName: sm.fileName ?? cachedMessage?.fileName,
+            isRead: true,
+            isEdited: sm.isEdited,
+            isDeleted: sm.isDeleted,
+            reaction: sm.chatReact,
+            replyToId: sm.replyToId,
+          ),
+        );
       }
-      if (oldestId == null || before == oldestId.toString()) break;
-      before = oldestId.toString();
-    }
 
-    final serverMessages = serverMessagesById.values.toList()
-      ..sort((a, b) {
-        final timeCompare = a.createdAt.compareTo(b.createdAt);
-        return timeCompare != 0 ? timeCompare : a.id.compareTo(b.id);
-      });
-    final messages = <ChatMessage>[];
-    final cachedMessages = await LocalChatStorage.instance.loadMessages(chatId);
-    final cachedById = {
-      for (final message in cachedMessages) message.id: message,
-    };
+      // Sort page messages chronologically
+      messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-    final currentUserId = ServerApiService.instance.currentUserId;
-
-    for (final sm in serverMessages) {
-      final isMe = currentUserId != null && sm.senderId == currentUserId;
-      final plaintext = sm.decryptedContent('chat_key_${sm.chatHeadId}');
-
-      DateTime ts;
-      try {
-        ts = DateTime.parse(sm.createdAt).toLocal();
-      } catch (_) {
-        ts = DateTime.now();
+      // Cache messages locally
+      final mergedById = {for (final message in cachedMessages) message.id: message};
+      for (final message in messages) {
+        mergedById[message.id] = message;
       }
+      final mergedAll = mergedById.values.toList()
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      await LocalChatStorage.instance.cacheMessages(chatId, mergedAll);
 
-      final cachedMessage = cachedById[sm.id.toString()];
-      messages.add(
-        ChatMessage(
-          id: sm.id.toString(),
-          senderId: isMe ? 'user' : sm.senderId.toString(),
-          content: sm.isDeleted
-              ? 'This message was deleted'
-              : (plaintext.isEmpty ? cachedMessage?.content ?? '' : plaintext),
-          timestamp: ts,
-          type:
-              inferAttachmentType(
-                fileType: sm.fileType,
-                fileName: sm.fileName,
-                filePath: sm.filePath,
-              ) ??
-              (sm.filePath != null
-                  ? 'application/octet-stream'
-                  : cachedMessage?.type ?? 'text'),
-          mediaUrl: sm.filePath ?? cachedMessage?.mediaUrl,
-          fileName: sm.fileName ?? cachedMessage?.fileName,
-          isRead: true,
-          isEdited: sm.isEdited,
-          isDeleted: sm.isDeleted,
-          reaction: sm.chatReact,
-          replyToId: sm.replyToId,
-        ),
+      return PaginatedMessagesResult(
+        messages: messages,
+        page: pageRes.page,
+        totalPages: pageRes.totalPages,
+        total: pageRes.total,
+        hasMore: pageRes.hasMore,
+      );
+    } catch (e) {
+      debugPrint('[ServerChatManager] Page $page load failed for $chatId: $e');
+      final cached = await LocalChatStorage.instance.loadMessages(chatId);
+      return PaginatedMessagesResult(
+        messages: cached,
+        page: page,
+        totalPages: page,
+        total: cached.length,
+        hasMore: false,
       );
     }
+  }
 
-    // Keep the full server history locally so reopening a chat can render
-    // immediately without fetching the same old messages again.
-    if (requestUserId != ServerApiService.instance.currentUserId ||
-        requestToken != ServerApiService.instance.authToken) {
-      return LocalChatStorage.instance.loadMessages(chatId);
-    }
-    final latestCachedMessages = await LocalChatStorage.instance.loadMessages(
-      chatId,
-    );
-    if (requestUserId != ServerApiService.instance.currentUserId ||
-        requestToken != ServerApiService.instance.authToken) {
-      return latestCachedMessages;
-    }
-    final mergedById = {for (final message in messages) message.id: message};
-    for (final message in latestCachedMessages) {
-      mergedById.putIfAbsent(message.id, () => message);
-    }
-    final merged = mergedById.values.toList()
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    await LocalChatStorage.instance.cacheMessages(chatId, merged);
-    return merged;
+  /// Loads latest message page for backward compatibility
+  Future<List<ChatMessage>> loadMessages(String chatId) async {
+    final res = await loadMessagesPage(chatId, page: 1, limit: 20);
+    return res.messages;
   }
 
   /// Sends a new message via REST API / Socket.IO

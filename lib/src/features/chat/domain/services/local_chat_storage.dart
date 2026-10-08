@@ -479,6 +479,18 @@ class LocalChatStorage {
     }
   }
 
+  Future<void> togglePinConversation(String chatId) async {
+    final epoch = _accountEpoch;
+    final conversations = await _currentConversations();
+    if (epoch != _accountEpoch) return;
+    final index = conversations.indexWhere((c) => c.id == chatId);
+    if (index >= 0) {
+      final existing = conversations[index];
+      conversations[index] = existing.copyWith(isPinned: !existing.isPinned);
+      _persistConversations(conversations);
+    }
+  }
+
   Future<void> createOrGetConversation({
     required String deviceId,
     required String displayName,

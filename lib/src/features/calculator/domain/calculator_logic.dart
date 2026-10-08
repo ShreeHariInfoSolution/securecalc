@@ -1,5 +1,5 @@
 /// Trigger action resulting from calculator passcode evaluation.
-enum CalculatorTrigger { none, vault, dummyCrash }
+enum CalculatorTrigger { none, vault, duress }
 
 /// Core mathematical and passcode evaluation engine for the calculator.
 class CalculatorLogic {
@@ -11,8 +11,8 @@ class CalculatorLogic {
 
   // Secret passcode storage (default "1234")
   static String secretPasscode = '1234';
-  // Dummy crash code storage (default empty)
-  static String dummyCode = '';
+  // Duress passcode storage (default "4321")
+  static String duressPasscode = '4321';
 
   String get displayValue => _displayValue;
   String get expression => _expression;
@@ -29,8 +29,8 @@ class CalculatorLogic {
       if (secretPasscode.isNotEmpty && _displayValue == secretPasscode) {
         return CalculatorTrigger.vault;
       }
-      if (dummyCode.isNotEmpty && _displayValue == dummyCode) {
-        return CalculatorTrigger.dummyCrash;
+      if (duressPasscode.isNotEmpty && _displayValue == duressPasscode) {
+        return CalculatorTrigger.duress;
       }
       _calculateResult();
       return CalculatorTrigger.none;
@@ -52,8 +52,8 @@ class CalculatorLogic {
       if (secretPasscode.isNotEmpty && _displayValue == secretPasscode) {
         return CalculatorTrigger.vault;
       }
-      if (dummyCode.isNotEmpty && _displayValue == dummyCode) {
-        return CalculatorTrigger.dummyCrash;
+      if (duressPasscode.isNotEmpty && _displayValue == duressPasscode) {
+        return CalculatorTrigger.duress;
       }
       return CalculatorTrigger.none;
     }

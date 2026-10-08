@@ -450,49 +450,56 @@ class ServerApiService {
 
   // ─── Messages Endpoints ────────────────────────────────────────────────────
 
-  Future<List<ServerMessageModel>> getMessages(
+  /// Fetches paginated chat messages from GET /chats/:chatId/messages?page={page}&limit={limit}
+  Future<ServerMessagesPageModel> getMessagesPage(
     int chatId, {
-    int? limit,
-    String? before,
+    int page = 1,
+    int limit = 20,
   }) async {
     try {
-      final queryParams = <String, String>{};
-      if (limit != null && limit > 0) {
-        queryParams['limit'] = '$limit';
-      }
-      if (before != null && before.isNotEmpty) {
-        queryParams['before'] = before;
-      }
-      final endpoint = Uri.parse('$baseUrl/chats/$chatId/messages');
-      final url = queryParams.isEmpty
-          ? endpoint
-          : endpoint.replace(queryParameters: queryParams);
-      final res = await http.get(url, headers: _headers());
+      final uri = Uri.parse('$baseUrl/chats/$chatId/messages').replace(
+        queryParameters: {
+          'page': '$page',
+          'limit': '$limit',
+        },
+      );
+      debugPrint('[API] GET $uri');
+      final res = await http.get(uri, headers: _headers());
+      debugPrint('[API] GET $uri (${res.statusCode}): ${res.body}');
 
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
-        final json = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
-        final data = json['data'];
-        final list = data is List
-            ? data
-            : data is Map && data['messages'] is List
-                ? data['messages'] as List
-                : json['messages'] is List
-                    ? json['messages'] as List
-                    : <dynamic>[];
-        return list
-            .whereType<Map>()
-            .map((message) => ServerMessageModel.fromJson(
-                  Map<String, dynamic>.from(message),
-                ))
-            .toList();
+        final json = decoded is Map
+            ? Map<String, dynamic>.from(decoded)
+            : <String, dynamic>{};
+        final data = json['data'] is Map
+            ? Map<String, dynamic>.from(json['data'] as Map)
+            : json;
+        return ServerMessagesPageModel.fromJson(data);
       }
-      throw Exception(
-        'Load Messages Failed (${res.statusCode}): ${res.body}',
+      throw Exception('Load Messages Failed (${res.statusCode}): ${res.body}');
+    } catch (e) {
+      debugPrint('[API] Get Messages Page Error ($chatId, page=$page): $e');
+      rethrow;
+    }
+  }
+
+  Future<List<ServerMessageModel>> getMessages(
+    int chatId, {
+    int? limit,
+    int? page,
+    String? before,
+  }) async {
+    try {
+      final res = await getMessagesPage(
+        chatId,
+        page: page ?? 1,
+        limit: limit ?? 20,
       );
+      return res.messages;
     } catch (e) {
       debugPrint('[API] Get Messages Error: $e');
-      rethrow;
+      return [];
     }
   }
 
@@ -617,9 +624,52 @@ class ServerApiService {
 
   // ─── Files Endpoints ───────────────────────────────────────────────────────
 
+  /// Fetches paginated uploads for a given folder type ('image', 'video', 'audio', 'doc').
+  Future<UploadsResponseModel> getUploads({
+    required String folder,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/uploads').replace(queryParameters: {
+        'folder': folder,
+        'page': page.toString(),
+        'limit': limit.toString(),
+      });
+
+      debugPrint('[API] GET $uri');
+      final res = await http.get(uri, headers: _headers());
+      debugPrint('[API] GET $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        final json = decoded is Map
+            ? Map<String, dynamic>.from(decoded)
+            : <String, dynamic>{};
+        final data = json['data'] is Map
+            ? Map<String, dynamic>.from(json['data'] as Map)
+            : json;
+        return UploadsResponseModel.fromJson(data, requestedFolder: folder);
+      } else {
+        throw Exception('Failed to load $folder items (${res.statusCode}): ${res.body}');
+      }
+    } catch (e) {
+      debugPrint('[API] Get Uploads Error ($folder): $e');
+      rethrow;
+    }
+  }
+
   Future<String?> uploadFile(File file, {String? filename}) async {
+    final item = await uploadVaultFile(file, filename: filename);
+    return item?.filePath.isNotEmpty == true ? item!.filePath : item?.url;
+  }
+
+  /// Uploads a file to POST /upload and returns the parsed [UploadItemModel]
+  Future<UploadItemModel?> uploadVaultFile(File file, {String? filename}) async {
     try {
       final uri = Uri.parse('$baseUrl/upload');
+      debugPrint('[API] POST $uri (File: ${file.path})');
+
       final req = http.MultipartRequest('POST', uri);
       if (_authToken != null) {
         req.headers['Authorization'] = 'Bearer $_authToken';
@@ -633,35 +683,29 @@ class ServerApiService {
       final streamedRes = await req.send();
       final res = await http.Response.fromStream(streamedRes);
 
+      debugPrint('[API] POST $uri (${res.statusCode}): ${res.body}');
+
       if (res.statusCode == 200 || res.statusCode == 201) {
         final decoded = jsonDecode(res.body);
         if (decoded is Map) {
           final data = decoded['data'];
-          if (data is String && data.isNotEmpty) return data;
-          if (data is Map) {
-            for (final key in const [
-              'path',
-              'file_path',
-              'url',
-              'file_url',
-              'location',
-            ]) {
-              final value = data[key]?.toString();
-              if (value != null && value.isNotEmpty) return value;
-            }
+          if (data is Map<String, dynamic>) {
+            return UploadItemModel.fromJson(data);
           }
-          for (final key in const [
-            'path',
-            'file_path',
-            'url',
-            'file_url',
-            'location',
-          ]) {
-            final value = decoded[key]?.toString();
-            if (value != null && value.isNotEmpty) return value;
+          if (data is String && data.isNotEmpty) {
+            return UploadItemModel(
+              id: 0,
+              filePath: data,
+              folder: '',
+              fileName: filename ?? file.path.split(RegExp(r'[/\\]')).last,
+              fileType: '',
+              fileSize: await file.length(),
+              createdAt: DateTime.now().toIso8601String(),
+              url: data,
+            );
           }
         }
-        debugPrint('[API] Upload succeeded but response has no file path: ${res.body}');
+        debugPrint('[API] Upload succeeded but response data unexpected: ${res.body}');
       } else {
         debugPrint('[API] Upload failed (${res.statusCode}): ${res.body}');
       }
@@ -670,5 +714,32 @@ class ServerApiService {
     }
     return null;
   }
+
+  /// Deletes an uploaded file by ID or path
+  Future<bool> deleteUploadFile(int id, {String? filePath}) async {
+    try {
+      final uri = Uri.parse('$baseUrl/uploads/$id');
+      debugPrint('[API] DELETE $uri');
+
+      var res = await http.delete(uri, headers: _headers());
+      debugPrint('[API] DELETE $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 204) return true;
+      if (filePath != null && filePath.isNotEmpty) {
+        final clean = filePath.replaceFirst(RegExp(r'^/+'), '');
+        final fileUri = Uri.parse('$baseUrl/files/$clean');
+        debugPrint('[API] DELETE $fileUri');
+
+        res = await http.delete(fileUri, headers: _headers());
+        debugPrint('[API] DELETE $fileUri (${res.statusCode}): ${res.body}');
+
+        if (res.statusCode == 200 || res.statusCode == 204) return true;
+      }
+    } catch (e) {
+      debugPrint('[API] Delete Upload File Error: $e');
+    }
+    return false;
+  }
 }
+
 

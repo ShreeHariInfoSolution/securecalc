@@ -6,7 +6,6 @@ import '../../domain/calculator_logic.dart';
 import '../widgets/calculator_button.dart';
 import '../widgets/calculator_display.dart';
 import '../../../chat/presentation/pages/vault_home_page.dart';
-import 'fake_crash_page.dart';
 
 class CalculatorPage extends StatefulWidget {
   const CalculatorPage({super.key});
@@ -27,13 +26,13 @@ class _CalculatorPageState extends State<CalculatorPage> {
     setState(() {});
 
     if (trigger == CalculatorTrigger.vault) {
-      _triggerSecretVaultTransition();
-    } else if (trigger == CalculatorTrigger.dummyCrash) {
-      _triggerDummyCrashTransition();
+      _triggerSecretVaultTransition(isDuress: false);
+    } else if (trigger == CalculatorTrigger.duress) {
+      _triggerSecretVaultTransition(isDuress: true);
     }
   }
 
-  void _triggerSecretVaultTransition() {
+  void _triggerSecretVaultTransition({bool isDuress = false}) {
     if (_isNavigating) return;
     _isNavigating = true;
 
@@ -50,25 +49,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
           if (!hasConsented) {
             return const PrivacyConsentPage();
           }
-          return const VaultHomePage();
-        },
-      ),
-    );
-  }
-
-  void _triggerDummyCrashTransition() {
-    if (_isNavigating) return;
-    _isNavigating = true;
-
-    _logic.clearAll();
-    if (mounted) setState(() {});
-
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: Duration.zero,
-        pageBuilder: (context, animation, secondaryAnimation) {
-          return const FakeCrashPage();
+          return VaultHomePage(isDuressMode: isDuress);
         },
       ),
     );

@@ -15,17 +15,24 @@ class AppPreferences {
   static const String _keyThemeMode = 'PREF_THEME_MODE';
   static const String _keyFontScale = 'PREF_FONT_SCALE';
   static const String _keyPasscode = 'PREF_SECRET_PASSCODE';
-  static const String _keyDummyCode = 'PREF_DUMMY_CODE';
+  static const String _keyDuressPasscode = 'PREF_DURESS_PASSCODE';
   static const String _keyPanicShake = 'PREF_PANIC_SHAKE';
   static const String _keyDisguiseTitle = 'PREF_DISGUISE_TITLE';
   static const String _keyScreenshotPrevent = 'PREF_PREVENT_SCREENSHOTS';
   static const String _keyDisappearingTimer = 'PREF_DISAPPEARING_TIMER';
+  static const String _keyEdgePanelEnabled = 'PREF_EDGE_PANEL_ENABLED';
+  static const String _keyEdgePanelY = 'PREF_EDGE_PANEL_Y';
   static const String deviceIdKey = 'deviceId';
   static const String _keyDeviceId = 'PREF_DEVICE_ID';
   static const String _keyDisplayName = 'PREF_DISPLAY_NAME';
   static const String _keyProfileImagePath = 'PREF_PROFILE_IMAGE_PATH';
   static const String _keyShowOnlineStatus = 'PREF_SHOW_ONLINE_STATUS';
   static const String _keyHasConsented = 'PREF_HAS_CONSENTED';
+
+  static final ValueNotifier<bool> edgePanelEnabledNotifier =
+      ValueNotifier<bool>(true);
+  static final ValueNotifier<double> edgePanelYNotifier =
+      ValueNotifier<double>(0.28);
 
   /// Flag indicating if an image/camera picker is currently open to prevent lifecycle route pop.
   static bool isPickerActive = false;
@@ -56,13 +63,19 @@ class AppPreferences {
       CalculatorLogic.secretPasscode = savedPasscode;
     }
 
-    // 4. Restore Dummy / Fake Crash Passcode
-    final savedDummy = _prefs.getString(_keyDummyCode);
-    if (savedDummy != null) {
-      CalculatorLogic.dummyCode = savedDummy;
+    // 4. Restore Duress / Decoy Passcode (default "4321")
+    final savedDuress = _prefs.getString(_keyDuressPasscode);
+    if (savedDuress != null && savedDuress.isNotEmpty) {
+      CalculatorLogic.duressPasscode = savedDuress;
+    } else {
+      CalculatorLogic.duressPasscode = '4321';
     }
 
-    // 5. Restore/Initialize Device Identity
+    // 5. Restore Edge Panel Settings
+    edgePanelEnabledNotifier.value = _prefs.getBool(_keyEdgePanelEnabled) ?? true;
+    edgePanelYNotifier.value = _prefs.getDouble(_keyEdgePanelY) ?? 0.28;
+
+    // 6. Restore/Initialize Device Identity
     final existingId = _prefs.getString(_keyDeviceId) ?? _prefs.getString(deviceIdKey);
     if (existingId == null || existingId.isEmpty) {
       final newId = 'device_${const Uuid().v4()}';
@@ -86,11 +99,13 @@ class AppPreferences {
     await _prefs.setString(_keyPasscode, code);
   }
 
-  static Future<void> setDummyCode(String code) async {
-    await _prefs.setString(_keyDummyCode, code);
+  static Future<void> setDuressPasscode(String code) async {
+    await _prefs.setString(_keyDuressPasscode, code);
+    CalculatorLogic.duressPasscode = code;
   }
 
-  static String getDummyCode() => _prefs.getString(_keyDummyCode) ?? '';
+  static String getDuressPasscode() =>
+      _prefs.getString(_keyDuressPasscode) ?? '4321';
 
   static Future<void> setPanicShake(bool enabled) async {
     await _prefs.setBool(_keyPanicShake, enabled);
@@ -103,6 +118,22 @@ class AppPreferences {
   }
 
   static bool getDisguiseTitle() => _prefs.getBool(_keyDisguiseTitle) ?? true;
+
+  static Future<void> setEdgePanelEnabled(bool enabled) async {
+    await _prefs.setBool(_keyEdgePanelEnabled, enabled);
+    edgePanelEnabledNotifier.value = enabled;
+  }
+
+  static bool getEdgePanelEnabled() =>
+      _prefs.getBool(_keyEdgePanelEnabled) ?? true;
+
+  static Future<void> setEdgePanelY(double relativeY) async {
+    await _prefs.setDouble(_keyEdgePanelY, relativeY);
+    edgePanelYNotifier.value = relativeY;
+  }
+
+  static double getEdgePanelY() =>
+      _prefs.getDouble(_keyEdgePanelY) ?? 0.28;
 
   static Future<void> setPreventScreenshots(bool enabled) async {
     isChangingSettings = true;

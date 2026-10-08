@@ -15,6 +15,7 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
   late bool _panicShakeEnabled;
   late bool _disguiseTitleEnabled;
   late bool _preventScreenshots;
+  late bool _edgePanelEnabled;
   late String _disappearingDuration;
 
   @override
@@ -23,6 +24,7 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
     _panicShakeEnabled = AppPreferences.getPanicShake();
     _disguiseTitleEnabled = AppPreferences.getDisguiseTitle();
     _preventScreenshots = AppPreferences.getPreventScreenshots();
+    _edgePanelEnabled = AppPreferences.getEdgePanelEnabled();
     _disappearingDuration = AppPreferences.getDisappearingTimer();
   }
 
@@ -121,6 +123,29 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                               onChanged: (val) {
                                 setState(() => _preventScreenshots = val);
                                 AppPreferences.setPreventScreenshots(val);
+                              },
+                            ),
+                            Divider(
+                              height: 1,
+                              indent: 16,
+                              endIndent: 16,
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : Colors.black.withValues(alpha: 0.06),
+                            ),
+                            SwitchListTile(
+                              activeTrackColor: AppTheme.onlineGreen,
+                              title: const Text('Floating Edge Quick Bar',
+                                  style: TextStyle(
+                                      fontSize: 14, fontWeight: FontWeight.bold)),
+                              subtitle: const Text(
+                                  'Draggable edge bar for 1-tap vault shortcuts',
+                                  style: TextStyle(
+                                      fontSize: 12, color: AppTheme.subtitleGrey)),
+                              value: _edgePanelEnabled,
+                              onChanged: (val) {
+                                setState(() => _edgePanelEnabled = val);
+                                AppPreferences.setEdgePanelEnabled(val);
                               },
                             ),
                             Divider(

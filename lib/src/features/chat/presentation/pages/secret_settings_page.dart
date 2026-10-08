@@ -33,9 +33,9 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
           child: Column(
             children: [
               // Header
-              const CompactSettingsHeader(
+              CompactSettingsHeader(
                 title: 'Vault Settings',
-                showBackButton: false,
+                showBackButton: Navigator.canPop(context),
               ),
 
               // Content List

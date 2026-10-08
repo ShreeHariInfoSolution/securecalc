@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
+import 'package:securecalc/src/core/widgets/vault_edge_panel_wrapper.dart';
 
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/models/server_models.dart';
@@ -14,7 +16,12 @@ import '../widgets/conversation_tile.dart';
 import 'chat_detail_page.dart';
 
 class ConversationListPage extends StatefulWidget {
-  const ConversationListPage({super.key});
+  final bool isDuressMode;
+
+  const ConversationListPage({
+    super.key,
+    this.isDuressMode = false,
+  });
 
   @override
   State<ConversationListPage> createState() => _ConversationListPageState();
@@ -34,6 +41,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
   }
 
   Future<void> _refreshServerChats() async {
+    if (widget.isDuressMode) return;
     if (mounted) setState(() => _isSyncing = true);
     try {
       await ServerChatManager.instance.syncChats();
@@ -748,7 +756,9 @@ class _ConversationListPageState extends State<ConversationListPage> {
         body: SafeArea(
           child: ValueListenableBuilder<List<ChatConversation>>(
             valueListenable: LocalChatStorage.instance.conversationsNotifier,
-            builder: (context, conversations, _) {
+            builder: (context, rawConversations, _) {
+              final conversations =
+                  widget.isDuressMode ? <ChatConversation>[] : rawConversations;
               final query = _searchController.text.trim().toLowerCase();
               final filtered =
                   conversations.where((conv) {
@@ -761,6 +771,9 @@ class _ConversationListPageState extends State<ConversationListPage> {
                     }
                     return matchesQuery;
                   }).toList()..sort((a, b) {
+                    if (a.isPinned != b.isPinned) {
+                      return a.isPinned ? -1 : 1;
+                    }
                     final aTime = a.lastActivityAt?.millisecondsSinceEpoch ?? 0;
                     final bTime = b.lastActivityAt?.millisecondsSinceEpoch ?? 0;
                     return bTime.compareTo(aTime);
@@ -779,12 +792,38 @@ class _ConversationListPageState extends State<ConversationListPage> {
                   children: [
                     // iOS Header Row
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 16, 8),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Row(
                             children: [
+                              if (Navigator.canPop(context)) ...[
+                                GestureDetector(
+                                  onTap: () => Navigator.of(context).pop(),
+                                  child: Container(
+                                    width: 36,
+                                    height: 36,
+                                    margin: const EdgeInsets.only(right: 10),
+                                    decoration: BoxDecoration(
+                                      color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.06),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 1),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Icon(
+                                      Icons.arrow_back_ios_new_rounded,
+                                      size: 16,
+                                      color: isDark ? Colors.white : Colors.black,
+                                    ),
+                                  ),
+                                ),
+                              ],
                               Text(
                                 'Messages',
                                 style: TextStyle(
@@ -1050,17 +1089,25 @@ class _ConversationListPageState extends State<ConversationListPage> {
                               itemCount: filtered.length,
                               itemBuilder: (context, index) {
                                 final conv = filtered[index];
-                                return ConversationTile(
-                                  conversation: conv,
-                                  isTyping: conv.isTyping,
-                                  onTap: () {
-                                    Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            ChatDetailPage(conversation: conv),
-                                      ),
-                                    );
-                                  },
+                                return GestureDetector(
+                                  onLongPress: () =>
+                                      _showChatOptionsSheet(context, conv),
+                                  child: ConversationTile(
+                                    conversation: conv,
+                                    isTyping: conv.isTyping,
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              VaultEdgePanelWrapper(
+                                            isDuressMode: widget.isDuressMode,
+                                            child: ChatDetailPage(
+                                                conversation: conv),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
                                 );
                               },
                             ),
@@ -1070,6 +1117,61 @@ class _ConversationListPageState extends State<ConversationListPage> {
               );
             },
           ),
+        ),
+      ),
+    );
+  }
+
+  void _showChatOptionsSheet(BuildContext context, ChatConversation conv) {
+    showCupertinoModalPopup(
+      context: context,
+      builder: (context) => CupertinoActionSheet(
+        title: Text(conv.name),
+        message: Text(conv.isPinned
+            ? 'Currently pinned to top & Edge Panel'
+            : 'Pin to top & Edge Panel for 1-tap quick access'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(context);
+              LocalChatStorage.instance.togglePinConversation(conv.id);
+            },
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  conv.isPinned
+                      ? Icons.push_pin_outlined
+                      : Icons.push_pin_rounded,
+                  color: AppTheme.primaryColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(conv.isPinned
+                    ? 'Unpin Conversation'
+                    : 'Pin Conversation'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => VaultEdgePanelWrapper(
+                    isDuressMode: widget.isDuressMode,
+                    child: ChatDetailPage(conversation: conv),
+                  ),
+                ),
+              );
+            },
+            child: const Text('Open Secret Thread'),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          isDefaultAction: true,
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
         ),
       ),
     );

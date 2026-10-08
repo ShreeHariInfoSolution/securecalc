@@ -15,6 +15,7 @@ import 'package:securecalc/src/core/utils/app_toast.dart';
 
 import '../../domain/services/e2e_crypto_service.dart';
 import '../../domain/services/server_api_service.dart';
+import '../../domain/services/attachment_cache_service.dart';
 
 class ChatBubble extends StatefulWidget {
   final String message;
@@ -120,57 +121,16 @@ class _ChatBubbleState extends State<ChatBubble> {
   Future<void> _restoreDownloadedAttachment() async {
     try {
       final mediaPath = widget.mediaUrl;
-      if (mediaPath != null && _isAbsoluteFilePath(mediaPath)) {
-        if (await File(mediaPath).exists() && mounted) {
+      final cachedPath = await AttachmentCacheService.instance.resolveLocalPath(mediaPath);
+      if (cachedPath != null) {
+        if (mounted) {
           setState(() {
-            _downloadedPath = mediaPath;
+            _downloadedPath = cachedPath;
             _isMediaRevealed = true;
             _downloadFailed = false;
           });
-          return;
         }
-      }
-
-      final standardizedPath = await _getLocalAttachmentPath();
-      if (await File(standardizedPath).exists() && mounted) {
-        setState(() {
-          _downloadedPath = standardizedPath;
-          _isMediaRevealed = true;
-          _downloadFailed = false;
-        });
         return;
-      }
-
-      final documents = await getApplicationDocumentsDirectory();
-      final safeName = _attachmentName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-      final path =
-          '${documents.path}${Platform.pathSeparator}chat_attachments'
-          '${Platform.pathSeparator}${widget.timestamp.millisecondsSinceEpoch}_$safeName';
-      if (await File(path).exists() && mounted) {
-        setState(() {
-          _downloadedPath = path;
-          _isMediaRevealed = true;
-          _downloadFailed = false;
-        });
-        return;
-      }
-
-      final attachmentDir = Directory(
-        '${documents.path}${Platform.pathSeparator}chat_attachments',
-      );
-      if (await attachmentDir.exists()) {
-        final matching = await attachmentDir
-            .list()
-            .where((entity) => entity is File && entity.path.endsWith('_$safeName'))
-            .toList();
-        if (matching.isNotEmpty && mounted) {
-          setState(() {
-            _downloadedPath = matching.first.path;
-            _isMediaRevealed = true;
-            _downloadFailed = false;
-          });
-          return;
-        }
       }
 
       if (mounted) {
@@ -280,6 +240,7 @@ class _ChatBubbleState extends State<ChatBubble> {
       final output = File(outputPath);
       await output.writeAsBytes(fileBytes, flush: true);
       _downloadedPath = output.path;
+      AttachmentCacheService.instance.updateCache(mediaUrl, output.path);
       _downloadFailed = false;
       return output.path;
     } catch (e) {

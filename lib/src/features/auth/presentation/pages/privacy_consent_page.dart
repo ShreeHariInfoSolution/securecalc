@@ -15,7 +15,7 @@ class PrivacyConsentPage extends StatefulWidget {
 }
 
 class _PrivacyConsentPageState extends State<PrivacyConsentPage> {
-  bool _acceptedTerms = true;
+  bool _acceptedTerms = false;
 
   Future<void> _onAcceptAndContinue() async {
     if (!_acceptedTerms) {

@@ -28,10 +28,8 @@ class _SynqChatAppState extends State<SynqChatApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (AppPreferences.isPickerActive || AppPreferences.isChangingSettings) return;
 
-    // Instantly lock back to Calculator whenever app is minimized, sent to background, or becomes inactive/hidden
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.hidden) {
+    // Lock back to Calculator when app is minimized, sent to background, or in Recents App switcher
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
       _lockToCalculator();
     }
   }
