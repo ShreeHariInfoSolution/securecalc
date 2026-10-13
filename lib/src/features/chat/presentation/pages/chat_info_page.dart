@@ -6,6 +6,7 @@ import '../../domain/models/server_models.dart';
 import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
+import 'share/share_qr_page.dart';
 
 class ChatInfoPage extends StatefulWidget {
   final ChatConversation conversation;
@@ -394,6 +395,38 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           label: 'Created by',
                           value: creatorName,
                           last: true,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    _InfoCard(
+                      surface: surface,
+                      children: [
+                        ListTile(
+                          leading: const Icon(
+                            Icons.qr_code_2_rounded,
+                            color: AppTheme.primaryColor,
+                          ),
+                          title: const Text(
+                            'Share Group Link',
+                            style: TextStyle(
+                              color: AppTheme.primaryColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          onTap: () {
+                            if (details != null) {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => ShareQrPage(
+                                    title: 'Invite to Group',
+                                    subtitle: 'Share this QR code or link to invite friends to join "$displayName".',
+                                    shareLink: 'securecalc://join?group_id=${details.id}',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
                         ),
                       ],
                     ),

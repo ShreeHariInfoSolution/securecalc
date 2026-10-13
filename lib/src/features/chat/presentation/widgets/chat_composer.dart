@@ -70,16 +70,25 @@ class _ChatComposerState extends State<ChatComposer> {
     super.dispose();
   }
 
+  DateTime? _lastTypingEmitted;
+
   void _onInputChanged(String val) {
     setState(() {}); // update UI for send icon
     
     if (_typingDebounce?.isActive ?? false) _typingDebounce!.cancel();
-    if (val.trim().isNotEmpty) {
-      widget.onTypingChanged(true);
-      _typingDebounce = Timer(const Duration(seconds: 3), () {
+    final text = val.trim();
+    if (text.isNotEmpty) {
+      final now = DateTime.now();
+      if (_lastTypingEmitted == null || now.difference(_lastTypingEmitted!) > const Duration(seconds: 2)) {
+        _lastTypingEmitted = now;
+        widget.onTypingChanged(true);
+      }
+      _typingDebounce = Timer(const Duration(milliseconds: 2500), () {
+        _lastTypingEmitted = null;
         widget.onTypingChanged(false);
       });
     } else {
+      _lastTypingEmitted = null;
       widget.onTypingChanged(false);
     }
   }

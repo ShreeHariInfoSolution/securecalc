@@ -126,16 +126,19 @@ class _VaultActionCardState extends State<VaultActionCard>
                             children: [
                               Row(
                                 children: [
-                                  Text(
-                                    widget.title,
-                                    style: TextStyle(
-                                      fontSize: 19,
-                                      fontWeight: FontWeight.bold,
-                                      color: isDark ? Colors.white : Colors.black,
-                                      letterSpacing: -0.3,
+                                  Expanded(
+                                    child: Text(
+                                      widget.title,
+                                      style: TextStyle(
+                                        fontSize: 19,
+                                        fontWeight: FontWeight.bold,
+                                        color: isDark ? Colors.white : Colors.black,
+                                        letterSpacing: -0.3,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
-                                  const Spacer(),
+                                  const SizedBox(width: 8),
                                   // Pill Badge
                                   Container(
                                     padding: const EdgeInsets.symmetric(

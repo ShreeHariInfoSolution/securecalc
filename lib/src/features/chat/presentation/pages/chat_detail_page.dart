@@ -224,24 +224,33 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     final event = data['data'] is Map
         ? Map<String, dynamic>.from(data['data'] as Map)
         : data;
-    final eventChatId = (event['chat_head_id'] ?? event['chat_id'])?.toString();
+    final eventChatId = (event['chat_head_id'] ??
+            event['chat_id'] ??
+            event['chatHeadId'] ??
+            event['chatId'])
+        ?.toString();
     if (eventChatId == widget.conversation.id) {
       final eventUserId = int.tryParse(
-        (event['user_id'] ?? event['userId'])?.toString() ?? '',
+        (event['user_id'] ??
+                event['userId'] ??
+                event['sender_id'] ??
+                event['senderId'])
+            ?.toString() ??
+            '',
       );
       if (eventUserId != null &&
           eventUserId == ServerApiService.instance.currentUserId) {
         return;
       }
-      final rawTyping = event['is_typing'] ?? event['typing'];
-      final isTyping =
-          rawTyping == true ||
+      final rawTyping =
+          event['is_typing'] ?? event['typing'] ?? event['isTyping'];
+      final isTyping = rawTyping == true ||
           rawTyping == 1 ||
           rawTyping?.toString().toLowerCase() == 'true';
       _peerTypingTimer?.cancel();
       _isPeerTyping.value = isTyping;
       if (isTyping) {
-        _peerTypingTimer = Timer(const Duration(seconds: 5), () {
+        _peerTypingTimer = Timer(const Duration(seconds: 4), () {
           if (mounted) _isPeerTyping.value = false;
         });
         _scrollToBottom();

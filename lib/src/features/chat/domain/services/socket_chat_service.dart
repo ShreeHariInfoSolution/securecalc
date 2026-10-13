@@ -36,17 +36,26 @@ class SocketChatService {
     final token = ServerApiService.instance.authToken;
     if (token == null || token.isEmpty) {
       debugPrint('[SOCKET] No auth token found. Connection deferred.');
+      disconnect();
       return;
     }
 
-    if (_socket != null) return;
+    if (_socket != null) {
+      final currentSocketToken = _socket!.io.options?['auth']?['token'];
+      if (currentSocketToken == token && _socket!.connected) {
+        debugPrint('[SOCKET] Already connected with active user token.');
+        return;
+      }
+      debugPrint('[SOCKET] Token changed or socket inactive. Reconnecting socket for active user...');
+      disconnect();
+    }
 
     debugPrint('[SOCKET] Connecting to http://synqerp.com:3000...');
 
     _socket = IO.io(
       'http://synqerp.com:3000',
       IO.OptionBuilder()
-          .setTransports(['websocket'])
+          .setTransports(['websocket', 'polling'])
           .setAuth({'token': token})
           .enableReconnection()
           .setReconnectionDelay(2000)
@@ -72,13 +81,12 @@ class SocketChatService {
 
     // ─── Server -> Client Event Listeners ────────────────────────────────────
 
-    // Normalize the known message event names into the same message stream.
     void handleNewMessage(dynamic data) {
       debugPrint('[SOCKET] Incoming message event: $data');
       final eventData = data is List && data.isNotEmpty ? data.first : data;
       if (eventData is Map) {
         try {
-          var payload = eventData;
+          var payload = Map<String, dynamic>.from(eventData);
           // Unwrap common API/socket envelopes until we reach the message row.
           for (var depth = 0; depth < 4; depth++) {
             if (payload['id'] != null ||
@@ -87,9 +95,9 @@ class SocketChatService {
               break;
             }
             if (payload['data'] is Map) {
-              payload = payload['data'] as Map;
+              payload = Map<String, dynamic>.from(payload['data'] as Map);
             } else if (payload['message'] is Map) {
-              payload = payload['message'] as Map;
+              payload = Map<String, dynamic>.from(payload['message'] as Map);
             } else {
               break;
             }
@@ -101,7 +109,7 @@ class SocketChatService {
             return;
           }
           _messageStreamController.add(
-            ServerMessageModel.fromJson(Map<String, dynamic>.from(payload)),
+            ServerMessageModel.fromJson(payload),
           );
         } catch (error) {
           debugPrint('[SOCKET] Could not parse incoming message: $error');
@@ -113,44 +121,40 @@ class SocketChatService {
     _socket!.on('new_message', handleNewMessage);
     _socket!.on('newMessage', handleNewMessage);
 
-    // Keep the named handlers above for the documented event names, and use
-    // Socket.IO's catch-all as a compatibility path for backend message event
-    // names that differ between deployments.
+    // Socket.IO catch-all listener for non-standard event names across backend deployments.
     _socket!.onAny((event, data) {
       final eventName = event.toString();
       final normalized = eventName.toLowerCase();
       debugPrint('[SOCKET] Server event: $eventName');
       final eventData = data is List && data.isNotEmpty ? data.first : data;
-      if (eventData is Map &&
-          normalized.contains('typing') &&
-          eventName != 'typing') {
-        _typingStreamController.add(Map<String, dynamic>.from(eventData));
-      }
-      if (eventData is Map &&
-          (normalized.contains('presence') ||
-              normalized.contains('online') ||
-              normalized.contains('offline')) &&
-          eventName != 'presence') {
-        _presenceStreamController.add(Map<String, dynamic>.from(eventData));
-      }
-      if (normalized.contains('message') &&
-          !normalized.contains('edit') &&
-          !normalized.contains('delet') &&
-          !normalized.contains('reaction') &&
-          !normalized.contains('read') &&
-          eventName != 'realtime.newMessage' &&
-          eventName != 'new_message' &&
-          eventName != 'newMessage') {
-        handleNewMessage(data);
+      if (eventData is Map) {
+        final mapData = Map<String, dynamic>.from(eventData);
+        if (normalized.contains('typing') && eventName != 'typing') {
+          _typingStreamController.add(mapData);
+        }
+        if ((normalized.contains('presence') ||
+                normalized.contains('online') ||
+                normalized.contains('offline')) &&
+            eventName != 'presence') {
+          _presenceStreamController.add(mapData);
+        }
+        if (normalized.contains('message') &&
+            !normalized.contains('edit') &&
+            !normalized.contains('delet') &&
+            !normalized.contains('reaction') &&
+            !normalized.contains('read') &&
+            eventName != 'realtime.newMessage' &&
+            eventName != 'new_message' &&
+            eventName != 'newMessage') {
+          handleNewMessage(data);
+        }
       }
     });
 
     // 2. Message Edited
     _socket!.on('message_edited', (data) {
       debugPrint('[SOCKET] Event message_edited: $data');
-      if (data is Map<String, dynamic>) {
-        _messageEditedStreamController.add(data);
-      } else if (data is Map) {
+      if (data is Map) {
         _messageEditedStreamController.add(Map<String, dynamic>.from(data));
       }
     });
@@ -158,9 +162,7 @@ class SocketChatService {
     // 3. Message Deleted
     _socket!.on('message_deleted', (data) {
       debugPrint('[SOCKET] Event message_deleted: $data');
-      if (data is Map<String, dynamic>) {
-        _messageDeletedStreamController.add(data);
-      } else if (data is Map) {
+      if (data is Map) {
         _messageDeletedStreamController.add(Map<String, dynamic>.from(data));
       }
     });
@@ -168,9 +170,7 @@ class SocketChatService {
     // 4. Message Reaction
     _socket!.on('message_reaction', (data) {
       debugPrint('[SOCKET] Event message_reaction: $data');
-      if (data is Map<String, dynamic>) {
-        _messageReactionStreamController.add(data);
-      } else if (data is Map) {
+      if (data is Map) {
         _messageReactionStreamController.add(Map<String, dynamic>.from(data));
       }
     });
@@ -178,9 +178,7 @@ class SocketChatService {
     // 5. Messages Read
     _socket!.on('messages_read', (data) {
       debugPrint('[SOCKET] Event messages_read: $data');
-      if (data is Map<String, dynamic>) {
-        _readStreamController.add(data);
-      } else if (data is Map) {
+      if (data is Map) {
         _readStreamController.add(Map<String, dynamic>.from(data));
       }
     });
@@ -188,9 +186,7 @@ class SocketChatService {
     // 6. Typing Indicator
     _socket!.on('typing', (data) {
       debugPrint('[SOCKET] Event typing: $data');
-      if (data is Map<String, dynamic>) {
-        _typingStreamController.add(data);
-      } else if (data is Map) {
+      if (data is Map) {
         _typingStreamController.add(Map<String, dynamic>.from(data));
       }
     });
@@ -198,9 +194,7 @@ class SocketChatService {
     // 7. User Presence
     _socket!.on('presence', (data) {
       debugPrint('[SOCKET] Event presence: $data');
-      if (data is Map<String, dynamic>) {
-        _presenceStreamController.add(data);
-      } else if (data is Map) {
+      if (data is Map) {
         _presenceStreamController.add(Map<String, dynamic>.from(data));
       }
     });
@@ -225,7 +219,6 @@ class SocketChatService {
     String? fileType,
     int? replyToId,
     String? clientId,
-    Duration ackTimeout = const Duration(seconds: 15),
   }) async {
     if (!isConnected) {
       debugPrint('[SOCKET] Not connected. Cannot emit send_message.');
@@ -245,38 +238,18 @@ class SocketChatService {
       if (fileName != null) 'file_name': fileName,
       if (fileType != null) 'file_type': fileType,
     };
-    final completer = Completer<Map<String, dynamic>?>();
     debugPrint('[SOCKET] Emitting send_message: $payload');
-    _socket!.emitWithAck(
-      'send_message',
-      payload,
-      ack: (response) {
-        debugPrint('[SOCKET] send_message Ack Response: $response');
-        if (response is Map) {
-          completer.complete(Map<String, dynamic>.from(response));
-        } else {
-          completer.complete(null);
-        }
-      },
-    );
-    try {
-      return await completer.future.timeout(ackTimeout);
-    } on TimeoutException {
-      debugPrint('[SOCKET] send_message acknowledgement timed out.');
-      return null;
-    }
+    _socket!.emit('send_message', payload);
+    _socket!.emit('sendMessage', payload);
+    return {'status': 'emitted', ...payload};
   }
 
   /// edit_message: message_id, message
-  Future<Map<String, dynamic>?> editMessage({
+  void editMessage({
     required int messageId,
     required String message,
-    Duration ackTimeout = const Duration(seconds: 15),
-  }) async {
-    if (!isConnected) {
-      debugPrint('[SOCKET] Not connected. Cannot emit edit_message.');
-      return null;
-    }
+  }) {
+    if (!isConnected) return;
 
     final payload = <String, dynamic>{
       'message_id': messageId,
@@ -286,140 +259,60 @@ class SocketChatService {
       'text': message,
       'content': message,
     };
-    final completer = Completer<Map<String, dynamic>?>();
-    _socket!.emitWithAck(
-      'edit_message',
-      payload,
-      ack: (response) {
-        if (response is Map) {
-          completer.complete(Map<String, dynamic>.from(response));
-        } else {
-          completer.complete(null);
-        }
-      },
-    );
-    try {
-      return await completer.future.timeout(ackTimeout);
-    } on TimeoutException {
-      debugPrint('[SOCKET] edit_message acknowledgement timed out.');
-      return null;
-    }
+    debugPrint('[SOCKET] Emitting edit_message: $payload');
+    _socket!.emit('edit_message', payload);
   }
 
   /// delete_message: message_id
-  Future<Map<String, dynamic>?> deleteMessage({
+  void deleteMessage({
     required int messageId,
-    Duration ackTimeout = const Duration(seconds: 15),
-  }) async {
-    if (!isConnected) {
-      debugPrint('[SOCKET] Not connected. Cannot emit delete_message.');
-      return null;
-    }
+  }) {
+    if (!isConnected) return;
 
     final payload = <String, dynamic>{
       'message_id': messageId,
       'id': messageId,
     };
-    final completer = Completer<Map<String, dynamic>?>();
-    _socket!.emitWithAck(
-      'delete_message',
-      payload,
-      ack: (response) {
-        if (response is Map) {
-          completer.complete(Map<String, dynamic>.from(response));
-        } else {
-          completer.complete(null);
-        }
-      },
-    );
-    try {
-      return await completer.future.timeout(ackTimeout);
-    } on TimeoutException {
-      debugPrint('[SOCKET] delete_message acknowledgement timed out.');
-      return null;
-    }
+    debugPrint('[SOCKET] Emitting delete_message: $payload');
+    _socket!.emit('delete_message', payload);
   }
 
   /// react_message: message_id, chat_react
-  Future<Map<String, dynamic>?> reactMessage({
+  void reactMessage({
     required int messageId,
     required String chatReact,
-    Duration ackTimeout = const Duration(seconds: 15),
-  }) async {
-    if (!isConnected) {
-      debugPrint('[SOCKET] Not connected. Cannot emit react_message.');
-      return null;
-    }
+  }) {
+    if (!isConnected) return;
 
     final payload = <String, dynamic>{
       'message_id': messageId,
       'chat_react': chatReact,
       'reaction': chatReact,
     };
-    final completer = Completer<Map<String, dynamic>?>();
-    _socket!.emitWithAck(
-      'react_message',
-      payload,
-      ack: (response) {
-        if (response is Map) {
-          completer.complete(Map<String, dynamic>.from(response));
-        } else {
-          completer.complete(null);
-        }
-      },
-    );
-    try {
-      return await completer.future.timeout(ackTimeout);
-    } on TimeoutException {
-      debugPrint('[SOCKET] react_message acknowledgement timed out.');
-      return null;
-    }
+    debugPrint('[SOCKET] Emitting react_message: $payload');
+    _socket!.emit('react_message', payload);
   }
 
   /// mark_read: chat_head_id
-  Future<Map<String, dynamic>?> markRead({
+  void markRead({
     required int chatHeadId,
-    Duration ackTimeout = const Duration(seconds: 15),
-  }) async {
-    if (!isConnected) {
-      debugPrint('[SOCKET] Not connected. Cannot emit mark_read.');
-      return null;
-    }
+  }) {
+    if (!isConnected) return;
 
     final payload = <String, dynamic>{
       'chat_head_id': chatHeadId,
       'chat_id': chatHeadId,
     };
-    final completer = Completer<Map<String, dynamic>?>();
-    _socket!.emitWithAck(
-      'mark_read',
-      payload,
-      ack: (response) {
-        if (response is Map) {
-          completer.complete(Map<String, dynamic>.from(response));
-        } else {
-          completer.complete(null);
-        }
-      },
-    );
-    try {
-      return await completer.future.timeout(ackTimeout);
-    } on TimeoutException {
-      debugPrint('[SOCKET] mark_read acknowledgement timed out.');
-      return null;
-    }
+    debugPrint('[SOCKET] Emitting mark_read: $payload');
+    _socket!.emit('mark_read', payload);
   }
 
   /// typing: chat_head_id, is_typing
-  Future<Map<String, dynamic>?> sendTyping({
+  void sendTyping({
     required int chatHeadId,
     required bool isTyping,
-    Duration ackTimeout = const Duration(seconds: 15),
-  }) async {
-    if (!isConnected) {
-      debugPrint('[SOCKET] Not connected. Cannot emit typing.');
-      return null;
-    }
+  }) {
+    if (!isConnected) return;
 
     final payload = <String, dynamic>{
       'chat_head_id': chatHeadId,
@@ -427,23 +320,7 @@ class SocketChatService {
       'is_typing': isTyping,
       'typing': isTyping,
     };
-    final completer = Completer<Map<String, dynamic>?>();
-    _socket!.emitWithAck(
-      'typing',
-      payload,
-      ack: (response) {
-        if (response is Map) {
-          completer.complete(Map<String, dynamic>.from(response));
-        } else {
-          completer.complete(null);
-        }
-      },
-    );
-    try {
-      return await completer.future.timeout(ackTimeout);
-    } on TimeoutException {
-      debugPrint('[SOCKET] typing acknowledgement timed out.');
-      return null;
-    }
+    debugPrint('[SOCKET] Emitting typing: $payload');
+    _socket!.emit('typing', payload);
   }
 }

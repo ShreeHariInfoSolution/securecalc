@@ -9,9 +9,17 @@ class DeviceIdentityService {
 
   String? _cachedDeviceId;
 
-  /// Get or initialize the permanent device identity.
+  /// Get or initialize the permanent system/hardware device identity.
   Future<String> getDeviceId() async {
     if (_cachedDeviceId != null && _cachedDeviceId!.isNotEmpty) {
+      return _cachedDeviceId!;
+    }
+
+    final systemHardwareId = await AppPreferences.getSystemHardwareDeviceId();
+    if (systemHardwareId != null && systemHardwareId.isNotEmpty) {
+      _cachedDeviceId = systemHardwareId;
+      await AppPreferences.setDeviceId(systemHardwareId);
+      AppLogger.info('[DEVICE] Native System Device ID initialized: $_cachedDeviceId');
       return _cachedDeviceId!;
     }
 
@@ -27,6 +35,13 @@ class DeviceIdentityService {
 
   /// Create a new device ID if missing and persist it.
   Future<String> createDeviceIdIfMissing() async {
+    final systemHardwareId = await AppPreferences.getSystemHardwareDeviceId();
+    if (systemHardwareId != null && systemHardwareId.isNotEmpty) {
+      _cachedDeviceId = systemHardwareId;
+      await AppPreferences.setDeviceId(systemHardwareId);
+      return systemHardwareId;
+    }
+
     final existingId = AppPreferences.getDeviceIdSync();
     if (existingId != null && existingId.isNotEmpty) {
       _cachedDeviceId = existingId;

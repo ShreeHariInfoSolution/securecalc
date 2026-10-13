@@ -10,10 +10,13 @@ import 'package:securecalc/src/core/widgets/vault_edge_panel_wrapper.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/models/server_models.dart';
 import '../../domain/services/local_chat_storage.dart';
+import '../../domain/services/chat_invite_service.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
 import '../widgets/conversation_tile.dart';
 import 'chat_detail_page.dart';
+import 'share/scan_qr_page.dart';
+import 'share/share_qr_page.dart';
 
 class ConversationListPage extends StatefulWidget {
   final bool isDuressMode;
@@ -51,6 +54,96 @@ class _ConversationListPageState extends State<ConversationListPage> {
         setState(() => _isSyncing = false);
       }
     }
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : null),
+    );
+  }
+
+  Future<void> _startChatFromCode(String value) async {
+    final targetId = ChatInvite.targetUserIdFrom(value);
+    if (targetId == null) {
+      _showMessage('Paste a valid SecureCalc profile code or user ID.', isError: true);
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      final conversation = await DirectChatStarter.instance.start(targetId);
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => ChatDetailPage(conversation: conversation)),
+      );
+    } catch (error) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        _showMessage('Could not start chat: $error', isError: true);
+      }
+    }
+  }
+
+  void _showPasteCodeSheet() {
+    final controller = TextEditingController();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? AppTheme.darkSurface
+          : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.fromLTRB(24, 24, 24, 24 + MediaQuery.viewInsetsOf(sheetContext).bottom),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Paste profile code', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          const Text('Paste a copied SecureCalc profile code or a user ID.'),
+          const SizedBox(height: 18),
+          TextField(controller: controller, autofocus: true, minLines: 1, maxLines: 3, decoration: const InputDecoration(hintText: 'securecalc://chat?target_id=…', border: OutlineInputBorder())),
+          const SizedBox(height: 16),
+          SizedBox(width: double.infinity, child: ElevatedButton.icon(
+            icon: const Icon(CupertinoIcons.chat_bubble_2_fill), label: const Text('Start chat'),
+            onPressed: () { final value = controller.text; Navigator.of(sheetContext).pop(); _startChatFromCode(value); },
+          )),
+        ]),
+      ),
+    ).whenComplete(controller.dispose);
+  }
+
+  void _showNewChatActionsSheet() {
+    final userId = ServerApiService.instance.currentUserId;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).brightness == Brightness.dark ? AppTheme.darkSurface : Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(width: 38, height: 4, decoration: BoxDecoration(color: AppTheme.subtitleGrey.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(4))),
+              const SizedBox(height: 16),
+              const Text('New chat', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              ListTile(leading: const Icon(CupertinoIcons.person_crop_circle_badge_plus), title: const Text('Find a user'), subtitle: const Text('Search registered SecureCalc users'), onTap: () { Navigator.of(sheetContext).pop(); _showUserSearchSheet(context); }),
+              // ListTile(leading: const Icon(CupertinoIcons.person_3), title: const Text('New group'), subtitle: const Text('Create a secure group chat'), onTap: () { Navigator.of(sheetContext).pop(); _showCreateGroupSheet(context); }),
+              ListTile(leading: const Icon(CupertinoIcons.qrcode_viewfinder), title: const Text('Scan QR code'), subtitle: const Text('Scan someone’s SecureCalc profile'), onTap: () async { Navigator.of(sheetContext).pop(); final value = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const ScanQrPage())); if (value != null && mounted) _startChatFromCode(value); }),
+              ListTile(leading: const Icon(CupertinoIcons.doc_on_clipboard), title: const Text('Paste profile code'), subtitle: const Text('Paste a code or numeric user ID'), onTap: () { Navigator.of(sheetContext).pop(); _showPasteCodeSheet(); }),
+              if (userId != null) ListTile(leading: const Icon(CupertinoIcons.qrcode), title: const Text('Share my profile'), subtitle: const Text('Show QR code, copy code, or share link'), onTap: () { Navigator.of(sheetContext).pop(); Navigator.of(context).push(MaterialPageRoute(builder: (_) => ShareQrPage(title: 'My profile QR', subtitle: 'Let someone scan this code to start a secure chat with you.', shareLink: ChatInvite.forUser(userId)))); }),
+            ]),
+          ),
+        ),
+      ),
+    );
   }
 
   void _showUserSearchSheet(BuildContext context) {
@@ -294,46 +387,9 @@ class _ConversationListPageState extends State<ConversationListPage> {
                                       () => openingChatForUserId = u.id,
                                     );
                                     try {
-                                      final serverChat = await ServerApiService
-                                          .instance
-                                          .createDirectChat(u.id);
-                                      if (serverChat.id <= 0) {
-                                        throw Exception(
-                                          'The server did not return a valid chat ID.',
-                                        );
-                                      }
-                                      await LocalChatStorage.instance
-                                          .createOrGetConversation(
-                                            deviceId: serverChat.id.toString(),
-                                            displayName: u.name,
-                                            avatarUrl: u.avatar,
-                                            peerUserId: u.id,
-                                          );
-                                      final cachedChats = await LocalChatStorage
-                                          .instance
-                                          .loadConversations();
-                                      ChatConversation? cachedConversation;
-                                      for (final chat in cachedChats) {
-                                        if (chat.id ==
-                                            serverChat.id.toString()) {
-                                          cachedConversation = chat;
-                                          break;
-                                        }
-                                      }
                                       final conversation =
-                                          cachedConversation ??
-                                          ChatConversation(
-                                            id: serverChat.id.toString(),
-                                            name: u.name,
-                                            avatarUrl: u.avatar ?? '',
-                                            lastMessage: 'Tap to start thread',
-                                            lastMessageTime: 'Just now',
-                                            lastActivityAt: DateTime.now(),
-                                            unreadCount: 0,
-                                            isPinned: false,
-                                            peerUserId: u.id,
-                                            messages: [],
-                                          );
+                                          await DirectChatStarter.instance
+                                              .start(u.id);
                                       if (!context.mounted) return;
                                       Navigator.of(context).pop();
                                       if (mounted) {
@@ -921,7 +977,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
 
                               // New Chat Server User Search Button
                               GestureDetector(
-                                onTap: () => _showUserSearchSheet(context),
+                                onTap: _showNewChatActionsSheet,
                                 child: Container(
                                   width: 32,
                                   height: 32,

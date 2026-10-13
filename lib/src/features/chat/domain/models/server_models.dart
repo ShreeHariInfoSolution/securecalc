@@ -86,19 +86,33 @@ class UserModel {
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
+    final rawId = json['id'] ?? json['user_id'] ?? json['userId'];
+    final id = rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? 0);
+
     return UserModel(
-      id: json['id'] is int ? json['id'] : int.tryParse(json['id'].toString()) ?? 0,
-      name: json['name'] ?? 'User',
-      phone: json['phone']?.toString(),
+      id: id,
+      name: json['name']?.toString() ??
+          json['username']?.toString() ??
+          json['full_name']?.toString() ??
+          json['fullName']?.toString() ??
+          'User',
+      phone: (json['phone'] ?? json['phone_number'] ?? json['phoneNumber'])?.toString(),
       email: json['email']?.toString(),
-      publicKey: json['public_key']?.toString(),
-      avatar: json['avatar']?.toString(),
+      publicKey: (json['public_key'] ?? json['publicKey'])?.toString(),
+      avatar: (json['avatar'] ?? json['avatar_url'] ?? json['avatarUrl'] ?? json['profile_pic'] ?? json['profilePic'])?.toString(),
       role: json['role']?.toString(),
-      encryptedPrivateKey: json['encrypted_private_key']?.toString(),
-      keySalt: json['key_salt']?.toString(),
-      keyIv: json['key_iv']?.toString(),
-      isOnline: json['is_online'] == true || json['is_online'] == 1,
-      lastSeenAt: json['last_seen_at']?.toString(),
+      encryptedPrivateKey: (json['encrypted_private_key'] ?? json['encryptedPrivateKey'])?.toString(),
+      keySalt: (json['key_salt'] ?? json['keySalt'])?.toString(),
+      keyIv: (json['key_iv'] ?? json['keyIv'])?.toString(),
+      isOnline: json['is_online'] == true ||
+          json['is_online'] == 1 ||
+          json['is_online'] == 'true' ||
+          json['is_online'] == '1' ||
+          json['isOnline'] == true ||
+          json['isOnline'] == 1 ||
+          json['isOnline'] == 'true' ||
+          json['isOnline'] == '1',
+      lastSeenAt: (json['last_seen_at'] ?? json['lastSeenAt'])?.toString(),
     );
   }
 
@@ -177,45 +191,111 @@ class ServerChatModel {
 
   factory ServerChatModel.fromJson(Map<String, dynamic> json) {
     List<UserModel> membersList = [];
-    if (json['members'] != null && json['members'] is List) {
-      membersList = (json['members'] as List)
-          .map((m) => UserModel.fromJson(m is Map<String, dynamic> ? m : {}))
+    final rawMembers = json['members'] ??
+        json['participants'] ??
+        json['users'] ??
+        json['members_list'] ??
+        json['membersList'];
+
+    if (rawMembers != null && rawMembers is List) {
+      membersList = rawMembers
+          .map((m) => UserModel.fromJson(
+                m is Map<String, dynamic>
+                    ? m
+                    : (m is Map ? Map<String, dynamic>.from(m) : {}),
+              ))
           .toList();
+    } else if (json['other_user'] is Map) {
+      membersList = [
+        UserModel.fromJson(Map<String, dynamic>.from(json['other_user'] as Map))
+      ];
+    } else if (json['otherUser'] is Map) {
+      membersList = [
+        UserModel.fromJson(Map<String, dynamic>.from(json['otherUser'] as Map))
+      ];
+    } else if (json['user'] is Map) {
+      membersList = [
+        UserModel.fromJson(Map<String, dynamic>.from(json['user'] as Map))
+      ];
+    } else if (json['peer'] is Map) {
+      membersList = [
+        UserModel.fromJson(Map<String, dynamic>.from(json['peer'] as Map))
+      ];
     }
 
-    final lastMessageJson = json['last_message'] is Map
-        ? Map<String, dynamic>.from(json['last_message'] as Map)
+    final rawLastMessage = json['last_message'] ??
+        json['lastMessage'] ??
+        json['latest_message'] ??
+        json['latestMessage'] ??
+        json['last_msg'] ??
+        json['lastMsg'];
+
+    final lastMessageJson = rawLastMessage is Map
+        ? Map<String, dynamic>.from(rawLastMessage as Map)
         : <String, dynamic>{};
-    final rawLastMessage = json['last_message'];
+
+    final rawId = json['id'] ??
+        json['chat_head_id'] ??
+        json['chatHeadId'] ??
+        json['chat_id'] ??
+        json['chatId'];
+
+    final rawUnread = json['unread'] ??
+        json['unread_count'] ??
+        json['unreadCount'] ??
+        json['unread_messages_count'] ??
+        json['unreadMessagesCount'];
+
+    final unreadVal = rawUnread is int
+        ? rawUnread
+        : int.tryParse(rawUnread?.toString() ?? '0') ?? 0;
+
+    final rawGroup = json['is_group'] ??
+        json['isGroup'] ??
+        json['is_group_chat'] ??
+        json['isGroupChat'];
+
+    final isGroupVal = rawGroup == true ||
+        rawGroup == 1 ||
+        rawGroup == 'true' ||
+        rawGroup == '1' ||
+        json['type'] == 'group';
+
     return ServerChatModel(
-      id: (json['id'] ?? json['chat_head_id']) is int
-          ? (json['id'] ?? json['chat_head_id']) as int
-          : int.tryParse(
-                (json['id'] ?? json['chat_head_id'])?.toString() ?? '',
-              ) ??
-              0,
-      groupName: json['group_name']?.toString(),
-      groupAvatar: json['group_avatar']?.toString(),
-      isGroup: json['is_group'] == true || json['is_group'] == 1,
+      id: rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? 0),
+      groupName: (json['group_name'] ?? json['groupName'] ?? json['name'] ?? json['title'])?.toString(),
+      groupAvatar: (json['group_avatar'] ?? json['groupAvatar'] ?? json['avatar'] ?? json['icon'])?.toString(),
+      isGroup: isGroupVal,
       lastMessageCiphertext: lastMessageJson['ciphertext']?.toString() ??
-          json['last_message_ciphertext']?.toString(),
+          lastMessageJson['encrypted_message']?.toString() ??
+          json['last_message_ciphertext']?.toString() ??
+          json['lastMessageCiphertext']?.toString() ??
+          json['ciphertext']?.toString(),
       lastMessage: lastMessageJson['message']?.toString() ??
+          lastMessageJson['text']?.toString() ??
+          lastMessageJson['content']?.toString() ??
           (rawLastMessage is String ? rawLastMessage : null),
-      lastMessageFilePath: lastMessageJson['file_path']?.toString(),
-      lastMessageFileName: lastMessageJson['file_name']?.toString(),
+      lastMessageFilePath: lastMessageJson['file_path']?.toString() ??
+          lastMessageJson['filePath']?.toString() ??
+          lastMessageJson['file_url']?.toString() ??
+          lastMessageJson['fileUrl']?.toString(),
+      lastMessageFileName: lastMessageJson['file_name']?.toString() ??
+          lastMessageJson['fileName']?.toString() ??
+          lastMessageJson['name']?.toString(),
       lastMessageId: int.tryParse(lastMessageJson['id']?.toString() ?? ''),
-      lastMessageSenderId: int.tryParse(lastMessageJson['sender_id']?.toString() ?? ''),
-      lastMessageCreatedAt: lastMessageJson['created_at']?.toString(),
-      unreadCount: json['unread'] is int ? json['unread'] : int.tryParse(json['unread']?.toString() ?? '0') ?? 0,
+      lastMessageSenderId: int.tryParse(
+          (lastMessageJson['sender_id'] ?? lastMessageJson['senderId'] ?? lastMessageJson['user_id'])?.toString() ?? ''),
+      lastMessageCreatedAt: (lastMessageJson['created_at'] ?? lastMessageJson['createdAt'] ?? json['last_message_created_at'] ?? json['lastMessageCreatedAt'])?.toString(),
+      unreadCount: unreadVal,
       members: membersList,
-      updatedAt: json['updated_at']?.toString(),
-      createdAt: json['created_at']?.toString(),
+      updatedAt: (json['updated_at'] ?? json['updatedAt'])?.toString(),
+      createdAt: (json['created_at'] ?? json['createdAt'])?.toString(),
       createdBy: json['created_by'] is int
-          ? json['created_by']
-          : int.tryParse(json['created_by']?.toString() ?? ''),
+          ? json['created_by'] as int
+          : int.tryParse((json['created_by'] ?? json['createdBy'])?.toString() ?? ''),
       totalMembers: json['total_members'] is int
-          ? json['total_members']
-          : int.tryParse(json['total_members']?.toString() ?? ''),
+          ? json['total_members'] as int
+          : int.tryParse((json['total_members'] ?? json['totalMembers'])?.toString() ?? ''),
     );
   }
 }
@@ -315,7 +395,7 @@ class AuthResponseModel {
     final data = json['data'] is Map<String, dynamic> ? json['data'] : json;
     return AuthResponseModel(
       token: data['token']?.toString() ?? '',
-      user: UserModel.fromJson(data['user'] is Map<String, dynamic> ? data['user'] : data),
+      user: UserModel.fromJson(data['user'] is Map<String, dynamic> ? data['user'] : (data['user'] != null ? Map<String, dynamic>.from(data['user']) : <String, dynamic>{})),
     );
   }
 }

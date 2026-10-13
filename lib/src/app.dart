@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'core/config/app_preferences.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/font_size_controller.dart';
 import 'core/theme/theme_controller.dart';
 import 'features/calculator/presentation/pages/calculator_page.dart';
+import 'features/chat/domain/services/server_api_service.dart';
+import 'features/chat/domain/services/server_chat_manager.dart';
+import 'features/chat/domain/services/socket_chat_service.dart';
 
 /// Global key to access root navigator state from lifecycle events.
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -27,6 +31,13 @@ class _SynqChatAppState extends State<SynqChatApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (AppPreferences.isPickerActive || AppPreferences.isChangingSettings) return;
+
+    if (state == AppLifecycleState.resumed) {
+      if (ServerApiService.instance.authToken != null) {
+        SocketChatService.instance.connect();
+        unawaited(ServerChatManager.instance.syncChats());
+      }
+    }
 
     // Lock back to Calculator when app is minimized, sent to background, or in Recents App switcher
     if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {

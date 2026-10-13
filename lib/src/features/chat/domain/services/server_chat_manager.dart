@@ -89,7 +89,6 @@ class ServerChatManager {
   }
 
   /// Fetches latest chats from GET /api/chats and updates the chat list.
-  /// Live message events update the list locally without calling this method.
   Future<List<ChatConversation>> syncChats() async {
     final syncUserId = ServerApiService.instance.currentUserId;
     final syncToken = ServerApiService.instance.authToken;
@@ -125,10 +124,26 @@ class ServerChatManager {
       final otherMembers = sc.members
           .where((member) => member.id != currentUserId)
           .toList();
-      final peer = otherMembers.isNotEmpty ? otherMembers.first : null;
+      final peer = otherMembers.isNotEmpty
+          ? otherMembers.first
+          : (sc.members.isNotEmpty ? sc.members.first : null);
+
+      String peerDisplayName = peer?.name ?? '';
+      if (peerDisplayName.trim().isEmpty || peerDisplayName == 'User') {
+        if (peer != null && peer.id > 0) {
+          peerDisplayName = 'User #${peer.id}';
+        } else {
+          peerDisplayName = 'User';
+        }
+      }
+
       final name = sc.isGroup
-          ? (sc.groupName ?? 'Group chat')
-          : (peer?.name ?? sc.groupName ?? 'Chat #${sc.id}');
+          ? ((sc.groupName != null && sc.groupName!.isNotEmpty)
+              ? sc.groupName!
+              : 'Group chat')
+          : (peer != null
+              ? peerDisplayName
+              : (sc.groupName ?? 'Chat #${sc.id}'));
       final avatar = sc.isGroup
           ? (sc.groupAvatar ?? '')
           : (peer?.avatar ?? sc.groupAvatar ?? '');
@@ -155,7 +170,7 @@ class ServerChatManager {
         );
       }
       if (lastMsgText.isEmpty) lastMsgText = 'No messages yet';
-      if (cachedMessageIsNewer && newestCachedMessage != null) {
+      if (cachedMessageIsNewer) {
         lastMsgText = newestCachedMessage.previewText.isNotEmpty
             ? newestCachedMessage.previewText
             : '[Attachment]';
@@ -166,10 +181,10 @@ class ServerChatManager {
         name: name,
         avatarUrl: avatar,
         lastMessage: lastMsgText,
-        lastMessageTime: cachedMessageIsNewer && newestCachedMessage != null
-            ? _formatChatTime(newestCachedMessage!.timestamp.toIso8601String())
+        lastMessageTime: cachedMessageIsNewer
+            ? _formatChatTime(newestCachedMessage.timestamp.toIso8601String())
             : _formatChatTime(sc.lastMessageCreatedAt ?? sc.updatedAt),
-        lastActivityAt: cachedMessageIsNewer && newestCachedMessage != null
+        lastActivityAt: cachedMessageIsNewer
             ? newestCachedMessage.timestamp
             : serverLastMessageTime ??
                   DateTime.tryParse(sc.updatedAt ?? '')?.toLocal() ??
@@ -188,7 +203,7 @@ class ServerChatManager {
         memberNames: {for (final member in sc.members) member.id: member.name},
         isPinned: previous?.isPinned ?? false,
         isMuted: previous?.isMuted ?? false,
-        messages: [],
+        messages: cachedMessages,
       );
 
       conversations.add(conversation);
@@ -227,7 +242,7 @@ class ServerChatManager {
     return '${parsed.day}/${parsed.month}/${parsed.year}';
   }
 
-  /// Loads a single page of message history from GET /api/chats/:id/messages?page={page}&limit={limit}
+  /// Loads a single page of message history
   Future<PaginatedMessagesResult> loadMessagesPage(
     String chatId, {
     int page = 1,
@@ -313,10 +328,8 @@ class ServerChatManager {
         );
       }
 
-      // Sort page messages chronologically
       messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-      // Cache messages locally
       final mergedById = {for (final message in cachedMessages) message.id: message};
       for (final message in messages) {
         mergedById[message.id] = message;
@@ -345,13 +358,13 @@ class ServerChatManager {
     }
   }
 
-  /// Loads latest message page for backward compatibility
+  /// Loads latest message page
   Future<List<ChatMessage>> loadMessages(String chatId) async {
     final res = await loadMessagesPage(chatId, page: 1, limit: 20);
     return res.messages;
   }
 
-  /// Sends a new message via REST API / Socket.IO
+  /// Sends a new message via REST API and Socket.IO
   Future<bool> sendMessage({
     required String chatId,
     required String peerName,
@@ -373,11 +386,23 @@ class ServerChatManager {
       'chat_key_$chatId',
     );
 
-    // The supported send contract is POST /api/chats/{chat_id}/messages.
-    // Socket.IO remains responsible for receiving real-time messages; its
-    // send_message acknowledgement currently rejects this payload as missing
-    // `message`, even when the field is present. Send through REST directly.
-    if (serverMessage == null && numericId > 0) {
+    // 1. Emit via Socket.IO for immediate real-time peer delivery
+    if (numericId > 0 && SocketChatService.instance.isConnected) {
+      unawaited(
+        SocketChatService.instance.sendMessage(
+          chatId: numericId,
+          message: encryptedText,
+          filePath: filePath,
+          fileName: fileName,
+          fileType: fileType,
+          replyToId: replyToId,
+          clientId: clientId,
+        ),
+      );
+    }
+
+    // 2. Persist via REST API
+    if (numericId > 0) {
       try {
         serverMessage = await ServerApiService.instance.sendMessageREST(
           chatId: numericId,
@@ -405,7 +430,6 @@ class ServerChatManager {
       return false;
     }
 
-    // Cache the server-confirmed message for display and offline fallback.
     final msg = ChatMessage(
       id:
           serverMessage?.id.toString() ??
@@ -429,6 +453,8 @@ class ServerChatManager {
       peerUserId: peerUserId,
     );
 
+    unawaited(syncChats());
+
     return true;
   }
 
@@ -437,11 +463,44 @@ class ServerChatManager {
     final numericId = int.tryParse(chatId) ?? 0;
     if (numericId > 0) {
       if (SocketChatService.instance.isConnected) {
-        unawaited(SocketChatService.instance.markRead(chatHeadId: numericId));
+        SocketChatService.instance.markRead(chatHeadId: numericId);
       }
       unawaited(ServerApiService.instance.markChatRead(numericId));
     }
     await LocalChatStorage.instance.markAsRead(chatId);
+  }
+
+  /// Resolves server chat metadata (peer name, avatar, members) when a new chat event arrives.
+  Future<void> _resolveChatDetailsAndSync(int chatId) async {
+    final chatIdStr = chatId.toString();
+    try {
+      final details = await ServerApiService.instance.getChatDetails(chatId);
+      if (details != null) {
+        final currentUserId = ServerApiService.instance.currentUserId;
+        final otherMembers = details.members
+            .where((member) => member.id != currentUserId)
+            .toList();
+        final peer = otherMembers.isNotEmpty
+            ? otherMembers.first
+            : (details.members.isNotEmpty ? details.members.first : null);
+
+        final name = details.isGroup
+            ? (details.groupName ?? 'Group chat')
+            : (peer?.name ?? 'User #$chatId');
+        final avatar = details.isGroup
+            ? (details.groupAvatar ?? '')
+            : (peer?.avatar ?? details.groupAvatar ?? '');
+
+        await LocalChatStorage.instance.updatePeerProfile(
+          deviceId: chatIdStr,
+          displayName: name,
+          avatarUrl: avatar,
+        );
+      }
+    } catch (e) {
+      debugPrint('[SERVER CHAT] Resolve details failed for $chatId: $e');
+    }
+    unawaited(syncChats());
   }
 
   Future<void> _handleEditedMessage(Map<String, dynamic> event) async {
@@ -453,8 +512,8 @@ class ServerChatManager {
       data = Map<String, dynamic>.from(data['message'] as Map);
     }
 
-    final messageId = (data['id'] ?? data['message_id'])?.toString();
-    final chatId = (data['chat_head_id'] ?? data['chat_id'])?.toString();
+    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])?.toString();
+    final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
     final rawText = data['message']?.toString() ?? data['ciphertext']?.toString();
     if (messageId == null || chatId == null || rawText == null) return;
 
@@ -484,8 +543,8 @@ class ServerChatManager {
     if (data['message'] is Map) {
       data = Map<String, dynamic>.from(data['message'] as Map);
     }
-    final messageId = (data['id'] ?? data['message_id'])?.toString();
-    final chatId = (data['chat_head_id'] ?? data['chat_id'])?.toString();
+    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])?.toString();
+    final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
     if (messageId == null || chatId == null) return;
 
     final messages = await LocalChatStorage.instance.loadMessages(chatId);
@@ -510,8 +569,8 @@ class ServerChatManager {
     if (data['message'] is Map) {
       data = Map<String, dynamic>.from(data['message'] as Map);
     }
-    final messageId = (data['id'] ?? data['message_id'])?.toString();
-    final chatId = (data['chat_head_id'] ?? data['chat_id'])?.toString();
+    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])?.toString();
+    final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
     final reaction = normalizeChatReaction(
       data['chat_react'] ?? data['reaction'],
     );
@@ -532,16 +591,16 @@ class ServerChatManager {
     final data = event['data'] is Map
         ? Map<String, dynamic>.from(event['data'] as Map)
         : event;
-    final chatId = (data['chat_head_id'] ?? data['chat_id'])?.toString();
+    final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
     if (chatId == null) return;
     final senderId = int.tryParse(
-      (data['user_id'] ?? data['userId'])?.toString() ?? '',
+      (data['user_id'] ?? data['userId'] ?? data['sender_id'] ?? data['senderId'])?.toString() ?? '',
     );
     if (senderId != null &&
         senderId == ServerApiService.instance.currentUserId) {
       return;
     }
-    final typingValue = data['is_typing'] ?? data['typing'];
+    final typingValue = data['is_typing'] ?? data['typing'] ?? data['isTyping'];
     final isTyping =
         typingValue == true ||
         typingValue == 1 ||
@@ -553,10 +612,18 @@ class ServerChatManager {
     } else {
       _typingChatIds.remove(chatId);
     }
-    await LocalChatStorage.instance.updateConversation(
-      chatId,
-      (conversation) => conversation.copyWith(isTyping: isTyping),
-    );
+
+    final existingList = LocalChatStorage.instance.conversationsNotifier.value;
+    final exists = existingList.any((c) => c.id == chatId);
+    if (exists) {
+      await LocalChatStorage.instance.updateConversation(
+        chatId,
+        (conversation) => conversation.copyWith(isTyping: isTyping),
+      );
+    } else if (isTyping) {
+      unawaited(_resolveChatDetailsAndSync(int.parse(chatId)));
+    }
+
     if (isTyping) {
       _typingTimers[chatId] = Timer(const Duration(seconds: 5), () {
         _typingTimers.remove(chatId);
@@ -642,16 +709,32 @@ class ServerChatManager {
           replyToId: sm.replyToId,
         );
 
+        final conversations = LocalChatStorage.instance.conversationsNotifier.value;
+        final existing = conversations.cast<ChatConversation?>().firstWhere(
+          (c) => c?.id == incomingChatId,
+          orElse: () => null,
+        );
+
+        final peerName = existing != null && !existing.name.startsWith('User #') && !existing.name.startsWith('Chat #')
+            ? existing.name
+            : 'User #${sm.senderId}';
+
         await LocalChatStorage.instance.saveMessage(
           deviceId: incomingChatId,
-          peerName: 'User #${sm.senderId}',
+          peerName: peerName,
           message: msg,
           markUnread: activeChatId != incomingChatId,
           clearTyping: true,
           peerUserId: isMe ? null : sm.senderId,
         );
+
         if (activeChatId == incomingChatId) {
           await LocalChatStorage.instance.markAsRead(incomingChatId);
+        }
+
+        // If thread is brand new or has placeholder name, resolve chat details in background
+        if (existing == null || existing.name.startsWith('User #') || existing.name.startsWith('Chat #')) {
+          unawaited(_resolveChatDetailsAndSync(sm.chatHeadId));
         }
       }),
     );
@@ -687,7 +770,7 @@ class ServerChatManager {
       SocketChatService.instance.onRead.listen((data) async {
         if (generation != _socketGeneration) return;
         debugPrint('[SERVER CHAT] Socket messages read event: $data');
-        final chatId = (data['chat_head_id'] ?? data['chat_id'])?.toString();
+        final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
         if (chatId != null) {
           await LocalChatStorage.instance.markAllOutgoingMessagesAsRead(chatId);
         }

@@ -76,11 +76,12 @@ class AppPreferences {
     edgePanelYNotifier.value = _prefs.getDouble(_keyEdgePanelY) ?? 0.28;
 
     // 6. Restore/Initialize Device Identity
-    final existingId = _prefs.getString(_keyDeviceId) ?? _prefs.getString(deviceIdKey);
+    String? existingId = _prefs.getString(_keyDeviceId) ?? _prefs.getString(deviceIdKey);
     if (existingId == null || existingId.isEmpty) {
-      final newId = 'device_${const Uuid().v4()}';
-      await _prefs.setString(_keyDeviceId, newId);
-      await _prefs.setString(deviceIdKey, newId);
+      final hardwareId = await getSystemHardwareDeviceId();
+      existingId = hardwareId ?? 'device_${const Uuid().v4()}';
+      await _prefs.setString(_keyDeviceId, existingId);
+      await _prefs.setString(deviceIdKey, existingId);
     }
 
     await updateSecureFlag();
@@ -156,6 +157,18 @@ class AppPreferences {
 
   static String getDisappearingTimer() =>
       _prefs.getString(_keyDisappearingTimer) ?? '24 hours';
+
+  static Future<String?> getSystemHardwareDeviceId() async {
+    try {
+      final String? id = await _securityChannel.invokeMethod<String>('getSystemDeviceId');
+      if (id != null && id.isNotEmpty) {
+        return id;
+      }
+    } catch (e) {
+      debugPrint('[AppPreferences] Get system hardware device ID failed: $e');
+    }
+    return null;
+  }
 
   static Future<void> setDeviceId(String id) async {
     await _prefs.setString(_keyDeviceId, id);

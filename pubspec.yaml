@@ -28,11 +28,14 @@ dependencies:
   socket_io_client: ^3.1.6
   crypto: ^3.0.3
   encrypt: ^5.0.3
-  share_plus: ^13.3.0
+  share_plus: ^13.3.1
   fluttertoast: ^10.0.0
   upgrader: ^13.7.0
   package_info_plus: ^10.2.2
-
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.4.2
+  app_links: ^7.2.2
+  url_launcher: ^6.3.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

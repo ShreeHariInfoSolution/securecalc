@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/scheduler.dart';
@@ -35,6 +36,9 @@ class LocalChatStorage {
     _accountId = accountId;
     _accountEpoch++;
     conversationsNotifier.value = const [];
+    if (accountId != null) {
+      unawaited(loadConversations());
+    }
   }
 
   void _setConversationsNotifier(List<ChatConversation> list) {

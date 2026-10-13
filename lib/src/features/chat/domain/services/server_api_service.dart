@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/server_models.dart';
 import 'e2e_crypto_service.dart';
 import 'local_chat_storage.dart';
+import 'server_chat_manager.dart';
+import 'socket_chat_service.dart';
+import 'package:securecalc/src/features/calling/domain/services/device_identity_service.dart';
 
 /// Central REST API Service connecting Flutter client to https://synqerp.com/calculatorchat/api/
 class ServerApiService {
@@ -47,8 +51,9 @@ class ServerApiService {
     final previousUserId =
         _currentUserId ?? prefs.getInt(_authUserIdKey);
     if (previousUserId != null && previousUserId != userId) {
-      // Defensively isolate account switches even if login happens without
-      // the normal logout path completing first.
+      debugPrint('[AUTH] Account switch detected ($previousUserId -> $userId). Isolating session...');
+      SocketChatService.instance.disconnect();
+      ServerChatManager.instance.activeChatId = null;
       await LocalChatStorage.instance.clearChats();
     }
 
@@ -61,6 +66,7 @@ class ServerApiService {
     if (_currentUser != null) {
       await prefs.setString(_authUserKey, jsonEncode(_currentUser!.toJson()));
     }
+    unawaited(ServerChatManager.instance.init());
   }
 
   Future<void> clearSession() async {
@@ -122,6 +128,7 @@ class ServerApiService {
     required String password,
   }) async {
     final pubKey = E2eCryptoService.instance.generatePublicKey();
+    final deviceId = await DeviceIdentityService.instance.getDeviceId();
     final body = {
       'name': name,
       'phone': phone,
@@ -131,6 +138,7 @@ class ServerApiService {
       'encrypted_private_key': 'backup_enc_priv_key',
       'key_salt': 'salt_123',
       'key_iv': 'iv_123',
+      'device_key': deviceId,
     };
 
     final res = await http.post(
@@ -160,9 +168,11 @@ class ServerApiService {
     required String phoneOrEmail,
     required String password,
   }) async {
+    final deviceId = await DeviceIdentityService.instance.getDeviceId();
     final body = {
       if (phoneOrEmail.contains('@')) 'email': phoneOrEmail else 'phone': phoneOrEmail,
       'password': password,
+      'device_key': deviceId,
     };
 
     final res = await http.post(
@@ -181,6 +191,34 @@ class ServerApiService {
         throw Exception('Wrong credentials');
       }
       String cleanError = 'Wrong credentials';
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          cleanError = decoded['message'] ?? decoded['error'] ?? decoded['msg'] ?? cleanError;
+        }
+      } catch (_) {}
+      throw Exception(cleanError);
+    }
+  }
+
+  Future<AuthResponseModel> deviceLogin(String deviceKey) async {
+    final body = {
+      'device_key': deviceKey,
+    };
+
+    final res = await http.post(
+      Uri.parse('$baseUrl/auth/device-login'),
+      headers: _headers(requiresAuth: false),
+      body: jsonEncode(body),
+    );
+
+    if (res.statusCode == 200 || res.statusCode == 201) {
+      final json = jsonDecode(res.body);
+      final auth = AuthResponseModel.fromJson(json);
+      await saveSession(auth.token, auth.user.id, user: auth.user);
+      return auth;
+    } else {
+      String cleanError = 'Device login failed';
       try {
         final decoded = jsonDecode(res.body);
         if (decoded is Map) {
@@ -288,7 +326,7 @@ class ServerApiService {
       final res = await http.get(Uri.parse('$baseUrl/users/$id'), headers: _headers());
       if (res.statusCode == 200) {
         final json = jsonDecode(res.body);
-        final data = json['data'] is Map<String, dynamic> ? json['data'] : json;
+        final data = json['data'] is Map<String, dynamic> ? json['data'] as Map<String, dynamic> : json;
         return UserModel.fromJson(data);
       }
     } catch (e) {
@@ -307,8 +345,28 @@ class ServerApiService {
       );
       if (res.statusCode == 200) {
         final json = jsonDecode(res.body);
-        final list = json['data'] is List ? json['data'] as List : [];
-        return list.map((c) => ServerChatModel.fromJson(c)).toList();
+        List list = [];
+        if (json is List) {
+          list = json;
+        } else if (json is Map) {
+          if (json['data'] is List) {
+            list = json['data'] as List;
+          } else if (json['chats'] is List) {
+            list = json['chats'] as List;
+          } else if (json['chat_heads'] is List) {
+            list = json['chat_heads'] as List;
+          } else if (json['chatHeads'] is List) {
+            list = json['chatHeads'] as List;
+          } else if (json['items'] is List) {
+            list = json['items'] as List;
+          } else if (json['results'] is List) {
+            list = json['results'] as List;
+          }
+        }
+        return list
+            .map((c) => ServerChatModel.fromJson(
+                c is Map<String, dynamic> ? c : Map<String, dynamic>.from(c as Map)))
+            .toList();
       }
       throw Exception('Get Chats Failed (${res.statusCode}): ${res.body}');
     } catch (e) {
@@ -341,17 +399,34 @@ class ServerApiService {
       'user_id': targetUserId,
     };
 
+    final url = '$baseUrl/chats/direct';
+    debugPrint('[API] POST $url with body: ${jsonEncode(body)}');
+
     final res = await http.post(
-      Uri.parse('$baseUrl/chats/direct'),
+      Uri.parse(url),
       headers: _headers(),
       body: jsonEncode(body),
     );
 
+    debugPrint('[API] Create Direct Chat Response (${res.statusCode}): ${res.body}');
+
     if (res.statusCode == 200 || res.statusCode == 201) {
       final json = jsonDecode(res.body);
-      final data = json['data'] is Map<String, dynamic> ? json['data'] : json;
+      final data = json['data'] is Map<String, dynamic>
+          ? json['data'] as Map<String, dynamic>
+          : (json is Map<String, dynamic> ? json : <String, dynamic>{});
+
+      final chatHeadId = (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) is int
+          ? (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) as int
+          : int.tryParse((data['chat_head_id'] ?? data['id'] ?? data['chat_id'])?.toString() ?? '') ?? 0;
+
+      if (chatHeadId > 0) {
+        final details = await getChatDetails(chatHeadId);
+        if (details != null) return details;
+      }
       return ServerChatModel.fromJson(data);
     } else {
+      debugPrint('[API ERROR] Create Direct Chat Failed (${res.statusCode}): ${res.body}');
       throw Exception('Create Direct Chat Error (${res.statusCode}): ${res.body}');
     }
   }
@@ -367,17 +442,34 @@ class ServerApiService {
       if (groupAvatar != null) 'group_avatar': groupAvatar,
     };
 
+    final url = '$baseUrl/chats/group';
+    debugPrint('[API] POST $url with body: ${jsonEncode(body)}');
+
     final res = await http.post(
-      Uri.parse('$baseUrl/chats/group'),
+      Uri.parse(url),
       headers: _headers(),
       body: jsonEncode(body),
     );
 
+    debugPrint('[API] Create Group Response (${res.statusCode}): ${res.body}');
+
     if (res.statusCode == 200 || res.statusCode == 201) {
       final json = jsonDecode(res.body);
-      final data = json['data'] is Map<String, dynamic> ? json['data'] : json;
+      final data = json['data'] is Map<String, dynamic>
+          ? json['data'] as Map<String, dynamic>
+          : (json is Map<String, dynamic> ? json : <String, dynamic>{});
+
+      final chatHeadId = (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) is int
+          ? (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) as int
+          : int.tryParse((data['chat_head_id'] ?? data['id'] ?? data['chat_id'])?.toString() ?? '') ?? 0;
+
+      if (chatHeadId > 0) {
+        final details = await getChatDetails(chatHeadId);
+        if (details != null) return details;
+      }
       return ServerChatModel.fromJson(data);
     } else {
+      debugPrint('[API ERROR] Create Group Failed (${res.statusCode}): ${res.body}');
       throw Exception('Create Group Error (${res.statusCode}): ${res.body}');
     }
   }
@@ -521,17 +613,25 @@ class ServerApiService {
       if (fileType != null) 'file_type': fileType,
     };
 
+    final url = '$baseUrl/chats/$chatId/messages';
+    debugPrint('[API] POST $url with body: ${jsonEncode(body)}');
+
     final res = await http.post(
-      Uri.parse('$baseUrl/chats/$chatId/messages'),
+      Uri.parse(url),
       headers: _headers(),
       body: jsonEncode(body),
     );
 
+    debugPrint('[API] Send Message Response (${res.statusCode}): ${res.body}');
+
     if (res.statusCode == 200 || res.statusCode == 201) {
       final json = jsonDecode(res.body);
-      final data = json['data'] is Map<String, dynamic> ? json['data'] : json;
+      final data = json['data'] is Map<String, dynamic>
+          ? json['data'] as Map<String, dynamic>
+          : (json is Map<String, dynamic> ? json : <String, dynamic>{});
       return ServerMessageModel.fromJson(data);
     } else {
+      debugPrint('[API ERROR] Send Message Failed (${res.statusCode}): ${res.body}');
       throw Exception('Send Message REST Error (${res.statusCode}): ${res.body}');
     }
   }
