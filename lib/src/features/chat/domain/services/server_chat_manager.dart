@@ -88,8 +88,43 @@ class ServerChatManager {
     }
   }
 
-  /// Fetches latest chats from GET /api/chats and updates the chat list.
-  Future<List<ChatConversation>> syncChats() async {
+  final Set<int> _resolvingPeerIds = {};
+
+  Future<void> _resolvePeerProfile(int userId, int chatId) async {
+    if (_resolvingPeerIds.contains(userId)) return;
+    _resolvingPeerIds.add(userId);
+    try {
+      final user = await ServerApiService.instance.getUser(userId);
+      if (user != null) {
+        String displayName = user.name;
+        if (displayName.startsWith('User #') || displayName == 'User') {
+          if (user.phone?.isNotEmpty == true) {
+            displayName = user.phone!;
+          } else if (user.email?.isNotEmpty == true) {
+            displayName = user.email!;
+          }
+        }
+        if (!displayName.startsWith('User #') && displayName != 'User') {
+          await LocalChatStorage.instance.updatePeerProfile(
+            deviceId: chatId.toString(),
+            displayName: displayName,
+            avatarUrl: user.avatar,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('[SERVER CHAT] Resolve peer profile failed for user $userId: $e');
+    } finally {
+      _resolvingPeerIds.remove(userId);
+    }
+  }
+
+  /// Fetches paginated chats from GET /api/chats?page={page}&limit={limit} and updates the chat list.
+  Future<List<ChatConversation>> syncChats({
+    int page = 1,
+    int limit = 20,
+    bool append = false,
+  }) async {
     final syncUserId = ServerApiService.instance.currentUserId;
     final syncToken = ServerApiService.instance.authToken;
     final previousConversations =
@@ -100,12 +135,18 @@ class ServerChatManager {
       for (final conversation in previousConversations)
         conversation.id: conversation,
     };
-    final serverChats = await ServerApiService.instance.getChats();
+
+    final pageRes = await ServerApiService.instance.getChatsPage(
+      page: page,
+      limit: limit,
+    );
+    final serverChats = pageRes.chats;
+
     if (syncUserId != ServerApiService.instance.currentUserId ||
         syncToken != ServerApiService.instance.authToken) {
       return [];
     }
-    final conversations = <ChatConversation>[];
+    final newConversations = <ChatConversation>[];
 
     for (final sc in serverChats) {
       final cachedMessages = await LocalChatStorage.instance.loadMessages(
@@ -128,13 +169,40 @@ class ServerChatManager {
           ? otherMembers.first
           : (sc.members.isNotEmpty ? sc.members.first : null);
 
+      final previous = previousById[sc.id.toString()];
+
       String peerDisplayName = peer?.name ?? '';
+      final isPeerGeneric = peerDisplayName.trim().isEmpty ||
+          peerDisplayName == 'User' ||
+          peerDisplayName.startsWith('User #');
+
+      if (isPeerGeneric && previous != null) {
+        final prevName = previous.name;
+        if (prevName.isNotEmpty &&
+            !prevName.startsWith('User #') &&
+            !prevName.startsWith('Chat #') &&
+            prevName != 'User') {
+          peerDisplayName = prevName;
+        }
+      }
+
       if (peerDisplayName.trim().isEmpty || peerDisplayName == 'User') {
-        if (peer != null && peer.id > 0) {
+        if (peer != null && peer.phone?.isNotEmpty == true) {
+          peerDisplayName = peer.phone!;
+        } else if (peer != null && peer.email?.isNotEmpty == true) {
+          peerDisplayName = peer.email!;
+        } else if (peer != null && peer.id > 0) {
           peerDisplayName = 'User #${peer.id}';
         } else {
           peerDisplayName = 'User';
         }
+      }
+
+      // If peer display name is generic, trigger background profile resolution
+      if (peer != null &&
+          peer.id > 0 &&
+          (peerDisplayName.startsWith('User #') || peerDisplayName == 'User')) {
+        unawaited(_resolvePeerProfile(peer.id, sc.id));
       }
 
       final name = sc.isGroup
@@ -146,8 +214,12 @@ class ServerChatManager {
               : (sc.groupName ?? 'Chat #${sc.id}'));
       final avatar = sc.isGroup
           ? (sc.groupAvatar ?? '')
-          : (peer?.avatar ?? sc.groupAvatar ?? '');
-      final previous = previousById[sc.id.toString()];
+          : (peer?.avatar?.isNotEmpty == true
+              ? peer!.avatar!
+              : (previous?.avatarUrl.isNotEmpty == true
+                  ? previous!.avatarUrl
+                  : (sc.groupAvatar ?? '')));
+
       final newestCachedMessage = cachedMessages.isEmpty
           ? null
           : cachedMessages.last;
@@ -206,21 +278,46 @@ class ServerChatManager {
         messages: cachedMessages,
       );
 
-      conversations.add(conversation);
+      newConversations.add(conversation);
     }
 
     if (syncUserId != ServerApiService.instance.currentUserId ||
         syncToken != ServerApiService.instance.authToken) {
       return [];
     }
-    conversations.sort((a, b) {
+
+    List<ChatConversation> finalConversations;
+    if (append && page > 1) {
+      final existingMap = {
+        for (final c in previousConversations) c.id: c
+      };
+      for (final c in newConversations) {
+        existingMap[c.id] = c;
+      }
+      finalConversations = existingMap.values.toList();
+    } else {
+      if (page == 1) {
+        finalConversations = newConversations;
+      } else {
+        final existingMap = {
+          for (final c in previousConversations) c.id: c
+        };
+        for (final c in newConversations) {
+          existingMap[c.id] = c;
+        }
+        finalConversations = existingMap.values.toList();
+      }
+    }
+
+    finalConversations.sort((a, b) {
       final aTime = a.lastActivityAt?.millisecondsSinceEpoch ?? 0;
       final bTime = b.lastActivityAt?.millisecondsSinceEpoch ?? 0;
       return bTime.compareTo(aTime);
     });
-    await LocalChatStorage.instance.replaceConversations(conversations);
 
-    return conversations;
+    await LocalChatStorage.instance.replaceConversations(finalConversations);
+
+    return finalConversations;
   }
 
   String _formatChatTime(String? raw) {
@@ -386,22 +483,7 @@ class ServerChatManager {
       'chat_key_$chatId',
     );
 
-    // 1. Emit via Socket.IO for immediate real-time peer delivery
-    if (numericId > 0 && SocketChatService.instance.isConnected) {
-      unawaited(
-        SocketChatService.instance.sendMessage(
-          chatId: numericId,
-          message: encryptedText,
-          filePath: filePath,
-          fileName: fileName,
-          fileType: fileType,
-          replyToId: replyToId,
-          clientId: clientId,
-        ),
-      );
-    }
-
-    // 2. Persist via REST API
+    // Persist via REST API (single authoritative source of truth for message creation)
     if (numericId > 0) {
       try {
         serverMessage = await ServerApiService.instance.sendMessageREST(
@@ -415,7 +497,24 @@ class ServerChatManager {
         );
       } catch (e) {
         debugPrint('[SERVER CHAT] Send Message REST Error: $e');
-        return false;
+        // Fallback to Socket.IO if REST fails and socket is connected
+        if (SocketChatService.instance.isConnected) {
+          try {
+            await SocketChatService.instance.sendMessage(
+              chatId: numericId,
+              message: encryptedText,
+              filePath: filePath,
+              fileName: fileName,
+              fileType: fileType,
+              replyToId: replyToId,
+              clientId: clientId,
+            );
+          } catch (_) {
+            return false;
+          }
+        } else {
+          return false;
+        }
       }
     }
 

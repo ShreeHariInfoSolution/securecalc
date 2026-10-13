@@ -1,6 +1,25 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
+import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
+
+String? resolveAvatarUrl(String? raw) {
+  if (raw == null || raw.isEmpty) return null;
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+  if (File(raw).existsSync()) return raw;
+
+  final apiBase = ServerApiService.baseUrl.replaceFirst(RegExp(r'/+$'), '');
+  final origin = apiBase.replaceFirst(RegExp(r'/api$'), '');
+  final clean = raw.replaceFirst(RegExp(r'^/+'), '');
+
+  if (clean.startsWith('api/')) {
+    return '$origin/$clean';
+  }
+  if (clean.startsWith('files/')) {
+    return '$apiBase/$clean';
+  }
+  return '$apiBase/files/$clean';
+}
 
 class IosAvatar extends StatelessWidget {
   final String name;
@@ -53,12 +72,12 @@ class IosAvatar extends StatelessWidget {
     final isDark = theme.brightness == Brightness.dark;
     final badgeSize = size > 44 ? 14.0 : 10.0;
 
-    final hasLocalImage = imagePath != null &&
-        imagePath!.isNotEmpty &&
-        File(imagePath!).existsSync();
-    final hasNetworkImage = imagePath != null &&
-        imagePath!.isNotEmpty &&
-        imagePath!.startsWith('http');
+    final resolvedImage = resolveAvatarUrl(imagePath);
+    final hasLocalImage = resolvedImage != null &&
+        !resolvedImage.startsWith('http') &&
+        File(resolvedImage).existsSync();
+    final hasNetworkImage = resolvedImage != null &&
+        (resolvedImage.startsWith('http://') || resolvedImage.startsWith('https://'));
 
     final baseColor = _getDeterministicColor(name);
 
@@ -71,7 +90,7 @@ class IosAvatar extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           image: DecorationImage(
-            image: FileImage(File(imagePath!)),
+            image: FileImage(File(resolvedImage)),
             fit: BoxFit.cover,
           ),
         ),
@@ -83,7 +102,7 @@ class IosAvatar extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           image: DecorationImage(
-            image: NetworkImage(imagePath!),
+            image: NetworkImage(resolvedImage),
             fit: BoxFit.cover,
           ),
         ),

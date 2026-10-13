@@ -240,7 +240,6 @@ class SocketChatService {
     };
     debugPrint('[SOCKET] Emitting send_message: $payload');
     _socket!.emit('send_message', payload);
-    _socket!.emit('sendMessage', payload);
     return {'status': 'emitted', ...payload};
   }
 

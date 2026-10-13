@@ -337,41 +337,55 @@ class ServerApiService {
 
   // ─── Chats Endpoints ───────────────────────────────────────────────────────
 
-  Future<List<ServerChatModel>> getChats() async {
+  Future<ServerChatListPageModel> getChatsPage({
+    int page = 1,
+    int limit = 20,
+  }) async {
     try {
-      final res = await http.get(
-        Uri.parse('$baseUrl/chats'),
-        headers: _headers(),
+      final uri = Uri.parse('$baseUrl/chats').replace(
+        queryParameters: {
+          'page': '$page',
+          'limit': '$limit',
+        },
       );
+      debugPrint('[API] GET $uri');
+      final res = await http.get(uri, headers: _headers());
+      debugPrint('[API] GET $uri (${res.statusCode}): ${res.body}');
+
       if (res.statusCode == 200) {
-        final json = jsonDecode(res.body);
-        List list = [];
-        if (json is List) {
-          list = json;
-        } else if (json is Map) {
-          if (json['data'] is List) {
-            list = json['data'] as List;
-          } else if (json['chats'] is List) {
-            list = json['chats'] as List;
-          } else if (json['chat_heads'] is List) {
-            list = json['chat_heads'] as List;
-          } else if (json['chatHeads'] is List) {
-            list = json['chatHeads'] as List;
-          } else if (json['items'] is List) {
-            list = json['items'] as List;
-          } else if (json['results'] is List) {
-            list = json['results'] as List;
-          }
+        final decoded = jsonDecode(res.body);
+        if (decoded is List) {
+          final chats = decoded
+              .map((c) => ServerChatModel.fromJson(
+                  c is Map<String, dynamic> ? c : Map<String, dynamic>.from(c as Map)))
+              .toList();
+          return ServerChatListPageModel(
+            page: page,
+            limit: limit,
+            total: chats.length,
+            totalPages: 1,
+            chats: chats,
+          );
+        } else if (decoded is Map<String, dynamic>) {
+          return ServerChatListPageModel.fromJson(decoded);
+        } else if (decoded is Map) {
+          return ServerChatListPageModel.fromJson(Map<String, dynamic>.from(decoded));
         }
-        return list
-            .map((c) => ServerChatModel.fromJson(
-                c is Map<String, dynamic> ? c : Map<String, dynamic>.from(c as Map)))
-            .toList();
       }
       throw Exception('Get Chats Failed (${res.statusCode}): ${res.body}');
     } catch (e) {
-      debugPrint('[API] Get Chats Error: $e');
+      debugPrint('[API] Get Chats Page Error (page=$page): $e');
       rethrow;
+    }
+  }
+
+  Future<List<ServerChatModel>> getChats({int page = 1, int limit = 20}) async {
+    try {
+      final res = await getChatsPage(page: page, limit: limit);
+      return res.chats;
+    } catch (e) {
+      debugPrint('[API] Get Chats Error: $e');
+      return [];
     }
   }
 

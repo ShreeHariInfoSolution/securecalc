@@ -33,25 +33,71 @@ class ConversationListPage extends StatefulWidget {
 class _ConversationListPageState extends State<ConversationListPage> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+  final ScrollController _scrollController = ScrollController();
+
   int _selectedTab = 0; // 0: All, 1: Unread
   bool _showSearchBar = true;
   bool _isSyncing = false;
 
+  int _currentChatPage = 1;
+  bool _hasMoreChats = true;
+  bool _isLoadingMoreChats = false;
+
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     _refreshServerChats();
+  }
+
+  void _onScroll() {
+    if (_scrollController.hasClients &&
+        _scrollController.position.pixels >=
+            _scrollController.position.maxScrollExtent - 200) {
+      _loadMoreChats();
+    }
   }
 
   Future<void> _refreshServerChats() async {
     if (widget.isDuressMode) return;
     if (mounted) setState(() => _isSyncing = true);
     try {
-      await ServerChatManager.instance.syncChats();
+      _currentChatPage = 1;
+      _hasMoreChats = true;
+      final chats = await ServerChatManager.instance.syncChats(page: 1, limit: 20);
+      if (mounted) {
+        setState(() {
+          _hasMoreChats = chats.length >= 20;
+        });
+      }
     } catch (_) {
     } finally {
       if (mounted) {
         setState(() => _isSyncing = false);
+      }
+    }
+  }
+
+  Future<void> _loadMoreChats() async {
+    if (widget.isDuressMode || _isLoadingMoreChats || !_hasMoreChats) return;
+    if (mounted) setState(() => _isLoadingMoreChats = true);
+    try {
+      final nextPage = _currentChatPage + 1;
+      final chats = await ServerChatManager.instance.syncChats(
+        page: nextPage,
+        limit: 20,
+        append: true,
+      );
+      if (mounted) {
+        setState(() {
+          _currentChatPage = nextPage;
+          _hasMoreChats = chats.length >= 20;
+        });
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingMoreChats = false);
       }
     }
   }
@@ -794,6 +840,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -1138,12 +1185,30 @@ class _ConversationListPageState extends State<ConversationListPage> {
                               ),
                             )
                           : ListView.builder(
+                              controller: _scrollController,
                               padding: const EdgeInsets.only(
                                 bottom: 24,
                                 top: 2,
                               ),
-                              itemCount: filtered.length,
+                              itemCount: filtered.length + (_isLoadingMoreChats ? 1 : 0),
                               itemBuilder: (context, index) {
+                                if (index == filtered.length) {
+                                  return const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 16),
+                                    child: Center(
+                                      child: SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor: AlwaysStoppedAnimation<Color>(
+                                            AppTheme.primaryColor,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
                                 final conv = filtered[index];
                                 return GestureDetector(
                                   onLongPress: () =>

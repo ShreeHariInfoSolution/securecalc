@@ -203,7 +203,25 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     if (_isLoadingMessages) {
       _messagesReceivedWhileLoading[incoming.id] = incoming;
     }
-    if (_messages.any((message) => message.id == incoming.id)) return;
+
+    // Check if message is already present by ID or matches optimistic local message
+    final existingIndex = _messages.indexWhere(
+      (message) =>
+          message.id == incoming.id ||
+          (message.id.startsWith('local_') &&
+              incoming.senderId == 'user' &&
+              message.content == incoming.content),
+    );
+
+    if (existingIndex >= 0) {
+      setState(() {
+        _messages[existingIndex] = incoming;
+        _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      });
+      if (wasNearLatest || incoming.senderId == 'user') _scrollToBottom();
+      return;
+    }
+
     setState(() {
       _messages = [..._messages, incoming]
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));

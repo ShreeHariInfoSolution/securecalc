@@ -89,15 +89,37 @@ class UserModel {
     final rawId = json['id'] ?? json['user_id'] ?? json['userId'];
     final id = rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? 0);
 
+    final rawName = json['name']?.toString() ??
+        json['username']?.toString() ??
+        json['full_name']?.toString() ??
+        json['fullName']?.toString() ??
+        json['display_name']?.toString() ??
+        json['displayName']?.toString();
+
+    final phone = (json['phone'] ?? json['phone_number'] ?? json['phoneNumber'])?.toString();
+    final email = json['email']?.toString();
+
+    String name = (rawName != null && rawName.trim().isNotEmpty && rawName.trim().toLowerCase() != 'null')
+        ? rawName.trim()
+        : '';
+
+    if (name.isEmpty || name.toLowerCase() == 'user') {
+      if (phone != null && phone.trim().isNotEmpty) {
+        name = phone.trim();
+      } else if (email != null && email.trim().isNotEmpty) {
+        name = email.trim();
+      } else if (id > 0) {
+        name = 'User #$id';
+      } else {
+        name = 'User';
+      }
+    }
+
     return UserModel(
       id: id,
-      name: json['name']?.toString() ??
-          json['username']?.toString() ??
-          json['full_name']?.toString() ??
-          json['fullName']?.toString() ??
-          'User',
-      phone: (json['phone'] ?? json['phone_number'] ?? json['phoneNumber'])?.toString(),
-      email: json['email']?.toString(),
+      name: name,
+      phone: phone,
+      email: email,
       publicKey: (json['public_key'] ?? json['publicKey'])?.toString(),
       avatar: (json['avatar'] ?? json['avatar_url'] ?? json['avatarUrl'] ?? json['profile_pic'] ?? json['profilePic'])?.toString(),
       role: json['role']?.toString(),
@@ -147,6 +169,85 @@ class UserListPageModel {
     required this.total,
     required this.totalPages,
   });
+}
+
+/// Paginated Chat Head List Response model for GET /chats?page={page}&limit={limit}
+class ServerChatListPageModel {
+  final int page;
+  final int limit;
+  final int total;
+  final int totalPages;
+  final List<ServerChatModel> chats;
+
+  ServerChatListPageModel({
+    required this.page,
+    required this.limit,
+    required this.total,
+    required this.totalPages,
+    required this.chats,
+  });
+
+  bool get hasMore => page < totalPages;
+
+  factory ServerChatListPageModel.fromJson(Map<String, dynamic> json) {
+    int readInt(dynamic value, int fallback) {
+      if (value is int) return value;
+      if (value != null) {
+        final parsed = int.tryParse(value.toString());
+        if (parsed != null) return parsed;
+      }
+      return fallback;
+    }
+
+    final page = readInt(json['page'], 1);
+    final limit = readInt(json['limit'], 20);
+    int total = readInt(json['total'], 0);
+    int totalPages = readInt(json['total_pages'] ?? json['totalPages'], 1);
+
+    List list = [];
+    if (json['data'] is List) {
+      list = json['data'] as List;
+    } else if (json['chats'] is List) {
+      list = json['chats'] as List;
+    } else if (json['chat_heads'] is List) {
+      list = json['chat_heads'] as List;
+    } else if (json['chatHeads'] is List) {
+      list = json['chatHeads'] as List;
+    } else if (json['items'] is List) {
+      list = json['items'] as List;
+    } else if (json['results'] is List) {
+      list = json['results'] as List;
+    } else if (json['data'] is Map) {
+      final dataMap = json['data'] as Map;
+      total = readInt(dataMap['total'], total);
+      totalPages = readInt(dataMap['total_pages'] ?? dataMap['totalPages'], totalPages);
+      if (dataMap['chats'] is List) {
+        list = dataMap['chats'] as List;
+      } else if (dataMap['chat_heads'] is List) {
+        list = dataMap['chat_heads'] as List;
+      } else if (dataMap['items'] is List) {
+        list = dataMap['items'] as List;
+      }
+    }
+
+    final chats = list
+        .map((c) => ServerChatModel.fromJson(
+            c is Map<String, dynamic> ? c : Map<String, dynamic>.from(c as Map)))
+        .toList();
+
+    if (total <= 0) total = chats.length;
+    if (totalPages <= 1 && chats.length >= limit) {
+      totalPages = page + 1;
+    }
+
+    return ServerChatListPageModel(
+      page: page,
+      limit: limit,
+      total: total,
+      totalPages: totalPages,
+      chats: chats,
+    );
+  }
 }
 
 /// Represents a 1-to-1 or group Chat Head on the server.
@@ -205,22 +306,32 @@ class ServerChatModel {
                     : (m is Map ? Map<String, dynamic>.from(m) : {}),
               ))
           .toList();
-    } else if (json['other_user'] is Map) {
-      membersList = [
-        UserModel.fromJson(Map<String, dynamic>.from(json['other_user'] as Map))
-      ];
+    }
+
+    Map<String, dynamic>? extraUserMap;
+    if (json['other_user'] is Map) {
+      extraUserMap = Map<String, dynamic>.from(json['other_user'] as Map);
     } else if (json['otherUser'] is Map) {
-      membersList = [
-        UserModel.fromJson(Map<String, dynamic>.from(json['otherUser'] as Map))
-      ];
+      extraUserMap = Map<String, dynamic>.from(json['otherUser'] as Map);
     } else if (json['user'] is Map) {
-      membersList = [
-        UserModel.fromJson(Map<String, dynamic>.from(json['user'] as Map))
-      ];
+      extraUserMap = Map<String, dynamic>.from(json['user'] as Map);
     } else if (json['peer'] is Map) {
-      membersList = [
-        UserModel.fromJson(Map<String, dynamic>.from(json['peer'] as Map))
-      ];
+      extraUserMap = Map<String, dynamic>.from(json['peer'] as Map);
+    }
+
+    if (extraUserMap != null) {
+      final extraUser = UserModel.fromJson(extraUserMap);
+      if (extraUser.id > 0) {
+        final existingIdx = membersList.indexWhere((m) => m.id == extraUser.id);
+        if (existingIdx >= 0) {
+          final existing = membersList[existingIdx];
+          if (existing.name.startsWith('User #') || existing.name == 'User') {
+            membersList[existingIdx] = extraUser;
+          }
+        } else {
+          membersList.add(extraUser);
+        }
+      }
     }
 
     final rawLastMessage = json['last_message'] ??
@@ -231,7 +342,7 @@ class ServerChatModel {
         json['lastMsg'];
 
     final lastMessageJson = rawLastMessage is Map
-        ? Map<String, dynamic>.from(rawLastMessage as Map)
+        ? Map<String, dynamic>.from(rawLastMessage)
         : <String, dynamic>{};
 
     final rawId = json['id'] ??
