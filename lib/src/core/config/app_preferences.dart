@@ -77,12 +77,14 @@ class AppPreferences {
 
     // 6. Restore/Initialize Device Identity
     String? existingId = _prefs.getString(_keyDeviceId) ?? _prefs.getString(deviceIdKey);
-    if (existingId == null || existingId.isEmpty) {
-      final hardwareId = await getSystemHardwareDeviceId();
-      existingId = hardwareId ?? 'device_${const Uuid().v4()}';
-      await _prefs.setString(_keyDeviceId, existingId);
-      await _prefs.setString(deviceIdKey, existingId);
+    final hardwareId = await getSystemHardwareDeviceId();
+    if (hardwareId != null && hardwareId.isNotEmpty) {
+      existingId = hardwareId;
+    } else if (existingId == null || existingId.isEmpty) {
+      existingId = 'device_${const Uuid().v4()}';
     }
+    await _prefs.setString(_keyDeviceId, existingId);
+    await _prefs.setString(deviceIdKey, existingId);
 
     await updateSecureFlag();
   }
