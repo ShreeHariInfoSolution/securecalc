@@ -3,23 +3,33 @@ import 'package:flutter/material.dart';
 class CalculatorDisplay extends StatelessWidget {
   final String value;
   final String expression;
+  final bool isWideScreen;
 
   const CalculatorDisplay({
     super.key,
     required this.value,
     required this.expression,
+    this.isWideScreen = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final fontSize = value.length > 9
-        ? 46.0
+    final double maxValFontSize = isWideScreen ? 108.0 : 80.0;
+    final double midValFontSize = isWideScreen ? 84.0 : 64.0;
+    final double minValFontSize = isWideScreen ? 60.0 : 46.0;
+    final double exprFontSize = isWideScreen ? 28.0 : 22.0;
+
+    final double fontSize = value.length > 9
+        ? minValFontSize
         : value.length > 6
-            ? 64.0
-            : 80.0;
+            ? midValFontSize
+            : maxValFontSize;
+
+    final double hPadding = isWideScreen ? 32.0 : 24.0;
+    final double vPadding = isWideScreen ? 16.0 : 12.0;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+      padding: EdgeInsets.symmetric(horizontal: hPadding, vertical: vPadding),
       alignment: Alignment.bottomRight,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.end,
@@ -35,9 +45,9 @@ class CalculatorDisplay extends StatelessWidget {
                   alignment: Alignment.centerRight,
                   child: Text(
                     expression,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Colors.white70,
-                      fontSize: 24,
+                      fontSize: exprFontSize,
                       fontWeight: FontWeight.w300,
                     ),
                   ),

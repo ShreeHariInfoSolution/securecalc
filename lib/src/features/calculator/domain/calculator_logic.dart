@@ -16,6 +16,8 @@ class CalculatorLogic {
 
   String get displayValue => _displayValue;
   String get expression => _expression;
+  String? get activeOperator => _shouldResetDisplayOnNextInput ? _operator : null;
+  String get clearButtonLabel => _displayValue != '0' ? 'C' : 'AC';
 
   /// Processes button presses and returns the `CalculatorTrigger` action.
   CalculatorTrigger input(String symbol) {
@@ -56,6 +58,23 @@ class CalculatorLogic {
         return CalculatorTrigger.duress;
       }
       return CalculatorTrigger.none;
+    }
+  }
+
+  void backspace() {
+    if (_shouldResetDisplayOnNextInput) return;
+    if (_displayValue == 'Error') {
+      _displayValue = '0';
+      return;
+    }
+    if (_displayValue.length > 1) {
+      if (_displayValue.length == 2 && _displayValue.startsWith('-')) {
+        _displayValue = '0';
+      } else {
+        _displayValue = _displayValue.substring(0, _displayValue.length - 1);
+      }
+    } else {
+      _displayValue = '0';
     }
   }
 

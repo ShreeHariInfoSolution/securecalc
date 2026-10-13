@@ -62,7 +62,8 @@ class _CalculatorButtonState extends State<CalculatorButton> {
   @override
   Widget build(BuildContext context) {
     final size = widget.buttonSize ?? 70.0;
-    final fontSize = (size * (widget.type == CalculatorButtonType.function ? 0.36 : 0.42)).clamp(14.0, 38.0);
+    final fontScale = widget.type == CalculatorButtonType.function ? 0.36 : 0.42;
+    final fontSize = (size * fontScale).clamp(14.0, 48.0);
     final zeroPadding = size * 0.32;
 
     return GestureDetector(

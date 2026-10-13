@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../../core/config/app_preferences.dart';
 import '../../../auth/presentation/pages/privacy_consent_page.dart';
 import '../../domain/calculator_logic.dart';
@@ -22,7 +23,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     if (_isNavigating) return;
 
     final trigger = _logic.input(symbol);
-    // Render the newly pressed digit on the display immediately
+    // Render the newly pressed digit or operator state on display immediately
     setState(() {});
 
     if (trigger == CalculatorTrigger.vault) {
@@ -30,6 +31,13 @@ class _CalculatorPageState extends State<CalculatorPage> {
     } else if (trigger == CalculatorTrigger.duress) {
       _triggerSecretVaultTransition(isDuress: true);
     }
+  }
+
+  void _handleSwipeDelete() {
+    if (_isNavigating) return;
+    HapticFeedback.lightImpact();
+    _logic.backspace();
+    setState(() {});
   }
 
   void _triggerSecretVaultTransition({bool isDuress = false}) {
@@ -70,54 +78,61 @@ class _CalculatorPageState extends State<CalculatorPage> {
             final maxWidth = constraints.maxWidth;
             final maxHeight = constraints.maxHeight;
 
-            // Wide screen check (iPads, tablets, or desktop)
             final isWideScreen = maxWidth >= 600;
 
-            // On wide screens / iPad, cap the max keypad container width so buttons remain clean and well-proportioned
-            final maxKeypadWidth = isWideScreen
-                ? min(maxWidth * 0.85, 500.0)
+            // Scaled padding & gaps for iPad vs iPhone
+            final double horizontalPadding = isWideScreen
+                ? min(maxWidth * 0.05, 36.0)
+                : 16.0;
+            final double gap = isWideScreen
+                ? min(maxWidth * 0.025, 20.0)
+                : 12.0;
+
+            // Maximum keypad width allowed
+            final double maxKeypadWidth = isWideScreen
+                ? min(maxWidth * 0.88, 720.0)
                 : maxWidth;
 
-            // Spacing & padding configuration
-            const double gap = 12.0;
-            const double horizontalPadding = 16.0;
+            final double availableKeypadWidth = maxKeypadWidth - (horizontalPadding * 2);
+            final double maxButtonWidth = (availableKeypadWidth - (gap * 3)) / 4;
 
-            // 1) Width constraint on button size:
-            // 4 columns of buttonSize + 3 gaps + 2 * horizontalPadding = keypadWidth
-            final availableKeypadWidth = maxKeypadWidth - (horizontalPadding * 2);
-            final maxButtonWidth = (availableKeypadWidth - (gap * 3)) / 4;
+            // Maximum keypad height allowed (max 65% of screen height)
+            final double maxKeypadHeightAllowed = maxHeight * 0.65;
+            final double maxButtonHeight = (maxKeypadHeightAllowed - (gap * 4) - 24.0) / 5;
 
-            // 2) Height constraint on button size:
-            // Keypad must take at most ~65% of screen height to guarantee ample room for display
-            final maxKeypadHeightAllowed = maxHeight * 0.65;
-            final maxButtonHeight = (maxKeypadHeightAllowed - (gap * 4) - 16.0) / 5;
-
-            // Final button size (width = height) strictly constrained by both width and height bounds
+            // Final button size (width = height) strictly bounded
             double buttonSize = min(maxButtonWidth, maxButtonHeight);
-            buttonSize = buttonSize.clamp(32.0, 100.0);
+            buttonSize = buttonSize.clamp(32.0, 130.0);
 
-            // Re-calculate actual keypad width based on final buttonSize
-            final keypadWidth = (buttonSize * 4) + (gap * 3) + (horizontalPadding * 2);
+            final double keypadWidth = (buttonSize * 4) + (gap * 3) + (horizontalPadding * 2);
+            final String clearLabel = _logic.clearButtonLabel;
+            final String? activeOp = _logic.activeOperator;
 
             return Center(
               child: SizedBox(
                 width: isWideScreen ? keypadWidth : maxWidth,
                 child: Column(
                   children: [
-                    // Display Area
+                    // Display Area with Swipe-to-Delete gesture
                     Expanded(
                       child: GestureDetector(
+                        onHorizontalDragEnd: (details) {
+                          if (details.primaryVelocity != 0) {
+                            _handleSwipeDelete();
+                          }
+                        },
                         onLongPress: _triggerSecretVaultTransition,
                         child: CalculatorDisplay(
                           value: _logic.displayValue,
                           expression: _logic.expression,
+                          isWideScreen: isWideScreen,
                         ),
                       ),
                     ),
 
-                    // Keypad Grid - Apple Calculator Responsive Layout
+                    // Keypad Grid - iPadOS / iOS Native Layout
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(
+                      padding: EdgeInsets.fromLTRB(
                         horizontalPadding,
                         0,
                         horizontalPadding,
@@ -127,7 +142,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           _buildRow(
-                            ['AC', '+/-', '%', '÷'],
+                            [clearLabel, '+/-', '%', '÷'],
                             [
                               CalculatorButtonType.function,
                               CalculatorButtonType.function,
@@ -136,6 +151,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                             ],
                             buttonSize,
                             gap,
+                            activeOp,
                           ),
                           SizedBox(height: gap),
                           _buildRow(
@@ -148,6 +164,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                             ],
                             buttonSize,
                             gap,
+                            activeOp,
                           ),
                           SizedBox(height: gap),
                           _buildRow(
@@ -160,6 +177,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                             ],
                             buttonSize,
                             gap,
+                            activeOp,
                           ),
                           SizedBox(height: gap),
                           _buildRow(
@@ -172,9 +190,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
                             ],
                             buttonSize,
                             gap,
+                            activeOp,
                           ),
                           SizedBox(height: gap),
-                          _buildBottomRow(buttonSize, gap),
+                          _buildBottomRow(buttonSize, gap, activeOp),
                         ],
                       ),
                     ),
@@ -193,25 +212,30 @@ class _CalculatorPageState extends State<CalculatorPage> {
     List<CalculatorButtonType> types,
     double buttonSize,
     double gap,
+    String? activeOp,
   ) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: List.generate(4, (index) {
+        final label = labels[index];
+        final isSelected = activeOp != null && activeOp == label;
+
         return SizedBox(
           width: buttonSize,
           height: buttonSize,
           child: CalculatorButton(
-            label: labels[index],
+            label: label,
             type: types[index],
+            isSelected: isSelected,
             buttonSize: buttonSize,
-            onTap: () => _handleButton(labels[index]),
+            onTap: () => _handleButton(label),
           ),
         );
       }),
     );
   }
 
-  Widget _buildBottomRow(double buttonSize, double gap) {
+  Widget _buildBottomRow(double buttonSize, double gap, String? activeOp) {
     final zeroWidth = buttonSize * 2 + gap;
 
     return Row(
@@ -244,6 +268,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
           child: CalculatorButton(
             label: '=',
             type: CalculatorButtonType.operator,
+            isSelected: activeOp == '=',
             buttonSize: buttonSize,
             onTap: () => _handleButton('='),
           ),
