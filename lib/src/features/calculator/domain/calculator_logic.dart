@@ -27,6 +27,9 @@ class CalculatorLogic {
     } else if (symbol == 'C') {
       _clearEntry();
       return CalculatorTrigger.none;
+    } else if (symbol == '⌫' || symbol == 'backspace') {
+      backspace();
+      return CalculatorTrigger.none;
     } else if (symbol == '=') {
       if (secretPasscode.isNotEmpty && _displayValue == secretPasscode) {
         return CalculatorTrigger.vault;

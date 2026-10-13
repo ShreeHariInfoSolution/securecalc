@@ -80,134 +80,276 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
             final isWideScreen = maxWidth >= 600;
 
-            // Scaled padding & gaps for iPad vs iPhone
-            final double horizontalPadding = isWideScreen
-                ? min(maxWidth * 0.05, 36.0)
-                : 16.0;
-            final double gap = isWideScreen
-                ? min(maxWidth * 0.025, 20.0)
-                : 12.0;
-
-            // Maximum keypad width allowed
-            final double maxKeypadWidth = isWideScreen
-                ? min(maxWidth * 0.88, 720.0)
-                : maxWidth;
-
-            final double availableKeypadWidth = maxKeypadWidth - (horizontalPadding * 2);
-            final double maxButtonWidth = (availableKeypadWidth - (gap * 3)) / 4;
-
-            // Maximum keypad height allowed (max 65% of screen height)
-            final double maxKeypadHeightAllowed = maxHeight * 0.65;
-            final double maxButtonHeight = (maxKeypadHeightAllowed - (gap * 4) - 24.0) / 5;
-
-            // Final button size (width = height) strictly bounded
-            double buttonSize = min(maxButtonWidth, maxButtonHeight);
-            buttonSize = buttonSize.clamp(32.0, 130.0);
-
-            final double keypadWidth = (buttonSize * 4) + (gap * 3) + (horizontalPadding * 2);
             final String clearLabel = _logic.clearButtonLabel;
             final String? activeOp = _logic.activeOperator;
 
-            return Center(
-              child: SizedBox(
-                width: isWideScreen ? keypadWidth : maxWidth,
-                child: Column(
-                  children: [
-                    // Display Area with Swipe-to-Delete gesture
-                    Expanded(
-                      child: GestureDetector(
-                        onHorizontalDragEnd: (details) {
-                          if (details.primaryVelocity != 0) {
-                            _handleSwipeDelete();
-                          }
-                        },
-                        onLongPress: _triggerSecretVaultTransition,
-                        child: CalculatorDisplay(
-                          value: _logic.displayValue,
-                          expression: _logic.expression,
-                          isWideScreen: isWideScreen,
+            if (isWideScreen) {
+              // ─── iPad / Tablet Full-Screen Native Layout (Matching iPadOS Calculator) ───
+              const double horizontalPadding = 20.0;
+              const double bottomPadding = 20.0;
+              const double gap = 14.0;
+
+              final double availableWidth = maxWidth - (horizontalPadding * 2);
+              final double buttonWidth = (availableWidth - (gap * 3)) / 4;
+
+              final double maxKeypadHeightAllowed = maxHeight * 0.58;
+              final double calculatedHeight =
+                  (maxKeypadHeightAllowed - (gap * 4) - bottomPadding) / 5;
+              final double buttonHeight = calculatedHeight.clamp(48.0, 120.0);
+
+              return Column(
+                children: [
+                  // Display Area
+                  Expanded(
+                    child: GestureDetector(
+                      onHorizontalDragEnd: (details) {
+                        if (details.primaryVelocity != 0) {
+                          _handleSwipeDelete();
+                        }
+                      },
+                      onLongPress: _triggerSecretVaultTransition,
+                      child: CalculatorDisplay(
+                        value: _logic.displayValue,
+                        expression: _logic.expression,
+                        isWideScreen: true,
+                      ),
+                    ),
+                  ),
+
+                  // Full-width Tablet Keypad Grid
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      0,
+                      horizontalPadding,
+                      bottomPadding,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildTabletRow(
+                          ['⌫', clearLabel, '%', '÷'],
+                          [
+                            CalculatorButtonType.function,
+                            CalculatorButtonType.function,
+                            CalculatorButtonType.function,
+                            CalculatorButtonType.operator,
+                          ],
+                          buttonWidth,
+                          buttonHeight,
+                          gap,
+                          activeOp,
+                        ),
+                        SizedBox(height: gap),
+                        _buildTabletRow(
+                          ['7', '8', '9', '×'],
+                          [
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.operator,
+                          ],
+                          buttonWidth,
+                          buttonHeight,
+                          gap,
+                          activeOp,
+                        ),
+                        SizedBox(height: gap),
+                        _buildTabletRow(
+                          ['4', '5', '6', '-'],
+                          [
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.operator,
+                          ],
+                          buttonWidth,
+                          buttonHeight,
+                          gap,
+                          activeOp,
+                        ),
+                        SizedBox(height: gap),
+                        _buildTabletRow(
+                          ['1', '2', '3', '+'],
+                          [
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.operator,
+                          ],
+                          buttonWidth,
+                          buttonHeight,
+                          gap,
+                          activeOp,
+                        ),
+                        SizedBox(height: gap),
+                        _buildTabletRow(
+                          ['+/-', '0', '.', '='],
+                          [
+                            CalculatorButtonType.function,
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.digit,
+                            CalculatorButtonType.operator,
+                          ],
+                          buttonWidth,
+                          buttonHeight,
+                          gap,
+                          activeOp,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            } else {
+              // ─── iPhone / Mobile Classic Calculator Layout ───
+              const double horizontalPadding = 16.0;
+              const double gap = 12.0;
+
+              final double availableKeypadWidth =
+                  maxWidth - (horizontalPadding * 2);
+              final double maxButtonWidth =
+                  (availableKeypadWidth - (gap * 3)) / 4;
+
+              final double maxKeypadHeightAllowed = maxHeight * 0.65;
+              final double maxButtonHeight =
+                  (maxKeypadHeightAllowed - (gap * 4) - 16.0) / 5;
+
+              double buttonSize = min(maxButtonWidth, maxButtonHeight);
+              buttonSize = buttonSize.clamp(32.0, 95.0);
+
+              return Center(
+                child: SizedBox(
+                  width: maxWidth,
+                  child: Column(
+                    children: [
+                      // Display Area
+                      Expanded(
+                        child: GestureDetector(
+                          onHorizontalDragEnd: (details) {
+                            if (details.primaryVelocity != 0) {
+                              _handleSwipeDelete();
+                            }
+                          },
+                          onLongPress: _triggerSecretVaultTransition,
+                          child: CalculatorDisplay(
+                            value: _logic.displayValue,
+                            expression: _logic.expression,
+                            isWideScreen: false,
+                          ),
                         ),
                       ),
-                    ),
 
-                    // Keypad Grid - iPadOS / iOS Native Layout
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        horizontalPadding,
-                        0,
-                        horizontalPadding,
-                        16,
+                      // Mobile Keypad Grid
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          0,
+                          horizontalPadding,
+                          16,
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildPhoneRow(
+                              [clearLabel, '+/-', '%', '÷'],
+                              [
+                                CalculatorButtonType.function,
+                                CalculatorButtonType.function,
+                                CalculatorButtonType.function,
+                                CalculatorButtonType.operator,
+                              ],
+                              buttonSize,
+                              gap,
+                              activeOp,
+                            ),
+                            SizedBox(height: gap),
+                            _buildPhoneRow(
+                              ['7', '8', '9', '×'],
+                              [
+                                CalculatorButtonType.digit,
+                                CalculatorButtonType.digit,
+                                CalculatorButtonType.digit,
+                                CalculatorButtonType.operator,
+                              ],
+                              buttonSize,
+                              gap,
+                              activeOp,
+                            ),
+                            SizedBox(height: gap),
+                            _buildPhoneRow(
+                              ['4', '5', '6', '-'],
+                              [
+                                CalculatorButtonType.digit,
+                                CalculatorButtonType.digit,
+                                CalculatorButtonType.digit,
+                                CalculatorButtonType.operator,
+                              ],
+                              buttonSize,
+                              gap,
+                              activeOp,
+                            ),
+                            SizedBox(height: gap),
+                            _buildPhoneRow(
+                              ['1', '2', '3', '+'],
+                              [
+                                CalculatorButtonType.digit,
+                                CalculatorButtonType.digit,
+                                CalculatorButtonType.digit,
+                                CalculatorButtonType.operator,
+                              ],
+                              buttonSize,
+                              gap,
+                              activeOp,
+                            ),
+                            SizedBox(height: gap),
+                            _buildPhoneBottomRow(buttonSize, gap, activeOp),
+                          ],
+                        ),
                       ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _buildRow(
-                            [clearLabel, '+/-', '%', '÷'],
-                            [
-                              CalculatorButtonType.function,
-                              CalculatorButtonType.function,
-                              CalculatorButtonType.function,
-                              CalculatorButtonType.operator,
-                            ],
-                            buttonSize,
-                            gap,
-                            activeOp,
-                          ),
-                          SizedBox(height: gap),
-                          _buildRow(
-                            ['7', '8', '9', '×'],
-                            [
-                              CalculatorButtonType.digit,
-                              CalculatorButtonType.digit,
-                              CalculatorButtonType.digit,
-                              CalculatorButtonType.operator,
-                            ],
-                            buttonSize,
-                            gap,
-                            activeOp,
-                          ),
-                          SizedBox(height: gap),
-                          _buildRow(
-                            ['4', '5', '6', '-'],
-                            [
-                              CalculatorButtonType.digit,
-                              CalculatorButtonType.digit,
-                              CalculatorButtonType.digit,
-                              CalculatorButtonType.operator,
-                            ],
-                            buttonSize,
-                            gap,
-                            activeOp,
-                          ),
-                          SizedBox(height: gap),
-                          _buildRow(
-                            ['1', '2', '3', '+'],
-                            [
-                              CalculatorButtonType.digit,
-                              CalculatorButtonType.digit,
-                              CalculatorButtonType.digit,
-                              CalculatorButtonType.operator,
-                            ],
-                            buttonSize,
-                            gap,
-                            activeOp,
-                          ),
-                          SizedBox(height: gap),
-                          _buildBottomRow(buttonSize, gap, activeOp),
-                        ],
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            );
+              );
+            }
           },
         ),
       ),
     );
   }
 
-  Widget _buildRow(
+  Widget _buildTabletRow(
+    List<String> labels,
+    List<CalculatorButtonType> types,
+    double buttonWidth,
+    double buttonHeight,
+    double gap,
+    String? activeOp,
+  ) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: List.generate(4, (index) {
+        final label = labels[index];
+        final isSelected = activeOp != null && activeOp == label;
+
+        return SizedBox(
+          width: buttonWidth,
+          height: buttonHeight,
+          child: CalculatorButton(
+            label: label,
+            type: types[index],
+            isSelected: isSelected,
+            buttonSize: buttonWidth,
+            buttonHeight: buttonHeight,
+            isTablet: true,
+            onTap: () => _handleButton(label),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _buildPhoneRow(
     List<String> labels,
     List<CalculatorButtonType> types,
     double buttonSize,
@@ -228,6 +370,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
             type: types[index],
             isSelected: isSelected,
             buttonSize: buttonSize,
+            isTablet: false,
             onTap: () => _handleButton(label),
           ),
         );
@@ -235,7 +378,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     );
   }
 
-  Widget _buildBottomRow(double buttonSize, double gap, String? activeOp) {
+  Widget _buildPhoneBottomRow(double buttonSize, double gap, String? activeOp) {
     final zeroWidth = buttonSize * 2 + gap;
 
     return Row(
@@ -249,6 +392,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
             isZero: true,
             type: CalculatorButtonType.digit,
             buttonSize: buttonSize,
+            isTablet: false,
             onTap: () => _handleButton('0'),
           ),
         ),
@@ -259,6 +403,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
             label: '.',
             type: CalculatorButtonType.digit,
             buttonSize: buttonSize,
+            isTablet: false,
             onTap: () => _handleButton('.'),
           ),
         ),
@@ -270,6 +415,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
             type: CalculatorButtonType.operator,
             isSelected: activeOp == '=',
             buttonSize: buttonSize,
+            isTablet: false,
             onTap: () => _handleButton('='),
           ),
         ),

@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -14,6 +15,8 @@ class CalculatorButton extends StatefulWidget {
   final bool isZero;
   final bool isSelected;
   final double? buttonSize;
+  final double? buttonHeight;
+  final bool isTablet;
 
   const CalculatorButton({
     super.key,
@@ -23,6 +26,8 @@ class CalculatorButton extends StatefulWidget {
     this.isZero = false,
     this.isSelected = false,
     this.buttonSize,
+    this.buttonHeight,
+    this.isTablet = false,
   });
 
   @override
@@ -38,10 +43,16 @@ class _CalculatorButtonState extends State<CalculatorButton> {
     }
     switch (widget.type) {
       case CalculatorButtonType.function:
+        if (widget.isTablet) {
+          return _isPressed ? const Color(0xFF8E8E93) : const Color(0xFF636366);
+        }
         return _isPressed ? const Color(0xFFD9D9D9) : const Color(0xFFA5A5A5);
       case CalculatorButtonType.operator:
         return _isPressed ? const Color(0xFFF2C078) : const Color(0xFFFF9F0A);
       case CalculatorButtonType.digit:
+        if (widget.isTablet) {
+          return _isPressed ? const Color(0xFF505054) : const Color(0xFF2C2C2E);
+        }
         return _isPressed ? const Color(0xFF737373) : const Color(0xFF333333);
     }
   }
@@ -52,7 +63,7 @@ class _CalculatorButtonState extends State<CalculatorButton> {
     }
     switch (widget.type) {
       case CalculatorButtonType.function:
-        return Colors.black;
+        return widget.isTablet ? Colors.white : Colors.black;
       case CalculatorButtonType.operator:
       case CalculatorButtonType.digit:
         return Colors.white;
@@ -61,10 +72,32 @@ class _CalculatorButtonState extends State<CalculatorButton> {
 
   @override
   Widget build(BuildContext context) {
-    final size = widget.buttonSize ?? 70.0;
+    final height = widget.buttonHeight ?? widget.buttonSize ?? 70.0;
     final fontScale = widget.type == CalculatorButtonType.function ? 0.36 : 0.42;
-    final fontSize = (size * fontScale).clamp(14.0, 48.0);
-    final zeroPadding = size * 0.32;
+    final fontSize = (height * fontScale).clamp(16.0, 48.0);
+    final zeroPadding = (widget.buttonSize ?? 70.0) * 0.32;
+
+    Widget child;
+    if (widget.label == '⌫' || widget.label == 'backspace') {
+      child = Icon(
+        CupertinoIcons.delete_left,
+        color: _textColor,
+        size: fontSize * 1.1,
+      );
+    } else {
+      child = Text(
+        widget.label,
+        style: TextStyle(
+          color: _textColor,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w400,
+        ),
+      );
+    }
+
+    final borderRadius = widget.isTablet
+        ? BorderRadius.circular(height * 0.42)
+        : BorderRadius.circular(100);
 
     return GestureDetector(
       onTapDown: (_) {
@@ -80,18 +113,11 @@ class _CalculatorButtonState extends State<CalculatorButton> {
         padding: widget.isZero ? EdgeInsets.only(left: zeroPadding) : EdgeInsets.zero,
         decoration: BoxDecoration(
           color: _backgroundColor,
-          borderRadius: BorderRadius.circular(100),
+          borderRadius: borderRadius,
         ),
         child: FittedBox(
           fit: BoxFit.scaleDown,
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              color: _textColor,
-              fontSize: fontSize,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
+          child: child,
         ),
       ),
     );

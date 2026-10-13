@@ -14,10 +14,10 @@ class CalculatorDisplay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double maxValFontSize = isWideScreen ? 108.0 : 80.0;
-    final double midValFontSize = isWideScreen ? 84.0 : 64.0;
-    final double minValFontSize = isWideScreen ? 60.0 : 46.0;
-    final double exprFontSize = isWideScreen ? 28.0 : 22.0;
+    final double maxValFontSize = isWideScreen ? 120.0 : 80.0;
+    final double midValFontSize = isWideScreen ? 90.0 : 64.0;
+    final double minValFontSize = isWideScreen ? 64.0 : 46.0;
+    final double exprFontSize = isWideScreen ? 32.0 : 22.0;
 
     final double fontSize = value.length > 9
         ? minValFontSize
