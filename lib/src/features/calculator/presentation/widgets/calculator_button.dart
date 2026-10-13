@@ -13,6 +13,7 @@ class CalculatorButton extends StatefulWidget {
   final VoidCallback onTap;
   final bool isZero;
   final bool isSelected;
+  final double? buttonSize;
 
   const CalculatorButton({
     super.key,
@@ -21,6 +22,7 @@ class CalculatorButton extends StatefulWidget {
     this.type = CalculatorButtonType.digit,
     this.isZero = false,
     this.isSelected = false,
+    this.buttonSize,
   });
 
   @override
@@ -59,6 +61,10 @@ class _CalculatorButtonState extends State<CalculatorButton> {
 
   @override
   Widget build(BuildContext context) {
+    final size = widget.buttonSize ?? 70.0;
+    final fontSize = (size * (widget.type == CalculatorButtonType.function ? 0.36 : 0.42)).clamp(14.0, 38.0);
+    final zeroPadding = size * 0.32;
+
     return GestureDetector(
       onTapDown: (_) {
         HapticFeedback.lightImpact();
@@ -70,17 +76,20 @@ class _CalculatorButtonState extends State<CalculatorButton> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 80),
         alignment: widget.isZero ? Alignment.centerLeft : Alignment.center,
-        padding: widget.isZero ? const EdgeInsets.only(left: 28) : EdgeInsets.zero,
+        padding: widget.isZero ? EdgeInsets.only(left: zeroPadding) : EdgeInsets.zero,
         decoration: BoxDecoration(
           color: _backgroundColor,
           borderRadius: BorderRadius.circular(100),
         ),
-        child: Text(
-          widget.label,
-          style: TextStyle(
-            color: _textColor,
-            fontSize: widget.type == CalculatorButtonType.function ? 26 : 34,
-            fontWeight: FontWeight.w400,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              color: _textColor,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w400,
+            ),
           ),
         ),
       ),

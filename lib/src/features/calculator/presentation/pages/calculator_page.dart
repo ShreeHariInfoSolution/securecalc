@@ -67,58 +67,120 @@ class _CalculatorPageState extends State<CalculatorPage> {
               return const SizedBox();
             }
 
-            return Column(
-              children: [
-                // Display Area
-                Expanded(
-                  child: GestureDetector(
-                    onLongPress: _triggerSecretVaultTransition,
-                    child: CalculatorDisplay(
-                      value: _logic.displayValue,
-                      expression: _logic.expression,
-                    ),
-                  ),
-                ),
+            final maxWidth = constraints.maxWidth;
+            final maxHeight = constraints.maxHeight;
 
-                // Keypad Grid - Apple Calculator Pixel Perfect Layout
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildRow(['AC', '+/-', '%', '÷'], [
-                        CalculatorButtonType.function,
-                        CalculatorButtonType.function,
-                        CalculatorButtonType.function,
-                        CalculatorButtonType.operator,
-                      ]),
-                      const SizedBox(height: 12),
-                      _buildRow(['7', '8', '9', '×'], [
-                        CalculatorButtonType.digit,
-                        CalculatorButtonType.digit,
-                        CalculatorButtonType.digit,
-                        CalculatorButtonType.operator,
-                      ]),
-                      const SizedBox(height: 12),
-                      _buildRow(['4', '5', '6', '-'], [
-                        CalculatorButtonType.digit,
-                        CalculatorButtonType.digit,
-                        CalculatorButtonType.digit,
-                        CalculatorButtonType.operator,
-                      ]),
-                      const SizedBox(height: 12),
-                      _buildRow(['1', '2', '3', '+'], [
-                        CalculatorButtonType.digit,
-                        CalculatorButtonType.digit,
-                        CalculatorButtonType.digit,
-                        CalculatorButtonType.operator,
-                      ]),
-                      const SizedBox(height: 12),
-                      _buildBottomRow(),
-                    ],
-                  ),
+            // Wide screen check (iPads, tablets, or desktop)
+            final isWideScreen = maxWidth >= 600;
+
+            // On wide screens / iPad, cap the max keypad container width so buttons remain clean and well-proportioned
+            final maxKeypadWidth = isWideScreen
+                ? min(maxWidth * 0.85, 500.0)
+                : maxWidth;
+
+            // Spacing & padding configuration
+            const double gap = 12.0;
+            const double horizontalPadding = 16.0;
+
+            // 1) Width constraint on button size:
+            // 4 columns of buttonSize + 3 gaps + 2 * horizontalPadding = keypadWidth
+            final availableKeypadWidth = maxKeypadWidth - (horizontalPadding * 2);
+            final maxButtonWidth = (availableKeypadWidth - (gap * 3)) / 4;
+
+            // 2) Height constraint on button size:
+            // Keypad must take at most ~65% of screen height to guarantee ample room for display
+            final maxKeypadHeightAllowed = maxHeight * 0.65;
+            final maxButtonHeight = (maxKeypadHeightAllowed - (gap * 4) - 16.0) / 5;
+
+            // Final button size (width = height) strictly constrained by both width and height bounds
+            double buttonSize = min(maxButtonWidth, maxButtonHeight);
+            buttonSize = buttonSize.clamp(32.0, 100.0);
+
+            // Re-calculate actual keypad width based on final buttonSize
+            final keypadWidth = (buttonSize * 4) + (gap * 3) + (horizontalPadding * 2);
+
+            return Center(
+              child: SizedBox(
+                width: isWideScreen ? keypadWidth : maxWidth,
+                child: Column(
+                  children: [
+                    // Display Area
+                    Expanded(
+                      child: GestureDetector(
+                        onLongPress: _triggerSecretVaultTransition,
+                        child: CalculatorDisplay(
+                          value: _logic.displayValue,
+                          expression: _logic.expression,
+                        ),
+                      ),
+                    ),
+
+                    // Keypad Grid - Apple Calculator Responsive Layout
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        horizontalPadding,
+                        0,
+                        horizontalPadding,
+                        16,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildRow(
+                            ['AC', '+/-', '%', '÷'],
+                            [
+                              CalculatorButtonType.function,
+                              CalculatorButtonType.function,
+                              CalculatorButtonType.function,
+                              CalculatorButtonType.operator,
+                            ],
+                            buttonSize,
+                            gap,
+                          ),
+                          SizedBox(height: gap),
+                          _buildRow(
+                            ['7', '8', '9', '×'],
+                            [
+                              CalculatorButtonType.digit,
+                              CalculatorButtonType.digit,
+                              CalculatorButtonType.digit,
+                              CalculatorButtonType.operator,
+                            ],
+                            buttonSize,
+                            gap,
+                          ),
+                          SizedBox(height: gap),
+                          _buildRow(
+                            ['4', '5', '6', '-'],
+                            [
+                              CalculatorButtonType.digit,
+                              CalculatorButtonType.digit,
+                              CalculatorButtonType.digit,
+                              CalculatorButtonType.operator,
+                            ],
+                            buttonSize,
+                            gap,
+                          ),
+                          SizedBox(height: gap),
+                          _buildRow(
+                            ['1', '2', '3', '+'],
+                            [
+                              CalculatorButtonType.digit,
+                              CalculatorButtonType.digit,
+                              CalculatorButtonType.digit,
+                              CalculatorButtonType.operator,
+                            ],
+                            buttonSize,
+                            gap,
+                          ),
+                          SizedBox(height: gap),
+                          _buildBottomRow(buttonSize, gap),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             );
           },
         ),
@@ -126,17 +188,22 @@ class _CalculatorPageState extends State<CalculatorPage> {
     );
   }
 
-  Widget _buildRow(List<String> labels, List<CalculatorButtonType> types) {
-    final size = _buttonSize(context);
+  Widget _buildRow(
+    List<String> labels,
+    List<CalculatorButtonType> types,
+    double buttonSize,
+    double gap,
+  ) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: List.generate(4, (index) {
         return SizedBox(
-          width: size,
-          height: size,
+          width: buttonSize,
+          height: buttonSize,
           child: CalculatorButton(
             label: labels[index],
             type: types[index],
+            buttonSize: buttonSize,
             onTap: () => _handleButton(labels[index]),
           ),
         );
@@ -144,63 +211,44 @@ class _CalculatorPageState extends State<CalculatorPage> {
     );
   }
 
-  Widget _buildBottomRow() {
-    final size = _buttonSize(context);
-    final zeroWidth = size * 2 + 12;
+  Widget _buildBottomRow(double buttonSize, double gap) {
+    final zeroWidth = buttonSize * 2 + gap;
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         SizedBox(
           width: zeroWidth,
-          height: size,
+          height: buttonSize,
           child: CalculatorButton(
             label: '0',
             isZero: true,
             type: CalculatorButtonType.digit,
+            buttonSize: buttonSize,
             onTap: () => _handleButton('0'),
           ),
         ),
         SizedBox(
-          width: size,
-          height: size,
+          width: buttonSize,
+          height: buttonSize,
           child: CalculatorButton(
             label: '.',
             type: CalculatorButtonType.digit,
+            buttonSize: buttonSize,
             onTap: () => _handleButton('.'),
           ),
         ),
         SizedBox(
-          width: size,
-          height: size,
+          width: buttonSize,
+          height: buttonSize,
           child: CalculatorButton(
             label: '=',
             type: CalculatorButtonType.operator,
+            buttonSize: buttonSize,
             onTap: () => _handleButton('='),
           ),
         ),
       ],
     );
-  }
-
-  double _buttonSize(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final screenWidth = media.size.width;
-    final screenHeight = media.size.height;
-
-    // Safety fallback against uninitialized 0 or negative metrics
-    if (screenWidth <= 0 || screenHeight <= 0) {
-      return 70.0;
-    }
-
-    final isLandscape = media.orientation == Orientation.landscape;
-
-    if (isLandscape) {
-      final availableHeight = screenHeight - 80;
-      return max(35.0, (availableHeight - 48) / 5);
-    } else {
-      final computedSize = (screenWidth - 32 - 36) / 4;
-      return max(35.0, computedSize);
-    }
   }
 }
