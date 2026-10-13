@@ -81,64 +81,70 @@ class IosAvatar extends StatelessWidget {
 
     final baseColor = _getDeterministicColor(name);
 
+    final fallbackInitials = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            baseColor.withValues(alpha: 0.95),
+            baseColor.withValues(alpha: 0.65),
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: baseColor.withValues(alpha: 0.25),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        _getInitials(name),
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: size * 0.36,
+        ),
+      ),
+    );
+
     Widget avatarWidget;
 
     if (hasLocalImage) {
-      avatarWidget = Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          image: DecorationImage(
-            image: FileImage(File(resolvedImage)),
-            fit: BoxFit.cover,
-          ),
+      avatarWidget = ClipOval(
+        child: Image.file(
+          File(resolvedImage),
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => fallbackInitials,
         ),
       );
     } else if (hasNetworkImage) {
-      avatarWidget = Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          image: DecorationImage(
-            image: NetworkImage(resolvedImage),
-            fit: BoxFit.cover,
-          ),
+      final headers = ServerApiService.instance.authToken != null
+          ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
+          : null;
+      avatarWidget = ClipOval(
+        child: Image.network(
+          resolvedImage,
+          headers: headers,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => fallbackInitials,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return fallbackInitials;
+          },
         ),
       );
     } else {
-      avatarWidget = Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              baseColor.withValues(alpha: 0.95),
-              baseColor.withValues(alpha: 0.65),
-            ],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: baseColor.withValues(alpha: 0.25),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          _getInitials(name),
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: size * 0.36,
-          ),
-        ),
-      );
+      avatarWidget = fallbackInitials;
     }
 
     return SizedBox(

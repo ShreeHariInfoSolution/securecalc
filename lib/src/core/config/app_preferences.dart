@@ -87,6 +87,9 @@ class AppPreferences {
     await _prefs.setString(deviceIdKey, existingId);
 
     await updateSecureFlag();
+
+    displayNameNotifier.value = getDisplayName();
+    profileImagePathNotifier.value = getProfileImagePath();
   }
 
   // Setters
@@ -177,12 +180,19 @@ class AppPreferences {
     await _prefs.setString(deviceIdKey, id);
   }
 
+  static final ValueNotifier<String> displayNameNotifier =
+      ValueNotifier<String>('Profile');
+  static final ValueNotifier<String?> profileImagePathNotifier =
+      ValueNotifier<String?>(null);
+
   static String? getDeviceIdSync() {
     return _prefs.getString(_keyDeviceId) ?? _prefs.getString(deviceIdKey);
   }
 
   static Future<void> setDisplayName(String name) async {
-    await _prefs.setString(_keyDisplayName, name);
+    final clean = name.trim();
+    await _prefs.setString(_keyDisplayName, clean);
+    displayNameNotifier.value = clean.isNotEmpty ? clean : 'Profile';
   }
 
   /// Removes the values tied to the currently signed-in account.
@@ -190,6 +200,8 @@ class AppPreferences {
     await _prefs.remove(_keyDisplayName);
     await _prefs.remove(_keyProfileImagePath);
     await _prefs.remove(_keyShowOnlineStatus);
+    displayNameNotifier.value = 'Profile';
+    profileImagePathNotifier.value = null;
   }
 
   static String getDisplayName() {
@@ -202,6 +214,7 @@ class AppPreferences {
 
   static Future<void> setProfileImagePath(String path) async {
     await _prefs.setString(_keyProfileImagePath, path);
+    profileImagePathNotifier.value = path;
   }
 
   static String? getProfileImagePath() {

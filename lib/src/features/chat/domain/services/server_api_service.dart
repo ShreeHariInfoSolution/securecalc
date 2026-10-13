@@ -9,6 +9,7 @@ import 'e2e_crypto_service.dart';
 import 'local_chat_storage.dart';
 import 'server_chat_manager.dart';
 import 'socket_chat_service.dart';
+import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/features/calling/domain/services/device_identity_service.dart';
 
 /// Central REST API Service connecting Flutter client to https://synqerp.com/calculatorchat/api/
@@ -40,6 +41,14 @@ class ServerApiService {
     if (savedUser != null) {
       try {
         _currentUser = UserModel.fromJson(jsonDecode(savedUser));
+        if (_currentUser != null) {
+          if (_currentUser!.name.isNotEmpty) {
+            await AppPreferences.setDisplayName(_currentUser!.name);
+          }
+          if (_currentUser!.avatar != null && _currentUser!.avatar!.isNotEmpty) {
+            await AppPreferences.setProfileImagePath(_currentUser!.avatar!);
+          }
+        }
       } catch (_) {
         _currentUser = null;
       }
@@ -65,6 +74,12 @@ class ServerApiService {
     await prefs.setInt(_authUserIdKey, userId);
     if (_currentUser != null) {
       await prefs.setString(_authUserKey, jsonEncode(_currentUser!.toJson()));
+      if (_currentUser!.name.isNotEmpty) {
+        await AppPreferences.setDisplayName(_currentUser!.name);
+      }
+      if (_currentUser!.avatar != null && _currentUser!.avatar!.isNotEmpty) {
+        await AppPreferences.setProfileImagePath(_currentUser!.avatar!);
+      }
     }
     unawaited(ServerChatManager.instance.init());
   }
@@ -241,12 +256,84 @@ class ServerApiService {
         _currentUser = UserModel.fromJson(data);
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_authUserKey, jsonEncode(_currentUser!.toJson()));
+        if (_currentUser!.name.isNotEmpty) {
+          await AppPreferences.setDisplayName(_currentUser!.name);
+        }
+        if (_currentUser!.avatar != null && _currentUser!.avatar!.isNotEmpty) {
+          await AppPreferences.setProfileImagePath(_currentUser!.avatar!);
+        }
         return _currentUser;
       }
     } catch (e) {
       debugPrint('[API] Get Profile Error: $e');
     }
     return null;
+  }
+
+  /// Updates user profile on the server (`PUT /api/users/me`).
+  Future<UserModel?> updateProfile({
+    String? name,
+    File? profileImage,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/users/me');
+      final request = http.MultipartRequest('PUT', uri);
+
+      if (_authToken != null && _authToken!.isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer $_authToken';
+      }
+
+      if (name != null && name.trim().isNotEmpty) {
+        request.fields['name'] = name.trim();
+      }
+
+      if (profileImage != null && await profileImage.exists()) {
+        final multipartFile = await http.MultipartFile.fromPath(
+          'profile_image',
+          profileImage.path,
+        );
+        request.files.add(multipartFile);
+      }
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final decoded = jsonDecode(response.body);
+        final data = decoded['data'] is Map<String, dynamic>
+            ? decoded['data'] as Map<String, dynamic>
+            : decoded is Map<String, dynamic>
+                ? decoded
+                : <String, dynamic>{};
+
+        final updatedUser = UserModel.fromJson(data);
+        _currentUser = updatedUser;
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_authUserKey, jsonEncode(updatedUser.toJson()));
+
+        if (updatedUser.name.isNotEmpty) {
+          await AppPreferences.setDisplayName(updatedUser.name);
+        }
+        if (updatedUser.avatar != null && updatedUser.avatar!.isNotEmpty) {
+          await AppPreferences.setProfileImagePath(updatedUser.avatar!);
+        }
+
+        return updatedUser;
+      } else {
+        String cleanError = 'Failed to update profile (${response.statusCode})';
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            cleanError = decoded['message'] ?? decoded['error'] ?? cleanError;
+          }
+        } catch (_) {}
+        throw Exception(cleanError);
+      }
+    } catch (e) {
+      debugPrint('[API] Update Profile Error: $e');
+      rethrow;
+    }
   }
 
   // ─── Users Endpoints ───────────────────────────────────────────────────────

@@ -1,8 +1,8 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
+import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/features/calculator/presentation/pages/calculator_page.dart';
 import '../../domain/services/server_chat_manager.dart';
@@ -265,94 +265,88 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
   }
 
   Widget _buildProfileHeader(bool isDark) {
-    final displayName = AppPreferences.getDisplayName();
-    final profileImgPath = AppPreferences.getProfileImagePath();
-    final hasImg = profileImgPath != null &&
-        profileImgPath.isNotEmpty &&
-        File(profileImgPath).existsSync();
-    final initial = displayName.isNotEmpty ? displayName[0].toUpperCase() : 'H';
-
-    return Column(
-      children: [
-        // Pill status badge matching Screenshot 1: 🟢 Online • Wi-Fi Direct
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-          decoration: BoxDecoration(
-            color: isDark ? AppTheme.darkSurface : Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.04),
-                blurRadius: 6,
-                offset: const Offset(0, 1),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: AppTheme.onlineGreen,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Online • Wi-Fi Direct',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.white : Colors.black,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Large Light-Blue Circle Avatar matching Screenshot 1
-        CircleAvatar(
-          radius: 46,
-          backgroundColor: const Color(0xFF60A5FA),
-          backgroundImage: hasImg ? FileImage(File(profileImgPath)) : null,
-          child: !hasImg
-              ? Text(
-                  initial,
-                  style: const TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+    return ValueListenableBuilder<String>(
+      valueListenable: AppPreferences.displayNameNotifier,
+      builder: (context, displayName, _) {
+        return ValueListenableBuilder<String?>(
+          valueListenable: AppPreferences.profileImagePathNotifier,
+          builder: (context, profileImgPath, _) {
+            return Column(
+              children: [
+                // Pill status badge matching Screenshot 1: 🟢 Online • Wi-Fi Direct
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: isDark ? AppTheme.darkSurface : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.04),
+                        blurRadius: 6,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
                   ),
-                )
-              : null,
-        ),
-        const SizedBox(height: 12),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: AppTheme.onlineGreen,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Online • Wi-Fi Direct',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
 
-        // Display Name + Verified Badge
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              displayName,
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                letterSpacing: -0.3,
-                color: isDark ? Colors.white : Colors.black,
-              ),
-            ),
-            const SizedBox(width: 6),
-            const Icon(
-              Icons.check_circle_rounded,
-              size: 20,
-              color: AppTheme.primaryColor,
-            ),
-          ],
-        ),
-      ],
+                // Large Avatar
+                IosAvatar(
+                  name: displayName,
+                  imagePath: profileImgPath,
+                  size: 92,
+                  showOnline: false,
+                ),
+                const SizedBox(height: 12),
+
+                // Display Name + Verified Badge
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      displayName,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: -0.3,
+                        color: isDark ? Colors.white : Colors.black,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(
+                      Icons.check_circle_rounded,
+                      size: 20,
+                      color: AppTheme.primaryColor,
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

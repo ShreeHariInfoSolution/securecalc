@@ -6,9 +6,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
+import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/features/calculator/domain/calculator_logic.dart';
 import 'package:securecalc/src/features/calculator/presentation/pages/calculator_page.dart';
+import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
 
 class PersonalSettingsPage extends StatefulWidget {
   const PersonalSettingsPage({super.key});
@@ -78,6 +80,26 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
           setState(() {
             _profileImagePath = picked.path;
           });
+        }
+
+        try {
+          final updatedUser = await ServerApiService.instance.updateProfile(
+            name: _displayNameController.text.trim(),
+            profileImage: File(picked.path),
+          );
+          if (updatedUser != null && updatedUser.avatar != null) {
+            await AppPreferences.setProfileImagePath(updatedUser.avatar!);
+            if (mounted) {
+              setState(() {
+                _profileImagePath = updatedUser.avatar;
+              });
+            }
+          }
+        } catch (e) {
+          debugPrint('[PROFILE UPLOAD ERROR] $e');
+        }
+
+        if (mounted) {
           _showToast('Profile picture updated successfully!');
         }
       }
@@ -210,7 +232,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     );
   }
 
-  void _saveDisplayName() {
+  Future<void> _saveDisplayName() async {
     final newName = _displayNameController.text.trim();
     if (newName.isEmpty) {
       _showToast('Display name cannot be empty.');
@@ -218,7 +240,14 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     }
 
     HapticFeedback.mediumImpact();
-    AppPreferences.setDisplayName(newName);
+    await AppPreferences.setDisplayName(newName);
+
+    try {
+      await ServerApiService.instance.updateProfile(name: newName);
+    } catch (e) {
+      debugPrint('[SAVE NAME ERROR] $e');
+    }
+
     _showToast('Display name saved!');
   }
 
@@ -290,25 +319,21 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                             child: Stack(
                               clipBehavior: Clip.none,
                               children: [
-                                CircleAvatar(
-                                  radius: 42,
-                                  backgroundColor: const Color(0xFF60A5FA),
-                                  backgroundImage: hasProfilePic
-                                      ? FileImage(File(_profileImagePath!))
-                                      : null,
-                                  child: !hasProfilePic
-                                      ? Text(
-                                          _displayNameController.text.isNotEmpty
-                                              ? _displayNameController.text[0]
-                                                  .toUpperCase()
-                                              : 'H',
-                                          style: const TextStyle(
-                                            fontSize: 28,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : null,
+                                ValueListenableBuilder<String?>(
+                                  valueListenable: AppPreferences.profileImagePathNotifier,
+                                  builder: (context, currentPath, _) {
+                                    return ValueListenableBuilder<String>(
+                                      valueListenable: AppPreferences.displayNameNotifier,
+                                      builder: (context, currentName, _) {
+                                        return IosAvatar(
+                                          name: currentName.isNotEmpty ? currentName : _displayNameController.text,
+                                          imagePath: currentPath ?? _profileImagePath,
+                                          size: 84,
+                                          showOnline: false,
+                                        );
+                                      },
+                                    );
+                                  },
                                 ),
                                 Positioned(
                                   right: -2,

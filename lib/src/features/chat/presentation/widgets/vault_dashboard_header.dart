@@ -85,39 +85,50 @@ class VaultDashboardHeader extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         // Welcome User Section
-        Row(
-          children: [
-            IosAvatar(
-              name: displayName,
-              size: 52,
-              isOnline: true,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isDuressMode ? 'Welcome' : 'Hello, $displayName',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: isDark ? Colors.white : Colors.black,
-                      letterSpacing: -0.5,
+        ValueListenableBuilder<String>(
+          valueListenable: AppPreferences.displayNameNotifier,
+          builder: (context, name, _) {
+            return ValueListenableBuilder<String?>(
+              valueListenable: AppPreferences.profileImagePathNotifier,
+              builder: (context, profilePath, _) {
+                return Row(
+                  children: [
+                    IosAvatar(
+                      name: name,
+                      imagePath: profilePath,
+                      size: 52,
+                      isOnline: true,
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  const Text(
-                    'End-to-End Encrypted Dashboard',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppTheme.subtitleGrey,
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isDuressMode ? 'Welcome' : 'Hello, $name',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: isDark ? Colors.white : Colors.black,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          const Text(
+                            'End-to-End Encrypted Dashboard',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.subtitleGrey,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+                  ],
+                );
+              },
+            );
+          },
         ),
       ],
     );
