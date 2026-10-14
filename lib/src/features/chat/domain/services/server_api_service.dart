@@ -823,6 +823,53 @@ class ServerApiService {
     }
   }
 
+  /// Sets disappearing messages setting for a chat head.
+  /// PUT /chats/:chatId/disappear
+  Future<Map<String, dynamic>?> setDisappearingMessagesREST({
+    required int chatId,
+    required int disappearType,
+  }) async {
+    try {
+      final body = {'disappear_type': disappearType};
+      final res = await http.put(
+        Uri.parse('$baseUrl/chats/$chatId/disappear'),
+        headers: _headers(),
+        body: jsonEncode(body),
+      );
+      debugPrint('[API] Disappear Response (${res.statusCode}): ${res.body}');
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final json = jsonDecode(res.body);
+        if (json is Map<String, dynamic>) return json;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[API] Disappear REST Error: $e');
+      return null;
+    }
+  }
+
+  /// Saves or unsaves a message.
+  /// PUT /chats/:chatId/messages/:messageId/save
+  Future<bool> saveMessageREST({
+    required int chatId,
+    required int messageId,
+    required bool isSaved,
+  }) async {
+    try {
+      final body = {'is_saved': isSaved};
+      final res = await http.put(
+        Uri.parse('$baseUrl/chats/$chatId/messages/$messageId/save'),
+        headers: _headers(),
+        body: jsonEncode(body),
+      );
+      debugPrint('[API] Save Message Response (${res.statusCode}): ${res.body}');
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('[API] Save Message REST Error: $e');
+      return false;
+    }
+  }
+
   // ─── Files Endpoints ───────────────────────────────────────────────────────
 
   /// Fetches paginated uploads for a given folder type ('image', 'video', 'audio', 'doc').

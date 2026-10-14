@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/config/app_config.dart';
 import '../../../../core/constants/api_constants.dart';
-import '../../../chat/presentation/pages/chat_page.dart';
+import '../../../chat/presentation/pages/conversation_list_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -47,7 +47,7 @@ class HomePage extends StatelessWidget {
                 onPressed: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (context) => const ChatPage(),
+                      builder: (context) => const ConversationListPage(),
                     ),
                   );
                 },
@@ -61,3 +61,4 @@ class HomePage extends StatelessWidget {
     );
   }
 }
+

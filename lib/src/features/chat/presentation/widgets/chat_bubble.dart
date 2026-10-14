@@ -9,13 +9,17 @@ import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:flutter/services.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
+import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 
+import '../../domain/entities/chat_message.dart';
 import '../../domain/services/e2e_crypto_service.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/attachment_cache_service.dart';
+import 'photo_gallery_viewer.dart';
 
 class ChatBubble extends StatefulWidget {
   final String message;
@@ -24,6 +28,7 @@ class ChatBubble extends StatefulWidget {
   final bool isRead;
   final bool isEdited;
   final bool isDeleted;
+  final bool isSaved;
   final String? type;
   final String? mediaUrl;
   final String? fileName;
@@ -32,6 +37,11 @@ class ChatBubble extends StatefulWidget {
   final String? replySender;
   final String? replyText;
   final String? chatId;
+  final List<ChatMessage>? groupedImages;
+  final int? replyToId;
+  final ChatMessage? repliedMessage;
+  final Function(int)? onTapReply;
+  final bool isHighlighted;
 
   const ChatBubble({
     super.key,
@@ -41,6 +51,7 @@ class ChatBubble extends StatefulWidget {
     this.isRead = true,
     this.isEdited = false,
     this.isDeleted = false,
+    this.isSaved = false,
     this.type = 'text',
     this.mediaUrl,
     this.fileName,
@@ -49,6 +60,11 @@ class ChatBubble extends StatefulWidget {
     this.replySender,
     this.replyText,
     this.chatId,
+    this.groupedImages,
+    this.replyToId,
+    this.repliedMessage,
+    this.onTapReply,
+    this.isHighlighted = false,
   });
 
   @override
@@ -288,52 +304,17 @@ class _ChatBubbleState extends State<ChatBubble> {
   }
 
   Future<void> _showImageViewer() async {
-    if (!_hasValidLocalFile) {
-      await _revealImage();
-      if (!_hasValidLocalFile) return;
-    }
-    final localPath = _downloadedPath!;
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => Dialog.fullscreen(
-        backgroundColor: Colors.black,
-        child: Stack(
-          children: [
-            Center(
-              child: InteractiveViewer(
-                minScale: 0.7,
-                maxScale: 5,
-                child: Image.file(File(localPath), fit: BoxFit.contain),
-              ),
-            ),
-            SafeArea(
-              child: Align(
-                alignment: Alignment.topRight,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      onPressed: () {
-                        AppToast.show('Sharing file...');
-                        SharePlus.instance.share(
-                          ShareParams(files: [XFile(localPath)]),
-                        );
-                      },
-                      icon: const Icon(Icons.share_rounded, color: Colors.white),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded, color: Colors.white),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    final localPath = _hasValidLocalFile ? _downloadedPath : widget.mediaUrl;
+    final singleMsg = ChatMessage(
+      id: widget.timestamp.millisecondsSinceEpoch.toString(),
+      senderId: widget.isMe ? 'user' : 'peer',
+      content: widget.message,
+      timestamp: widget.timestamp,
+      type: widget.type ?? 'image/jpeg',
+      mediaUrl: localPath,
+      fileName: widget.fileName,
     );
+    PhotoGalleryViewer.open(context, photos: [singleMsg], initialIndex: 0);
   }
 
   Future<void> _openAttachment() async {
@@ -370,6 +351,43 @@ class _ChatBubbleState extends State<ChatBubble> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
+        if (widget.isSaved) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+            margin: const EdgeInsets.only(right: 4),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.15)
+                  : (widget.isMe
+                      ? Colors.white.withValues(alpha: 0.25)
+                      : Colors.grey.withValues(alpha: 0.18)),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.bookmark_rounded,
+                  size: 9,
+                  color: widget.isMe
+                      ? Colors.white.withValues(alpha: 0.9)
+                      : (isDark ? Colors.white70 : Colors.grey.shade700),
+                ),
+                const SizedBox(width: 2),
+                Text(
+                  'Saved',
+                  style: TextStyle(
+                    color: widget.isMe
+                        ? Colors.white.withValues(alpha: 0.9)
+                        : (isDark ? Colors.white70 : Colors.grey.shade700),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         if (widget.isEdited) ...[
           Text(
             'edited ',
@@ -405,6 +423,107 @@ class _ChatBubbleState extends State<ChatBubble> {
     );
   }
 
+  Widget _buildReplyMediaThumbnail(ChatMessage msg, bool isDark) {
+    final url = msg.mediaUrl;
+    final type = msg.type.toLowerCase();
+
+    if (type.startsWith('image/') ||
+        type == 'image' ||
+        (url != null &&
+            ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic']
+                .contains(url.split('.').last.split('?').first.toLowerCase()))) {
+      if (url != null && url.isNotEmpty) {
+        return FutureBuilder<String?>(
+          future: AttachmentCacheService.instance.resolveLocalPath(url),
+          builder: (context, snapshot) {
+            final localPath = snapshot.data;
+            if (localPath != null &&
+                localPath.isNotEmpty &&
+                File(localPath).existsSync()) {
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Image.file(
+                  File(localPath),
+                  width: 32,
+                  height: 32,
+                  fit: BoxFit.cover,
+                ),
+              );
+            }
+            final resolved = _resolveRemoteMediaUrl(url);
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: ImageFiltered(
+                imageFilter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                child: Image.network(
+                  resolved,
+                  width: 32,
+                  height: 32,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    width: 32,
+                    height: 32,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF3F51B5), Color(0xFF7E57C2)],
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.image_outlined,
+                      size: 16,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      }
+      return Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF3F51B5), Color(0xFF7E57C2)],
+          ),
+        ),
+        child: const Icon(
+          Icons.image_outlined,
+          size: 16,
+          color: Colors.white70,
+        ),
+      );
+    }
+
+    if (type.startsWith('video/') || type == 'video') {
+      return _buildReplyIconBadge(Icons.play_circle_fill_rounded);
+    }
+
+    if (type.startsWith('audio/') || type == 'audio') {
+      return _buildReplyIconBadge(Icons.mic_rounded);
+    }
+
+    return _buildReplyIconBadge(Icons.insert_drive_file_rounded);
+  }
+
+  Widget _buildReplyIconBadge(IconData icon) {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Icon(
+        icon,
+        size: 18,
+        color: widget.isMe ? Colors.white : AppTheme.primaryColor,
+      ),
+    );
+  }
+
   Widget _buildBubbleContent(
     BuildContext context,
     bool isDark,
@@ -420,50 +539,69 @@ class _ChatBubbleState extends State<ChatBubble> {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (hasReply) ...[
-          Container(
-            width: double.infinity,
-            margin: const EdgeInsets.only(bottom: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-            decoration: BoxDecoration(
-              color: widget.isMe
-                  ? Colors.black.withValues(alpha: 0.12)
-                  : (isDark
+          GestureDetector(
+            onTap: () {
+              if (widget.onTapReply != null && widget.replyToId != null) {
+                widget.onTapReply!(widget.replyToId!);
+              }
+            },
+            child: Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+              decoration: BoxDecoration(
+                color: widget.isMe
+                    ? Colors.black.withValues(alpha: 0.14)
+                    : (isDark
                         ? Colors.white.withValues(alpha: 0.08)
                         : Colors.black.withValues(alpha: 0.05)),
-              borderRadius: BorderRadius.circular(9),
-              border: Border(
-                left: BorderSide(
-                  color: widget.isMe
-                      ? Colors.white.withValues(alpha: 0.85)
-                      : AppTheme.primaryColor,
-                  width: 3,
+                borderRadius: BorderRadius.circular(9),
+                border: Border(
+                  left: BorderSide(
+                    color: widget.isMe
+                        ? Colors.white.withValues(alpha: 0.88)
+                        : AppTheme.primaryColor,
+                    width: 3,
+                  ),
                 ),
               ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.replySender ?? 'Reply',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: textColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.replySender ?? 'Reply',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          widget.replyText!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: textColor.withValues(alpha: 0.82),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  widget.replyText!,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: textColor.withValues(alpha: 0.82),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+                  if (widget.repliedMessage != null &&
+                      (widget.repliedMessage!.mediaUrl?.isNotEmpty == true ||
+                          widget.repliedMessage!.type != 'text')) ...[
+                    const SizedBox(width: 6),
+                    _buildReplyMediaThumbnail(widget.repliedMessage!, isDark),
+                  ],
+                ],
+              ),
             ),
           ),
         ],
@@ -558,154 +696,6 @@ class _ChatBubbleState extends State<ChatBubble> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    if (widget.isDeleted) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 36),
-        child: Row(
-          children: [
-            Expanded(
-              child: Divider(
-                color: AppTheme.subtitleGrey.withValues(alpha: 0.35),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Text(
-                'This message was deleted',
-                style: TextStyle(
-                  color: AppTheme.subtitleGrey,
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
-            Expanded(
-              child: Divider(
-                color: AppTheme.subtitleGrey.withValues(alpha: 0.35),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final bubbleColor = widget.isMe
-        ? AppTheme.primaryColor
-        : (isDark ? AppTheme.darkBubbleOther : AppTheme.lightBubbleOther);
-
-    final textColor = widget.isMe
-        ? Colors.white
-        : (isDark ? Colors.white : Colors.black);
-
-    final mediaUrl = widget.mediaUrl;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3.0, horizontal: 12.0),
-      child: Column(
-        crossAxisAlignment: widget.isMe
-            ? CrossAxisAlignment.end
-            : CrossAxisAlignment.start,
-        children: [
-          if (widget.senderName != null && widget.senderName!.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 3, left: 4, right: 4),
-              child: Text(
-                widget.senderName!,
-                style: const TextStyle(
-                  color: AppTheme.primaryColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          Padding(
-            padding: EdgeInsets.only(
-              bottom: widget.reactions?.isNotEmpty == true ? 18 : 0,
-            ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Align(
-                  alignment: widget.isMe
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
-                  child: Container(
-                    constraints: BoxConstraints(
-                      maxWidth: MediaQuery.of(context).size.width * 0.72,
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12.0,
-                      vertical: 8.0,
-                    ),
-                    decoration: BoxDecoration(
-                      color: bubbleColor,
-                      borderRadius: BorderRadius.only(
-                        topLeft: const Radius.circular(18),
-                        topRight: const Radius.circular(18),
-                        bottomLeft: Radius.circular(widget.isMe ? 18 : 4),
-                        bottomRight: Radius.circular(widget.isMe ? 4 : 18),
-                      ),
-                    ),
-                    child: _buildBubbleContent(
-                      context,
-                      isDark,
-                      textColor,
-                      mediaUrl,
-                    ),
-                  ),
-                ),
-                if (widget.reactions?.isNotEmpty == true)
-                  Positioned(
-                    bottom: -16,
-                    right: widget.isMe ? 9 : null,
-                    left: widget.isMe ? null : 9,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.12),
-                            blurRadius: 5,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: widget.reactions!
-                            .map(
-                              (reaction) => Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 1,
-                                ),
-                                child: Text(
-                                  reaction,
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAttachment(
     bool isDark,
     String? mediaUrl,
@@ -763,19 +753,37 @@ class _ChatBubbleState extends State<ChatBubble> {
                       height: 210,
                       width: 260,
                       fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        height: 210,
-                        width: 260,
-                        color: isDark
-                            ? const Color(0xFF1E282D)
-                            : const Color(0xFFD6D9DE),
-                        child: const Center(
-                          child: Icon(
-                            Icons.image_not_supported_outlined,
-                            size: 40,
-                            color: Colors.white54,
+                      errorBuilder: (context, error, stackTrace) => Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Container(
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  Color(0xFF2B3A42),
+                                  Color(0xFF3F51B5),
+                                  Color(0xFF7E57C2),
+                                  Color(0xFF26A69A),
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                            ),
                           ),
-                        ),
+                          BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                            child: Container(
+                              color: Colors.black.withValues(alpha: 0.15),
+                            ),
+                          ),
+                          const Center(
+                            child: Icon(
+                              Icons.photo_outlined,
+                              size: 44,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -981,4 +989,703 @@ class _ChatBubbleState extends State<ChatBubble> {
       ),
     );
   }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    if (widget.groupedImages != null && widget.groupedImages!.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3.0, horizontal: 12.0),
+        child: Column(
+          crossAxisAlignment: widget.isMe
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            if (widget.senderName != null && widget.senderName!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3, left: 4, right: 4),
+                child: Text(
+                  widget.senderName!,
+                  style: const TextStyle(
+                    color: AppTheme.primaryColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            GroupedPhotoGrid(
+              groupedImages: widget.groupedImages!,
+              isMe: widget.isMe,
+              timestamp: widget.timestamp,
+              isRead: widget.isRead,
+              isEdited: widget.isEdited,
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (widget.isDeleted) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 36),
+        child: Row(
+          children: [
+            Expanded(
+              child: Divider(
+                color: AppTheme.subtitleGrey.withValues(alpha: 0.35),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                'This message was deleted',
+                style: TextStyle(
+                  color: AppTheme.subtitleGrey,
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Divider(
+                color: AppTheme.subtitleGrey.withValues(alpha: 0.35),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final bubbleColor = widget.isHighlighted
+        ? AppTheme.primaryColor.withValues(alpha: 0.45)
+        : (widget.isMe
+            ? AppTheme.sentBubble(isDark)
+            : AppTheme.receivedBubble(isDark));
+
+    final textColor = widget.isMe
+        ? Colors.white
+        : (isDark ? Colors.white : Colors.black);
+
+    final mediaUrl = widget.mediaUrl;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3.0, horizontal: 12.0),
+      child: Column(
+        crossAxisAlignment: widget.isMe
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
+        children: [
+          if (widget.senderName != null && widget.senderName!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 3, left: 4, right: 4),
+              child: Text(
+                widget.senderName!,
+                style: const TextStyle(
+                  color: AppTheme.primaryColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          Padding(
+            padding: EdgeInsets.only(
+              bottom: widget.reactions?.isNotEmpty == true ? 18 : 0,
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Align(
+                  alignment: widget.isMe
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxWidth: MediaQuery.of(context).size.width * 0.72,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12.0,
+                      vertical: 8.0,
+                    ),
+                    decoration: BoxDecoration(
+                      color: bubbleColor,
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(18),
+                        topRight: const Radius.circular(18),
+                        bottomLeft: Radius.circular(widget.isMe ? 18 : 4),
+                        bottomRight: Radius.circular(widget.isMe ? 4 : 18),
+                      ),
+                    ),
+                    child: _buildBubbleContent(
+                      context,
+                      isDark,
+                      textColor,
+                      mediaUrl,
+                    ),
+                  ),
+                ),
+                if (widget.reactions?.isNotEmpty == true)
+                  Positioned(
+                    bottom: -16,
+                    right: widget.isMe ? 9 : null,
+                    left: widget.isMe ? null : 9,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.12),
+                            blurRadius: 5,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: widget.reactions!
+                            .map(
+                              (reaction) => Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 2,
+                                ),
+                                child: reaction == 'star'
+                                    ? const Icon(
+                                        Icons.star_rounded,
+                                        color: Colors.amber,
+                                        size: 15,
+                                      )
+                                    : Text(
+                                        reaction,
+                                        style: const TextStyle(fontSize: 14),
+                                      ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
+
+class GroupedPhotoGrid extends StatelessWidget {
+  final List<ChatMessage> groupedImages;
+  final bool isMe;
+  final DateTime timestamp;
+  final bool isRead;
+  final bool isEdited;
+  final bool isSaved;
+
+  const GroupedPhotoGrid({
+    super.key,
+    required this.groupedImages,
+    required this.isMe,
+    required this.timestamp,
+    required this.isRead,
+    required this.isEdited,
+    this.isSaved = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final count = groupedImages.length;
+
+    Widget gridContent;
+    if (count == 1) {
+      gridContent = _buildSingleImage(context, groupedImages[0]);
+    } else if (count == 2) {
+      gridContent = _buildTwoImages(context, groupedImages);
+    } else if (count == 3) {
+      gridContent = _buildThreeImages(context, groupedImages);
+    } else {
+      gridContent = _buildFourPlusImages(context, groupedImages);
+    }
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 270),
+      decoration: BoxDecoration(
+        color: isMe
+            ? AppTheme.primaryColor
+            : (Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF2C2C2E)
+                : Colors.white),
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(18),
+          topRight: const Radius.circular(18),
+          bottomLeft: Radius.circular(isMe ? 18 : 4),
+          bottomRight: Radius.circular(isMe ? 4 : 18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          gridContent,
+          // Time badge overlay
+          Positioned(
+            right: 8,
+            bottom: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isSaved) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 1),
+                      margin: const EdgeInsets.only(right: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.bookmark_rounded,
+                              size: 8, color: Colors.white),
+                          SizedBox(width: 2),
+                          Text(
+                            'Saved',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (isEdited) ...[
+                    const Text(
+                      'edited ',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 9,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                  Text(
+                    _formatTime(timestamp),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (isMe) ...[
+                    const SizedBox(width: 3),
+                    Icon(
+                      isRead ? Icons.done_all_rounded : Icons.done_rounded,
+                      size: 12,
+                      color: isRead ? const Color(0xFF53BDEB) : Colors.white70,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatTime(DateTime time) {
+    final hour24 = time.toLocal().hour;
+    final hour = hour24 > 12 ? hour24 - 12 : (hour24 == 0 ? 12 : hour24);
+    final min = time.toLocal().minute.toString().padLeft(2, '0');
+    final period = hour24 >= 12 ? 'PM' : 'AM';
+    return '$hour:$min $period';
+  }
+
+  Widget _buildSingleImage(BuildContext context, ChatMessage msg) {
+    return _GridTileItem(
+      photoMessage: msg,
+      width: 270,
+      height: 220,
+      onTap: () => PhotoGalleryViewer.open(
+        context,
+        photos: groupedImages,
+        initialIndex: 0,
+      ),
+    );
+  }
+
+  Widget _buildTwoImages(BuildContext context, List<ChatMessage> photos) {
+    return Row(
+      children: [
+        Expanded(
+          child: _GridTileItem(
+            photoMessage: photos[0],
+            height: 140,
+            onTap: () => PhotoGalleryViewer.open(
+              context,
+              photos: photos,
+              initialIndex: 0,
+            ),
+          ),
+        ),
+        const SizedBox(width: 2),
+        Expanded(
+          child: _GridTileItem(
+            photoMessage: photos[1],
+            height: 140,
+            onTap: () => PhotoGalleryViewer.open(
+              context,
+              photos: photos,
+              initialIndex: 1,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildThreeImages(BuildContext context, List<ChatMessage> photos) {
+    return Row(
+      children: [
+        Expanded(
+          flex: 5,
+          child: _GridTileItem(
+            photoMessage: photos[0],
+            height: 180,
+            onTap: () => PhotoGalleryViewer.open(
+              context,
+              photos: photos,
+              initialIndex: 0,
+            ),
+          ),
+        ),
+        const SizedBox(width: 2),
+        Expanded(
+          flex: 5,
+          child: Column(
+            children: [
+              _GridTileItem(
+                photoMessage: photos[1],
+                height: 89,
+                onTap: () => PhotoGalleryViewer.open(
+                  context,
+                  photos: photos,
+                  initialIndex: 1,
+                ),
+              ),
+              const SizedBox(height: 2),
+              _GridTileItem(
+                photoMessage: photos[2],
+                height: 89,
+                onTap: () => PhotoGalleryViewer.open(
+                  context,
+                  photos: photos,
+                  initialIndex: 2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFourPlusImages(BuildContext context, List<ChatMessage> photos) {
+    final extraCount = photos.length - 3;
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _GridTileItem(
+                photoMessage: photos[0],
+                height: 110,
+                onTap: () => PhotoGalleryViewer.open(
+                  context,
+                  photos: photos,
+                  initialIndex: 0,
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+            Expanded(
+              child: _GridTileItem(
+                photoMessage: photos[1],
+                height: 110,
+                onTap: () => PhotoGalleryViewer.open(
+                  context,
+                  photos: photos,
+                  initialIndex: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Row(
+          children: [
+            Expanded(
+              child: _GridTileItem(
+                photoMessage: photos[2],
+                height: 110,
+                onTap: () => PhotoGalleryViewer.open(
+                  context,
+                  photos: photos,
+                  initialIndex: 2,
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+            Expanded(
+              child: Stack(
+                fit: StackFit.passthrough,
+                children: [
+                  _GridTileItem(
+                    photoMessage: photos[3],
+                    height: 110,
+                    onTap: () => PhotoGalleryViewer.open(
+                      context,
+                      photos: photos,
+                      initialIndex: 3,
+                    ),
+                  ),
+                  if (extraCount > 0)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: () => PhotoGalleryViewer.open(
+                          context,
+                          photos: photos,
+                          initialIndex: 3,
+                        ),
+                        child: Container(
+                          color: Colors.black.withValues(alpha: 0.58),
+                          alignment: Alignment.center,
+                          child: Text(
+                            '+$extraCount',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 26,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _GridTileItem extends StatefulWidget {
+  final ChatMessage photoMessage;
+  final double? width;
+  final double height;
+  final VoidCallback onTap;
+
+  const _GridTileItem({
+    required this.photoMessage,
+    this.width,
+    required this.height,
+    required this.onTap,
+  });
+
+  @override
+  State<_GridTileItem> createState() => _GridTileItemState();
+}
+
+class _GridTileItemState extends State<_GridTileItem> {
+  String? _resolvedPath;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTilePhoto();
+  }
+
+  Future<void> _loadTilePhoto() async {
+    final rawUrl = widget.photoMessage.mediaUrl;
+    if (rawUrl == null || rawUrl.isEmpty) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
+    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+      if (File(rawUrl).existsSync()) {
+        if (mounted) {
+          setState(() {
+            _resolvedPath = rawUrl;
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+    }
+
+    final cached = await AttachmentCacheService.instance.resolveLocalPath(rawUrl);
+    if (cached != null && File(cached).existsSync()) {
+      if (mounted) {
+        setState(() {
+          _resolvedPath = cached;
+          _isLoading = false;
+        });
+      }
+      return;
+    }
+
+    final networkUrl = resolveAvatarUrl(rawUrl);
+    if (mounted) {
+      setState(() {
+        _resolvedPath = networkUrl;
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _sharePhoto() async {
+    HapticFeedback.mediumImpact();
+    final rawUrl = widget.photoMessage.mediaUrl;
+    if (rawUrl == null || rawUrl.isEmpty) return;
+
+    try {
+      String? localPath = _resolvedPath;
+      if (localPath == null || localPath.startsWith('http')) {
+        localPath = await AttachmentCacheService.instance.resolveLocalPath(rawUrl);
+      }
+      if (localPath != null && File(localPath).existsSync()) {
+        await SharePlus.instance.share(ShareParams(files: [XFile(localPath)]));
+      } else {
+        AppToast.show('Downloading photo to share...');
+        final networkUrl = resolveAvatarUrl(rawUrl);
+        if (networkUrl != null) {
+          final headers = ServerApiService.instance.authToken != null
+              ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
+              : null;
+          final res = await http.get(Uri.parse(networkUrl), headers: headers);
+          if (res.statusCode == 200) {
+            final tempDir = await getTemporaryDirectory();
+            final file = File(
+              '${tempDir.path}/shared_${DateTime.now().millisecondsSinceEpoch}.jpg',
+            );
+            await file.writeAsBytes(res.bodyBytes);
+            await SharePlus.instance.share(ShareParams(files: [XFile(file.path)]));
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[GRID TILE SHARE ERROR] $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Container(
+        width: widget.width,
+        height: widget.height,
+        color: Colors.grey.withValues(alpha: 0.2),
+        child: const Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    final path = _resolvedPath;
+    if (path == null) {
+      return Container(
+        width: widget.width,
+        height: widget.height,
+        color: Colors.grey.withValues(alpha: 0.3),
+        child: const Icon(Icons.broken_image_rounded, color: Colors.white70),
+      );
+    }
+
+    final isLocal = !path.startsWith('http://') && !path.startsWith('https://');
+
+    Widget imageWidget;
+    if (isLocal) {
+      imageWidget = Image.file(
+        File(path),
+        width: widget.width,
+        height: widget.height,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const Center(
+          child: Icon(Icons.broken_image_rounded, color: Colors.white70),
+        ),
+      );
+    } else {
+      final headers = ServerApiService.instance.authToken != null
+          ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
+          : null;
+      imageWidget = Image.network(
+        path,
+        headers: headers,
+        width: widget.width,
+        height: widget.height,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Container(
+            width: widget.width,
+            height: widget.height,
+            color: Colors.grey.withValues(alpha: 0.2),
+            child: const Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        },
+        errorBuilder: (_, __, ___) => const Center(
+          child: Icon(Icons.broken_image_rounded, color: Colors.white70),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      onLongPress: _sharePhoto,
+      child: Container(
+        width: widget.width,
+        height: widget.height,
+        clipBehavior: Clip.antiAlias,
+        decoration: const BoxDecoration(),
+        child: imageWidget,
+      ),
+    );
+  }
+}
+
+

@@ -4,19 +4,37 @@ import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
 
 String? resolveAvatarUrl(String? raw) {
-  if (raw == null || raw.isEmpty) return null;
-  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-  if (File(raw).existsSync()) return raw;
+  if (raw == null || raw.trim().isEmpty) return null;
+  final trimmed = raw.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  if (File(trimmed).existsSync()) return trimmed;
 
   final apiBase = ServerApiService.baseUrl.replaceFirst(RegExp(r'/+$'), '');
   final origin = apiBase.replaceFirst(RegExp(r'/api$'), '');
-  final clean = raw.replaceFirst(RegExp(r'^/+'), '');
+
+  if (trimmed.startsWith('/api/')) {
+    return '$origin$trimmed';
+  }
+  if (trimmed.startsWith('/files/')) {
+    return '$apiBase$trimmed';
+  }
+  if (trimmed.startsWith('/uploads/')) {
+    return '$origin$trimmed';
+  }
+  if (trimmed.startsWith('/')) {
+    return '$origin$trimmed';
+  }
+
+  final clean = trimmed.replaceFirst(RegExp(r'^/+'), '');
 
   if (clean.startsWith('api/')) {
     return '$origin/$clean';
   }
   if (clean.startsWith('files/')) {
     return '$apiBase/$clean';
+  }
+  if (clean.startsWith('uploads/')) {
+    return '$origin/$clean';
   }
   return '$apiBase/files/$clean';
 }

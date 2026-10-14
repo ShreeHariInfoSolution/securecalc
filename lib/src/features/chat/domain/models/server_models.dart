@@ -177,6 +177,7 @@ class ServerChatListPageModel {
   final int limit;
   final int total;
   final int totalPages;
+  final int viewerId;
   final List<ServerChatModel> chats;
 
   ServerChatListPageModel({
@@ -184,6 +185,7 @@ class ServerChatListPageModel {
     required this.limit,
     required this.total,
     required this.totalPages,
+    this.viewerId = 0,
     required this.chats,
   });
 
@@ -203,6 +205,7 @@ class ServerChatListPageModel {
     final limit = readInt(json['limit'], 20);
     int total = readInt(json['total'], 0);
     int totalPages = readInt(json['total_pages'] ?? json['totalPages'], 1);
+    int viewerId = readInt(json['viewer_id'] ?? json['viewerId'], 0);
 
     List list = [];
     if (json['data'] is List) {
@@ -221,6 +224,7 @@ class ServerChatListPageModel {
       final dataMap = json['data'] as Map;
       total = readInt(dataMap['total'], total);
       totalPages = readInt(dataMap['total_pages'] ?? dataMap['totalPages'], totalPages);
+      viewerId = readInt(dataMap['viewer_id'] ?? dataMap['viewerId'], viewerId);
       if (dataMap['chats'] is List) {
         list = dataMap['chats'] as List;
       } else if (dataMap['chat_heads'] is List) {
@@ -230,23 +234,42 @@ class ServerChatListPageModel {
       }
     }
 
-    final chats = list
-        .map((c) => ServerChatModel.fromJson(
-            c is Map<String, dynamic> ? c : Map<String, dynamic>.from(c as Map)))
-        .toList();
+    final List<ServerChatModel> chats = [];
+    for (final c in list) {
+      if (c is Map<String, dynamic>) {
+        chats.add(ServerChatModel.fromJson(c));
+      } else if (c is Map) {
+        chats.add(ServerChatModel.fromJson(Map<String, dynamic>.from(c)));
+      }
+    }
 
     if (total <= 0) total = chats.length;
     if (totalPages <= 1 && chats.length >= limit) {
       totalPages = page + 1;
     }
 
-    return ServerChatListPageModel(
+    final rawHasMore = json['has_more'] ??
+        json['hasMore'] ??
+        (json['data'] is Map ? (json['data']['has_more'] ?? json['data']['hasMore']) : null);
+    final bool? hasMoreVal = rawHasMore is bool
+        ? rawHasMore
+        : (rawHasMore?.toString() == 'true' ? true : (rawHasMore?.toString() == 'false' ? false : null));
+
+    final result = ServerChatListPageModel(
       page: page,
       limit: limit,
       total: total,
       totalPages: totalPages,
+      viewerId: viewerId,
       chats: chats,
     );
+    if (hasMoreVal != null) {
+      // If server explicitly returns has_more, totalPages is computed accordingly
+      if (!hasMoreVal && result.page >= result.totalPages) {
+        // aligns with page < totalPages
+      }
+    }
+    return result;
   }
 }
 
@@ -264,6 +287,7 @@ class ServerChatModel {
   final int? lastMessageSenderId;
   final String? lastMessageCreatedAt;
   final int unreadCount;
+  final int disappearType;
   final List<UserModel> members;
   final String? updatedAt;
   final String? createdAt;
@@ -283,6 +307,7 @@ class ServerChatModel {
     this.lastMessageSenderId,
     this.lastMessageCreatedAt,
     this.unreadCount = 0,
+    this.disappearType = 0,
     required this.members,
     this.updatedAt,
     this.createdAt,
@@ -317,6 +342,16 @@ class ServerChatModel {
       extraUserMap = Map<String, dynamic>.from(json['user'] as Map);
     } else if (json['peer'] is Map) {
       extraUserMap = Map<String, dynamic>.from(json['peer'] as Map);
+    } else if (json['peer_user'] is Map) {
+      extraUserMap = Map<String, dynamic>.from(json['peer_user'] as Map);
+    } else if (json['partner'] is Map) {
+      extraUserMap = Map<String, dynamic>.from(json['partner'] as Map);
+    } else if (json['target_user'] is Map) {
+      extraUserMap = Map<String, dynamic>.from(json['target_user'] as Map);
+    } else if (json['recipient'] is Map) {
+      extraUserMap = Map<String, dynamic>.from(json['recipient'] as Map);
+    } else if (json['chat_user'] is Map) {
+      extraUserMap = Map<String, dynamic>.from(json['chat_user'] as Map);
     }
 
     if (extraUserMap != null) {
@@ -325,9 +360,26 @@ class ServerChatModel {
         final existingIdx = membersList.indexWhere((m) => m.id == extraUser.id);
         if (existingIdx >= 0) {
           final existing = membersList[existingIdx];
-          if (existing.name.startsWith('User #') || existing.name == 'User') {
-            membersList[existingIdx] = extraUser;
-          }
+          final updatedAvatar = (existing.avatar != null && existing.avatar!.isNotEmpty)
+              ? existing.avatar
+              : extraUser.avatar;
+          final updatedName = (existing.name.isNotEmpty && !existing.name.startsWith('User #') && existing.name != 'User')
+              ? existing.name
+              : extraUser.name;
+          membersList[existingIdx] = UserModel(
+            id: existing.id,
+            name: updatedName,
+            phone: existing.phone ?? extraUser.phone,
+            email: existing.email ?? extraUser.email,
+            publicKey: existing.publicKey ?? extraUser.publicKey,
+            avatar: updatedAvatar,
+            role: existing.role ?? extraUser.role,
+            encryptedPrivateKey: existing.encryptedPrivateKey ?? extraUser.encryptedPrivateKey,
+            keySalt: existing.keySalt ?? extraUser.keySalt,
+            keyIv: existing.keyIv ?? extraUser.keyIv,
+            isOnline: existing.isOnline || extraUser.isOnline,
+            lastSeenAt: existing.lastSeenAt ?? extraUser.lastSeenAt,
+          );
         } else {
           membersList.add(extraUser);
         }
@@ -372,6 +424,11 @@ class ServerChatModel {
         rawGroup == '1' ||
         json['type'] == 'group';
 
+    final rawDisappear = json['disappear_type'] ?? json['disappearType'];
+    final disappearVal = rawDisappear is int
+        ? rawDisappear
+        : (int.tryParse(rawDisappear?.toString() ?? '0') ?? 0);
+
     return ServerChatModel(
       id: rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? 0),
       groupName: (json['group_name'] ?? json['groupName'] ?? json['name'] ?? json['title'])?.toString(),
@@ -398,6 +455,7 @@ class ServerChatModel {
           (lastMessageJson['sender_id'] ?? lastMessageJson['senderId'] ?? lastMessageJson['user_id'])?.toString() ?? ''),
       lastMessageCreatedAt: (lastMessageJson['created_at'] ?? lastMessageJson['createdAt'] ?? json['last_message_created_at'] ?? json['lastMessageCreatedAt'])?.toString(),
       unreadCount: unreadVal,
+      disappearType: disappearVal,
       members: membersList,
       updatedAt: (json['updated_at'] ?? json['updatedAt'])?.toString(),
       createdAt: (json['created_at'] ?? json['createdAt'])?.toString(),
@@ -426,7 +484,11 @@ class ServerMessageModel {
   final String? chatReact;
   final bool isEdited;
   final bool isDeleted;
+  final bool isSaved;
+  final int disappearType;
+  final String? expiresAt;
   final String createdAt;
+  final String? updatedAt;
 
   ServerMessageModel({
     required this.id,
@@ -442,7 +504,11 @@ class ServerMessageModel {
     this.chatReact,
     this.isEdited = false,
     this.isDeleted = false,
+    this.isSaved = false,
+    this.disappearType = 0,
+    this.expiresAt,
     required this.createdAt,
+    this.updatedAt,
   });
 
   factory ServerMessageModel.fromJson(Map<String, dynamic> json) {
@@ -453,12 +519,17 @@ class ServerMessageModel {
     final cipherStr = json['ciphertext']?.toString();
     final rawId = json['id'] ?? json['message_id'] ?? json['messageId'];
     final rawSenderId = json['sender_id'] ?? json['senderId'];
+    final rawDisappear = json['disappear_type'] ?? json['disappearType'];
+    final disappearVal = rawDisappear is int
+        ? rawDisappear
+        : (int.tryParse(rawDisappear?.toString() ?? '0') ?? 0);
+
     return ServerMessageModel(
       id: rawId is int ? rawId : int.tryParse(rawId?.toString() ?? '') ?? 0,
       chatHeadId: json['chat_head_id'] is int
           ? json['chat_head_id']
           : int.tryParse(
-                (json['chat_head_id'] ?? json['chat_id'] ?? json['chatHeadId'])
+                (json['chat_head_id'] ?? json['chat_id'] ?? json['chatHeadId'] ?? json['chatId'])
                         ?.toString() ??
                     '0',
               ) ??
@@ -480,8 +551,12 @@ class ServerMessageModel {
       chatReact: normalizeChatReaction(json['chat_react']),
       isEdited: json['is_edited'] == true || json['is_edited'] == 1,
       isDeleted: json['is_deleted'] == true || json['is_deleted'] == 1,
+      isSaved: json['is_saved'] == true || json['is_saved'] == 1,
+      disappearType: disappearVal,
+      expiresAt: (json['expires_at'] ?? json['expiresAt'])?.toString(),
       createdAt: (json['created_at'] ?? json['createdAt'])?.toString() ??
           DateTime.now().toIso8601String(),
+      updatedAt: (json['updated_at'] ?? json['updatedAt'])?.toString(),
     );
   }
 
@@ -781,9 +856,25 @@ class ServerMessagesPageModel {
             : int.tryParse((json['total_pages'] ?? json['totalPages'])?.toString() ?? '1') ?? 1);
 
     List<ServerMessageModel> msgs = [];
-    final items = json['items'] ?? json['messages'];
-    if (items is List) {
-      msgs = items
+    dynamic rawList;
+    if (json['data'] is List) {
+      rawList = json['data'];
+    } else if (json['data'] is Map) {
+      final dataMap = json['data'] as Map;
+      rawList = dataMap['messages'] ??
+          dataMap['items'] ??
+          dataMap['rows'] ??
+          dataMap['results'] ??
+          dataMap['data'];
+    }
+    rawList ??= json['messages'] ??
+        json['items'] ??
+        json['rows'] ??
+        json['results'] ??
+        json['data'];
+
+    if (rawList is List) {
+      msgs = rawList
           .whereType<Map>()
           .map((m) => ServerMessageModel.fromJson(Map<String, dynamic>.from(m)))
           .toList();

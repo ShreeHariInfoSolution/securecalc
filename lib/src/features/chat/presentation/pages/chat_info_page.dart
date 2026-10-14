@@ -1,12 +1,53 @@
+import 'dart:io';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import '../../domain/entities/chat_conversation.dart';
+import '../../domain/entities/chat_message.dart';
 import '../../domain/models/server_models.dart';
+import '../../domain/services/attachment_cache_service.dart';
 import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
+import '../widgets/photo_gallery_viewer.dart';
 import 'share/share_qr_page.dart';
+import 'starred_messages_page.dart';
+
+class ChatMediaItem {
+  final String id;
+  final String fileName;
+  final String rawUrl;
+  final String fileType;
+  final int fileSize;
+  final DateTime createdAt;
+  final bool isMe; // true = Sent by me, false = Received
+  final String senderName;
+  final String folder; // 'image', 'video', 'audio', 'doc'
+
+  ChatMediaItem({
+    required this.id,
+    required this.fileName,
+    required this.rawUrl,
+    required this.fileType,
+    required this.fileSize,
+    required this.createdAt,
+    required this.isMe,
+    required this.senderName,
+    required this.folder,
+  });
+
+  String get fullUrl {
+    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) return rawUrl;
+    if (File(rawUrl).existsSync()) return rawUrl;
+    return resolveAvatarUrl(rawUrl) ?? rawUrl;
+  }
+}
 
 class ChatInfoPage extends StatefulWidget {
   final ChatConversation conversation;
@@ -24,10 +65,139 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
   bool _updatingMembers = false;
   String? _error;
 
+  // Media state
+  List<ChatMediaItem> _mediaItems = [];
+  bool _loadingMedia = true;
+  String _selectedFolder = 'image'; // 'image', 'video', 'audio', 'doc'
+  String _directionFilter = 'all'; // 'all', 'sent', 'received'
+  String _searchQuery = '';
+  bool _isMediaExpanded = false;
+
+  // Audio player state
+  AudioPlayer? _audioPlayer;
+  String? _currentlyPlayingAudioUrl;
+  bool _isPlayingAudio = false;
+
+  late int _disappearType;
+
   @override
   void initState() {
     super.initState();
-    Future.microtask(_loadDetails);
+    _disappearType = widget.conversation.disappearType;
+    Future.microtask(() async {
+      await _loadDetails();
+      await _loadMedia();
+    });
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer?.stop();
+    _audioPlayer?.dispose();
+    super.dispose();
+  }
+
+  static const Map<int, String> _disappearingLabels = {
+    0: 'off',
+    1: '24 hours',
+    2: '1 week',
+    3: 'after read',
+  };
+
+  void _showDisappearingPicker() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Text(
+                  'Disappearing Messages',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  'When enabled, new messages sent in this chat will disappear after the selected duration.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.subtitleGrey,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              ..._disappearingLabels.entries.map((entry) {
+                final typeKey = entry.key;
+                final labelText = entry.value;
+                final isSelected = _disappearType == typeKey;
+
+                return ListTile(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  leading: Icon(
+                    typeKey == 0
+                        ? Icons.timer_off_outlined
+                        : Icons.timer_outlined,
+                    color: isSelected
+                        ? AppTheme.primaryColor
+                        : AppTheme.subtitleGrey,
+                  ),
+                  title: Text(
+                    labelText,
+                    style: TextStyle(
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? AppTheme.primaryColor : null,
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? const Icon(Icons.check_circle_rounded,
+                          color: AppTheme.primaryColor)
+                      : null,
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    final chatId = int.tryParse(widget.conversation.id);
+                    if (chatId == null) return;
+                    final res = await ServerApiService.instance
+                        .setDisappearingMessagesREST(
+                      chatId: chatId,
+                      disappearType: typeKey,
+                    );
+                    if (res != null && mounted) {
+                      setState(() {
+                        _disappearType = typeKey;
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Disappearing messages set to ${_disappearingLabels[typeKey]}',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _loadDetails() async {
@@ -45,6 +215,187 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       _loading = false;
       if (details == null) _error = 'Chat information could not be loaded.';
     });
+  }
+
+  Future<void> _loadMedia() async {
+    if (!mounted) return;
+    setState(() => _loadingMedia = true);
+
+    final List<ChatMediaItem> items = [];
+    final currentUserId = ServerApiService.instance.currentUserId;
+    final chatIdStr = widget.conversation.id;
+    final chatId = int.tryParse(chatIdStr);
+
+    try {
+      // 1. Load local cached messages
+      final localMsgs = await LocalChatStorage.instance.loadMessages(chatIdStr);
+      for (final m in localMsgs) {
+        final url = m.mediaUrl;
+        if (url != null && url.isNotEmpty) {
+          final isMe = m.senderId == currentUserId?.toString();
+          final typeLower = m.type.toLowerCase();
+          final filename = m.fileName?.isNotEmpty == true ? m.fileName! : _basename(url);
+
+          String folder = 'doc';
+          if (typeLower.startsWith('image') || _isImageExt(filename)) {
+            folder = 'image';
+          } else if (typeLower.startsWith('video') || _isVideoExt(filename)) {
+            folder = 'video';
+          } else if (typeLower.startsWith('audio') || _isAudioExt(filename)) {
+            folder = 'audio';
+          }
+
+          items.add(ChatMediaItem(
+            id: m.id,
+            fileName: filename,
+            rawUrl: url,
+            fileType: m.type,
+            fileSize: 0,
+            createdAt: m.timestamp,
+            isMe: isMe,
+            senderName: isMe ? 'You' : widget.conversation.name,
+            folder: folder,
+          ));
+        }
+      }
+
+      // 2. Fetch server messages for this chat
+      if (chatId != null) {
+        try {
+          final serverMsgs = await ServerApiService.instance.getMessages(chatId);
+          for (final sm in serverMsgs) {
+            final filePath = sm.filePath;
+            if (filePath != null && filePath.isNotEmpty) {
+              final isMe = sm.senderId == currentUserId;
+              final fileType = sm.fileType ?? inferAttachmentType(fileName: sm.fileName, filePath: filePath) ?? '';
+              final filename = sm.fileName?.isNotEmpty == true ? sm.fileName! : _basename(filePath);
+              final typeLower = fileType.toLowerCase();
+
+              String folder = 'doc';
+              if (typeLower.startsWith('image') || _isImageExt(filename)) {
+                folder = 'image';
+              } else if (typeLower.startsWith('video') || _isVideoExt(filename)) {
+                folder = 'video';
+              } else if (typeLower.startsWith('audio') || _isAudioExt(filename)) {
+                folder = 'audio';
+              }
+
+              if (!items.any((x) => x.rawUrl == filePath || x.id == sm.id.toString())) {
+                DateTime date = DateTime.now();
+                try {
+                  date = DateTime.parse(sm.createdAt).toLocal();
+                } catch (_) {}
+
+                items.add(ChatMediaItem(
+                  id: sm.id.toString(),
+                  fileName: filename,
+                  rawUrl: filePath,
+                  fileType: fileType,
+                  fileSize: 0,
+                  createdAt: date,
+                  isMe: isMe,
+                  senderName: isMe ? 'You' : widget.conversation.name,
+                  folder: folder,
+                ));
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('[CHAT INFO] Fetch server messages error: $e');
+        }
+      }
+
+      // 3. Query /uploads endpoint for folders ('image', 'video', 'audio', 'doc')
+      for (final folder in ['image', 'video', 'audio', 'doc']) {
+        try {
+          final uploads = await ServerApiService.instance.getUploads(folder: folder, limit: 50);
+          for (final up in uploads.items) {
+            final targetUrl = up.url.isNotEmpty ? up.url : up.filePath;
+            if (targetUrl.isNotEmpty && !items.any((x) => x.rawUrl == targetUrl || x.id == up.id.toString())) {
+              DateTime date = DateTime.now();
+              try {
+                date = DateTime.parse(up.createdAt).toLocal();
+              } catch (_) {}
+
+              items.add(ChatMediaItem(
+                id: up.id.toString(),
+                fileName: up.fileName.isNotEmpty ? up.fileName : _basename(targetUrl),
+                rawUrl: targetUrl,
+                fileType: up.fileType,
+                fileSize: up.fileSize,
+                createdAt: date,
+                isMe: true,
+                senderName: 'You',
+                folder: folder,
+              ));
+            }
+          }
+        } catch (e) {
+          debugPrint('[CHAT INFO] Fetch $folder uploads error: $e');
+        }
+      }
+
+      // Sort newest first
+      items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    } catch (e) {
+      debugPrint('[CHAT INFO] Load media error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _mediaItems = items;
+          _loadingMedia = false;
+        });
+      }
+    }
+  }
+
+  bool _isImageExt(String path) {
+    final ext = path.split('?').first.split('#').first.split('.').last.toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp'].contains(ext);
+  }
+
+  bool _isVideoExt(String path) {
+    final ext = path.split('?').first.split('#').first.split('.').last.toLowerCase();
+    return ['mp4', 'mov', 'webm', 'mkv', 'avi', '3gp'].contains(ext);
+  }
+
+  bool _isAudioExt(String path) {
+    final ext = path.split('?').first.split('#').first.split('.').last.toLowerCase();
+    return ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'opus', 'flac'].contains(ext);
+  }
+
+  String _basename(String path) {
+    final clean = path.split('?').first.split('#').first;
+    return clean.split('/').last;
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes <= 0) return '';
+    const suffixes = ['B', 'KB', 'MB', 'GB'];
+    var i = 0;
+    double count = bytes.toDouble();
+    while (count >= 1024 && i < suffixes.length - 1) {
+      count /= 1024;
+      i++;
+    }
+    return '${count.toStringAsFixed(count < 10 && i > 0 ? 1 : 0)} ${suffixes[i]}';
+  }
+
+  int get _imageCount => _mediaItems.where((x) => x.folder == 'image').length;
+  int get _videoCount => _mediaItems.where((x) => x.folder == 'video').length;
+  int get _audioCount => _mediaItems.where((x) => x.folder == 'audio').length;
+  int get _docCount => _mediaItems.where((x) => x.folder == 'doc').length;
+
+  List<ChatMediaItem> get _filteredMediaItems {
+    return _mediaItems.where((item) {
+      if (item.folder != _selectedFolder) return false;
+      if (_directionFilter == 'sent' && !item.isMe) return false;
+      if (_directionFilter == 'received' && item.isMe) return false;
+      if (_searchQuery.trim().isNotEmpty) {
+        return item.fileName.toLowerCase().contains(_searchQuery.trim().toLowerCase());
+      }
+      return true;
+    }).toList();
   }
 
   Future<void> _clearChat() async {
@@ -249,6 +600,118 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     }
   }
 
+  Future<void> _toggleAudio(ChatMediaItem item) async {
+    _audioPlayer ??= AudioPlayer();
+
+    if (_currentlyPlayingAudioUrl == item.fullUrl && _isPlayingAudio) {
+      await _audioPlayer?.pause();
+      setState(() => _isPlayingAudio = false);
+      return;
+    }
+
+    try {
+      await _audioPlayer?.stop();
+      final url = item.fullUrl;
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        await _audioPlayer?.play(UrlSource(url));
+      } else if (File(url).existsSync()) {
+        await _audioPlayer?.play(DeviceFileSource(url));
+      } else {
+        final cached = await AttachmentCacheService.instance.resolveLocalPath(url);
+        if (cached != null && File(cached).existsSync()) {
+          await _audioPlayer?.play(DeviceFileSource(cached));
+        }
+      }
+      setState(() {
+        _currentlyPlayingAudioUrl = item.fullUrl;
+        _isPlayingAudio = true;
+      });
+      _audioPlayer?.onPlayerComplete.listen((_) {
+        if (mounted) {
+          setState(() {
+            _isPlayingAudio = false;
+            _currentlyPlayingAudioUrl = null;
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('[AUDIO PLAY ERROR] $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not play audio file.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _openDocument(ChatMediaItem item) async {
+    final url = item.fullUrl;
+    try {
+      if (!url.startsWith('http://') && !url.startsWith('https://') && File(url).existsSync()) {
+        await OpenFilex.open(url);
+        return;
+      }
+
+      final cached = await AttachmentCacheService.instance.resolveLocalPath(url);
+      if (cached != null && File(cached).existsSync()) {
+        await OpenFilex.open(cached);
+        return;
+      }
+
+      // Download
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Opening ${item.fileName}...')),
+      );
+
+      final headers = ServerApiService.instance.authToken != null
+          ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
+          : null;
+
+      final res = await http.get(Uri.parse(url), headers: headers);
+      if (res.statusCode == 200) {
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/${item.fileName}');
+        await file.writeAsBytes(res.bodyBytes);
+        AttachmentCacheService.instance.updateCache(url, file.path);
+        await OpenFilex.open(file.path);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to download document (${res.statusCode})')),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('[DOC OPEN ERROR] $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open file: $e')),
+        );
+      }
+    }
+  }
+
+  void _openImageGallery(ChatMediaItem selectedItem) {
+    final imageItems = _mediaItems.where((x) => x.folder == 'image').toList();
+    final initialIdx = imageItems.indexWhere((x) => x.id == selectedItem.id).clamp(0, imageItems.length - 1);
+
+    final photos = imageItems.map((item) {
+      return ChatMessage(
+        id: item.id,
+        senderId: item.isMe ? (ServerApiService.instance.currentUserId?.toString() ?? 'me') : 'peer',
+        content: item.fileName,
+        timestamp: item.createdAt,
+        type: 'image',
+        mediaUrl: item.fullUrl,
+        fileName: item.fileName,
+      );
+    }).toList();
+
+    if (photos.isNotEmpty) {
+      PhotoGalleryViewer.open(context, photos: photos, initialIndex: initialIdx);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -271,11 +734,12 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
         : peers.isNotEmpty
             ? peers.first.name
             : widget.conversation.name;
+
     final avatar = details?.isGroup == true
         ? details?.groupAvatar ?? widget.conversation.avatarUrl
-        : peers.isNotEmpty
-            ? peers.first.avatar
-            : widget.conversation.avatarUrl;
+        : (peers.isNotEmpty && peers.first.avatar != null && peers.first.avatar!.isNotEmpty
+            ? peers.first.avatar!
+            : widget.conversation.avatarUrl);
 
     return Scaffold(
       backgroundColor: background,
@@ -291,10 +755,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       body: _loading && details == null
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: _loadDetails,
+              onRefresh: () async {
+                await _loadDetails();
+                await _loadMedia();
+              },
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
                 children: [
+                  // Main Contact / Group Header
                   Container(
                     padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
                     decoration: BoxDecoration(
@@ -354,7 +822,10 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                       ],
                     ),
                   ),
+
                   const SizedBox(height: 16),
+
+                  // Phone / Email Info Card
                   if (details?.isGroup != true && peers.isNotEmpty)
                     _InfoCard(
                       surface: surface,
@@ -381,7 +852,64 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           ),
                       ],
                     ),
+
+                  const SizedBox(height: 16),
+
+                  // ─── MEDIA, DOCS & FILES SECTION ───────────────────────────
+                  _buildMediaSection(surface, isDark),
+
+                  const SizedBox(height: 16),
+
+                  // Starred Messages & Disappearing Messages
+                  _InfoCard(
+                    surface: surface,
+                    children: [
+                      ListTile(
+                        leading: const Icon(
+                          Icons.star_rounded,
+                          color: Colors.amber,
+                        ),
+                        title: const Text('Starred Messages'),
+                        subtitle: const Text('View starred messages in this chat'),
+                        trailing: const Icon(
+                          Icons.chevron_right_rounded,
+                          color: AppTheme.subtitleGrey,
+                        ),
+                        onTap: () async {
+                          final selectedId = await Navigator.of(context).push<String>(
+                            MaterialPageRoute(
+                              builder: (_) => StarredMessagesPage(
+                                conversation: widget.conversation,
+                              ),
+                            ),
+                          );
+                          if (selectedId != null && context.mounted) {
+                            Navigator.of(context).pop(selectedId);
+                          }
+                        },
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      ListTile(
+                        leading: const Icon(
+                          Icons.timer_outlined,
+                          color: AppTheme.primaryColor,
+                        ),
+                        title: const Text('Disappearing Messages'),
+                        subtitle: Text(
+                          _disappearingLabels[_disappearType] ?? 'off',
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right_rounded,
+                          color: AppTheme.subtitleGrey,
+                        ),
+                        onTap: _showDisappearingPicker,
+                      ),
+                    ],
+                  ),
+
+                  // Group Details Section
                   if (details?.isGroup == true) ...[
+                    const SizedBox(height: 16),
                     _InfoCard(
                       surface: surface,
                       children: [
@@ -493,7 +1021,10 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                       ],
                     ),
                   ],
+
                   const SizedBox(height: 18),
+
+                  // Clear Chat Card
                   _InfoCard(
                     surface: surface,
                     children: [
@@ -521,6 +1052,811 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                 ],
               ),
             ),
+    );
+  }
+
+  // ─── MEDIA BUILDER WIDGET ──────────────────────────────────────────────────
+  Widget _buildMediaSection(Color surface, bool isDark) {
+    final filteredItems = _filteredMediaItems;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header Row
+          Row(
+            children: [
+              const Icon(
+                Icons.perm_media_rounded,
+                color: AppTheme.primaryColor,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Media, Docs & Files',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${_mediaItems.length}',
+                  style: const TextStyle(
+                    color: AppTheme.primaryColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => setState(() => _isMediaExpanded = !_isMediaExpanded),
+                child: Row(
+                  children: [
+                    Text(
+                      _isMediaExpanded ? 'View Less' : 'View All',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.primaryColor,
+                      ),
+                    ),
+                    Icon(
+                      _isMediaExpanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_right_rounded,
+                      size: 18,
+                      color: AppTheme.primaryColor,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          if (!_isMediaExpanded) ...[
+            _buildCompactMediaRow(isDark),
+          ] else ...[
+            const SizedBox(height: 14),
+
+            // Folder Category Selector Tabs (Images | Videos | Audio | Docs)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildFolderTab('image', 'Images', CupertinoIcons.photo, _imageCount, isDark),
+                  const SizedBox(width: 8),
+                  _buildFolderTab('video', 'Videos', CupertinoIcons.video_camera, _videoCount, isDark),
+                  const SizedBox(width: 8),
+                  _buildFolderTab('audio', 'Audio', CupertinoIcons.music_note, _audioCount, isDark),
+                  const SizedBox(width: 8),
+                  _buildFolderTab('doc', 'Docs', CupertinoIcons.doc_text, _docCount, isDark),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Direction Filter Chips (All | Sent 📤 | Received 📥)
+            Row(
+              children: [
+                _buildFilterChip('all', 'All'),
+                const SizedBox(width: 6),
+                _buildFilterChip('sent', 'Sent 📤'),
+                const SizedBox(width: 6),
+                _buildFilterChip('received', 'Received 📥'),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            // Media Content Area
+            if (_loadingMedia) ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              ),
+            ] else if (filteredItems.isEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 28),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(
+                        _selectedFolder == 'image'
+                            ? CupertinoIcons.photo_on_rectangle
+                            : _selectedFolder == 'video'
+                                ? CupertinoIcons.video_camera
+                                : _selectedFolder == 'audio'
+                                    ? CupertinoIcons.music_note
+                                    : CupertinoIcons.doc,
+                        size: 38,
+                        color: AppTheme.subtitleGrey.withValues(alpha: 0.5),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'No ${_selectedFolder == 'doc' ? 'documents' : '${_selectedFolder}s'} ${_directionFilter == 'all' ? 'found' : _directionFilter == 'sent' ? 'sent' : 'received'}.',
+                        style: const TextStyle(
+                          color: AppTheme.subtitleGrey,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ] else ...[
+              // Type-wise View Rendering
+              if (_selectedFolder == 'image')
+                _buildImagesGrid(filteredItems)
+              else if (_selectedFolder == 'video')
+                _buildVideosGrid(filteredItems)
+              else if (_selectedFolder == 'audio')
+                _buildAudioList(filteredItems, isDark)
+              else
+                _buildDocsList(filteredItems, isDark),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactMediaRow(bool isDark) {
+    if (_loadingMedia) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+
+    if (_mediaItems.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          children: [
+            Icon(
+              CupertinoIcons.photo_on_rectangle,
+              size: 20,
+              color: AppTheme.subtitleGrey.withValues(alpha: 0.6),
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              'No media shared in this chat yet.',
+              style: TextStyle(
+                color: AppTheme.subtitleGrey,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final recentItems = _mediaItems.take(6).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 76,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: recentItems.length + (_mediaItems.length > 6 ? 1 : 0),
+            separatorBuilder: (_, index) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              if (index == recentItems.length) {
+                return GestureDetector(
+                  onTap: () => setState(() => _isMediaExpanded = true),
+                  child: Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppTheme.primaryColor.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '+${_mediaItems.length - 6}',
+                          style: const TextStyle(
+                            color: AppTheme.primaryColor,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'View All',
+                          style: TextStyle(
+                            color: AppTheme.primaryColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              final item = recentItems[index];
+              final url = item.fullUrl;
+              final isLocal =
+                  !url.startsWith('http://') && !url.startsWith('https://');
+
+              return GestureDetector(
+                onTap: () {
+                  if (item.folder == 'image' || item.folder == 'video') {
+                    _openImageGallery(item);
+                  } else {
+                    setState(() {
+                      _selectedFolder = item.folder;
+                      _isMediaExpanded = true;
+                    });
+                  }
+                },
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: 76,
+                    height: 76,
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.05)
+                        : Colors.grey.withValues(alpha: 0.1),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (item.folder == 'image' || item.folder == 'video') ...[
+                          if (isLocal)
+                            Image.file(
+                              File(url),
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Center(
+                                child: Icon(Icons.broken_image_rounded,
+                                    size: 24, color: AppTheme.subtitleGrey),
+                              ),
+                            )
+                          else
+                            Image.network(
+                              url,
+                              headers: ServerApiService.instance.authToken != null
+                                  ? {
+                                      'Authorization':
+                                          'Bearer ${ServerApiService.instance.authToken}'
+                                    }
+                                  : null,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Center(
+                                child: Icon(Icons.broken_image_rounded,
+                                    size: 24, color: AppTheme.subtitleGrey),
+                              ),
+                            ),
+                          if (item.folder == 'video')
+                            Center(
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.play_arrow_rounded,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                        ] else ...[
+                          Container(
+                            color: AppTheme.primaryColor.withValues(alpha: 0.1),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  item.folder == 'audio'
+                                      ? CupertinoIcons.music_note
+                                      : CupertinoIcons.doc_text,
+                                  color: AppTheme.primaryColor,
+                                  size: 22,
+                                ),
+                                const SizedBox(height: 4),
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 4),
+                                  child: Text(
+                                    item.fileName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFolderTab(String key, String label, IconData icon, int count, bool isDark) {
+    final isSelected = _selectedFolder == key;
+    return InkWell(
+      onTap: () => setState(() => _selectedFolder = key),
+      borderRadius: BorderRadius.circular(12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppTheme.primaryColor
+              : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: isSelected ? Colors.white : AppTheme.subtitleGrey,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                color: isSelected ? Colors.white : (isDark ? Colors.white70 : Colors.black87),
+              ),
+            ),
+            if (count > 0) ...[
+              const SizedBox(width: 5),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: isSelected ? Colors.white24 : AppTheme.subtitleGrey.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected ? Colors.white : AppTheme.subtitleGrey,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String key, String label) {
+    final isSelected = _directionFilter == key;
+    return GestureDetector(
+      onTap: () => setState(() => _directionFilter = key),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.18) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryColor : AppTheme.subtitleGrey.withValues(alpha: 0.3),
+            width: 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? AppTheme.primaryColor : AppTheme.subtitleGrey,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 1. Image Grid
+  Widget _buildImagesGrid(List<ChatMediaItem> items) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: items.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
+        childAspectRatio: 1.0,
+      ),
+      itemBuilder: (context, index) {
+        final item = items[index];
+        final url = item.fullUrl;
+        final isLocal = !url.startsWith('http://') && !url.startsWith('https://');
+
+        return GestureDetector(
+          onTap: () => _openImageGallery(item),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (isLocal)
+                  Image.file(
+                    File(url),
+                    fit: BoxFit.cover,
+                    errorBuilder: (c, e, s) => Container(
+                      color: Colors.grey.withValues(alpha: 0.2),
+                      child: const Icon(Icons.broken_image_rounded, size: 24),
+                    ),
+                  )
+                else
+                  Image.network(
+                    url,
+                    headers: ServerApiService.instance.authToken != null
+                        ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
+                        : null,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (c, child, progress) {
+                      if (progress == null) return child;
+                      return Container(
+                        color: Colors.grey.withValues(alpha: 0.15),
+                        child: const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      );
+                    },
+                    errorBuilder: (c, e, s) => Container(
+                      color: Colors.grey.withValues(alpha: 0.2),
+                      child: const Icon(Icons.broken_image_rounded, size: 24),
+                    ),
+                  ),
+
+                // Direction Pill Tag (Sent / Received)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          item.isMe ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                          size: 10,
+                          color: item.isMe ? Colors.lightBlueAccent : Colors.lightGreenAccent,
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          item.isMe ? 'Sent' : 'Recv',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // 2. Video Grid
+  Widget _buildVideosGrid(List<ChatMediaItem> items) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: items.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
+        childAspectRatio: 1.0,
+      ),
+      itemBuilder: (context, index) {
+        final item = items[index];
+        return GestureDetector(
+          onTap: () => _openDocument(item),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              color: Colors.black87,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  const Icon(
+                    CupertinoIcons.play_circle_fill,
+                    size: 36,
+                    color: Colors.white70,
+                  ),
+                  Positioned(
+                    bottom: 4,
+                    left: 4,
+                    right: 4,
+                    child: Text(
+                      item.fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        item.isMe ? 'Sent' : 'Recv',
+                        style: TextStyle(
+                          color: item.isMe ? Colors.lightBlueAccent : Colors.lightGreenAccent,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // 3. Audio List
+  Widget _buildAudioList(List<ChatMediaItem> items, bool isDark) {
+    return Column(
+      children: [
+        for (final item in items)
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => _toggleAudio(item),
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: const BoxDecoration(
+                      color: AppTheme.primaryColor,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      (_currentlyPlayingAudioUrl == item.fullUrl && _isPlayingAudio)
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.fileName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Icon(
+                            item.isMe ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                            size: 11,
+                            color: item.isMe ? AppTheme.primaryColor : Colors.green,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            item.isMe ? 'Sent by You' : 'Received from ${item.senderName}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppTheme.subtitleGrey,
+                            ),
+                          ),
+                          if (item.fileSize > 0) ...[
+                            const Text(' · ', style: TextStyle(color: AppTheme.subtitleGrey, fontSize: 11)),
+                            Text(
+                              _formatFileSize(item.fileSize),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppTheme.subtitleGrey,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  // 4. Docs List
+  Widget _buildDocsList(List<ChatMediaItem> items, bool isDark) {
+    return Column(
+      children: [
+        for (final item in items)
+          InkWell(
+            onTap: () => _openDocument(item),
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  _buildDocTypeIcon(item.fileName),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.fileName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: (item.isMe ? AppTheme.primaryColor : Colors.green).withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                item.isMe ? 'Sent' : 'Received',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: item.isMe ? AppTheme.primaryColor : Colors.green,
+                                ),
+                              ),
+                            ),
+                            if (item.fileSize > 0) ...[
+                              const SizedBox(width: 6),
+                              Text(
+                                _formatFileSize(item.fileSize),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: AppTheme.subtitleGrey,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(width: 6),
+                            Text(
+                              '${item.createdAt.day}/${item.createdAt.month}/${item.createdAt.year}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppTheme.subtitleGrey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.download_for_offline_outlined,
+                    color: AppTheme.primaryColor,
+                    size: 22,
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildDocTypeIcon(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    IconData iconData = CupertinoIcons.doc_fill;
+    Color iconColor = Colors.blue;
+
+    if (ext == 'pdf') {
+      iconData = CupertinoIcons.doc_text_fill;
+      iconColor = Colors.redAccent;
+    } else if (['doc', 'docx'].contains(ext)) {
+      iconData = CupertinoIcons.doc_richtext;
+      iconColor = Colors.blueAccent;
+    } else if (['xls', 'xlsx'].contains(ext)) {
+      iconData = CupertinoIcons.table_fill;
+      iconColor = Colors.green;
+    } else if (['zip', 'rar', '7z', 'tar', 'gz'].contains(ext)) {
+      iconData = CupertinoIcons.archivebox_fill;
+      iconColor = Colors.orange;
+    } else if (['txt', 'rtf'].contains(ext)) {
+      iconData = CupertinoIcons.doc_plaintext;
+      iconColor = Colors.grey;
+    }
+
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: iconColor.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(iconData, color: iconColor, size: 22),
     );
   }
 }

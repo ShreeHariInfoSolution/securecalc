@@ -230,9 +230,10 @@ class LocalChatStorage {
 
     try {
       final List<dynamic> jsonList = jsonDecode(jsonStr);
-      return jsonList.map((item) {
+      final List<ChatMessage> list = [];
+      for (final item in jsonList) {
         final m = item as Map<String, dynamic>;
-        return ChatMessage(
+        final msg = ChatMessage(
           id: m['id'] as String,
           senderId: m['senderId'] as String,
           content: m['content'] as String,
@@ -243,10 +244,19 @@ class LocalChatStorage {
           isRead: (m['isRead'] as bool?) ?? false,
           isEdited: (m['isEdited'] as bool?) ?? false,
           isDeleted: (m['isDeleted'] as bool?) ?? false,
+          isSaved: (m['isSaved'] as bool?) ?? false,
+          disappearType: (m['disappearType'] as int?) ?? 0,
+          expiresAt: m['expiresAt'] != null
+              ? DateTime.tryParse(m['expiresAt'].toString())
+              : null,
           reaction: normalizeChatReaction(m['reaction']),
           replyToId: int.tryParse(m['replyToId']?.toString() ?? ''),
         );
-      }).toList();
+        if (!isMessageExpired(msg)) {
+          list.add(msg);
+        }
+      }
+      return list;
     } catch (_) {
       return [];
     }
@@ -262,6 +272,7 @@ class LocalChatStorage {
     _prefs ??= await SharedPreferences.getInstance();
     if (epoch != _accountEpoch) return;
     final jsonList = messages
+        .where((message) => !isMessageExpired(message))
         .map(
           (message) => {
             'id': message.id,
@@ -274,6 +285,9 @@ class LocalChatStorage {
             'isRead': message.isRead,
             'isEdited': message.isEdited,
             'isDeleted': message.isDeleted,
+            'isSaved': message.isSaved,
+            'disappearType': message.disappearType,
+            'expiresAt': message.expiresAt?.toIso8601String(),
             'reaction': message.reaction,
             'replyToId': message.replyToId,
           },
@@ -341,7 +355,11 @@ class LocalChatStorage {
     // 1. Save Message
     final messages = await loadMessages(deviceId);
     if (epoch != _accountEpoch) return;
-    final existingIdx = messages.indexWhere((m) => m.id == message.id);
+    final existingIdx = messages.indexWhere((m) =>
+        m.id == message.id ||
+        (m.senderId == message.senderId &&
+            m.content == message.content &&
+            m.timestamp.difference(message.timestamp).inSeconds.abs() <= 5));
     final isNewMessage = existingIdx < 0;
     if (existingIdx >= 0) {
       messages[existingIdx] = message;
@@ -363,6 +381,7 @@ class LocalChatStorage {
         'isRead': m.isRead,
         'isEdited': m.isEdited,
         'isDeleted': m.isDeleted,
+        'isSaved': m.isSaved,
         'reaction': m.reaction,
         'replyToId': m.replyToId,
       };

@@ -5,6 +5,7 @@ import '../../domain/entities/chat_message.dart';
 import '../../domain/services/server_api_service.dart';
 import 'chat_bubble.dart';
 import 'chat_typing_indicator.dart';
+import 'swipe_to_reply.dart';
 
 class ChatMessageList extends StatelessWidget {
   final List<ChatMessage> messages;
@@ -19,8 +20,10 @@ class ChatMessageList extends StatelessWidget {
   final Map<int, String> groupMemberNames;
   final String chatName;
   final String chatAvatar;
-  final Function(ChatMessage, Offset) onShowMessageActions;
+  final Function(ChatMessage, Offset, Size) onShowMessageActions;
   final Function(ChatMessage) onBeginReply;
+  final Function(int)? onTapReply;
+  final String? highlightedMessageId;
   final VoidCallback onJumpToLatest;
   final VoidCallback onReloadMessages;
 
@@ -40,6 +43,8 @@ class ChatMessageList extends StatelessWidget {
     required this.chatAvatar,
     required this.onShowMessageActions,
     required this.onBeginReply,
+    this.onTapReply,
+    this.highlightedMessageId,
     required this.onJumpToLatest,
     required this.onReloadMessages,
   });
@@ -57,6 +62,49 @@ class ChatMessageList extends StatelessWidget {
     if (day == today.subtract(const Duration(days: 1))) return 'Yesterday';
     return '${date.day.toString().padLeft(2, '0')}/'
         '${date.month.toString().padLeft(2, '0')}/${date.year}';
+  }
+
+  bool _isImageMessage(ChatMessage msg) {
+    if (msg.isDeleted) return false;
+    final type = msg.type.toLowerCase();
+    if (type.startsWith('image/')) return true;
+    if (type == 'image') return true;
+    if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) {
+      final ext = msg.mediaUrl!.split('.').last.split('?').first.toLowerCase();
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].contains(ext) ||
+          msg.previewText == 'Photo') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  List<ChatMessage>? _getGroupedImages(int messageIndex) {
+    final msg = messages[messageIndex];
+    if (!_isImageMessage(msg)) return null;
+
+    if (messageIndex > 0) {
+      final prev = messages[messageIndex - 1];
+      if (_isImageMessage(prev) &&
+          prev.senderId == msg.senderId &&
+          msg.timestamp.difference(prev.timestamp).inSeconds.abs() <= 120) {
+        return const [];
+      }
+    }
+
+    final group = <ChatMessage>[msg];
+    for (int j = messageIndex + 1; j < messages.length; j++) {
+      final next = messages[j];
+      if (_isImageMessage(next) &&
+          next.senderId == msg.senderId &&
+          next.timestamp.difference(msg.timestamp).inSeconds.abs() <= 120) {
+        group.add(next);
+      } else {
+        break;
+      }
+    }
+
+    return group.length > 1 ? group : null;
   }
 
   Widget _buildTopLoadingShimmer(bool isDark) {
@@ -140,12 +188,19 @@ class ChatMessageList extends StatelessWidget {
 
     final messagesById = {for (final message in messages) message.id: message};
 
+    final topInset = MediaQuery.paddingOf(context).top + 84.0;
+    final bottomInset = MediaQuery.paddingOf(context).bottom + 76.0;
+
     return Stack(
       children: [
-        ListView.builder(
-          controller: scrollController,
-          reverse: true,
-          padding: const EdgeInsets.symmetric(vertical: 12),
+        GestureDetector(
+          onTap: () => FocusScope.of(context).unfocus(),
+          behavior: HitTestBehavior.translucent,
+          child: ListView.builder(
+            controller: scrollController,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            reverse: true,
+            padding: EdgeInsets.fromLTRB(0, topInset, 0, bottomInset),
           itemCount: messages.length + (isPeerTyping ? 1 : 0) + (isLoadingMore ? 1 : 0),
           itemBuilder: (context, index) {
             if (isPeerTyping && index == 0) {
@@ -162,6 +217,12 @@ class ChatMessageList extends StatelessWidget {
 
             final messageIndex = messages.length - 1 - offsetIndex;
             final msg = messages[messageIndex];
+
+            final groupedImages = _getGroupedImages(messageIndex);
+            if (groupedImages != null && groupedImages.isEmpty) {
+              return const SizedBox.shrink();
+            }
+
             final showDateHeader =
                 messageIndex == 0 ||
                 !_sameDay(messages[messageIndex - 1].timestamp, msg.timestamp);
@@ -176,87 +237,97 @@ class ChatMessageList extends StatelessWidget {
                 ? null
                 : messagesById[msg.replyToId.toString()];
 
-            double horizontalDragDistance = 0;
-
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (showDateHeader)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isDark
-                              ? Colors.white.withValues(alpha: 0.08)
-                              : Colors.black.withValues(alpha: 0.055),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Text(
-                          _dateLabel(msg.timestamp),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: AppTheme.subtitleGrey,
+            return SwipeToReply(
+              enabled: int.tryParse(msg.id) != null,
+              onReply: () => onBeginReply(msg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (showDateHeader)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: 0.08)
+                                : Colors.black.withValues(alpha: 0.055),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Text(
+                            _dateLabel(msg.timestamp),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.subtitleGrey,
+                            ),
                           ),
                         ),
                       ),
                     ),
+                  Builder(
+                    builder: (bubbleContext) {
+                      return GestureDetector(
+                        onLongPressStart: int.tryParse(msg.id) != null
+                            ? (details) {
+                                final box =
+                                    bubbleContext.findRenderObject() as RenderBox?;
+                                final globalPos =
+                                    box?.localToGlobal(Offset.zero) ??
+                                        details.globalPosition;
+                                final size =
+                                    box?.size ?? const Size(240, 60);
+                                onShowMessageActions(msg, globalPos, size);
+                              }
+                            : null,
+                        child: ChatBubble(
+                          key: ValueKey(msg.id),
+                          chatId: conversation.id,
+                          message: msg.content,
+                          isMe: msg.senderId == 'user',
+                          timestamp: msg.timestamp,
+                          type: msg.type,
+                          mediaUrl: msg.mediaUrl,
+                          fileName: msg.fileName,
+                          isRead: msg.isRead,
+                          isEdited: msg.isEdited,
+                          isDeleted: msg.isDeleted,
+                          isSaved: msg.isSaved,
+                          groupedImages: groupedImages,
+                          senderName: showGroupSender && senderId != null
+                              ? groupMemberNames[senderId] ?? 'Member'
+                              : null,
+                          replyToId: msg.replyToId,
+                          repliedMessage: repliedMessage,
+                          replySender: repliedMessage == null
+                              ? null
+                              : repliedMessage.senderId == 'user'
+                                  ? 'You'
+                                  : conversation.isGroup
+                                      ? groupMemberNames[int.tryParse(repliedMessage.senderId)] ?? 'Member'
+                                      : chatName,
+                          replyText: repliedMessage?.previewText,
+                          onTapReply: onTapReply,
+                          isHighlighted: highlightedMessageId == msg.id,
+                          reactions: msg.reaction == null ? null : [msg.reaction!],
+                        ),
+                      );
+                    },
                   ),
-                GestureDetector(
-                  onLongPressStart: int.tryParse(msg.id) != null
-                      ? (details) => onShowMessageActions(msg, details.globalPosition)
-                      : null,
-                  onHorizontalDragStart: (_) {
-                    horizontalDragDistance = 0;
-                  },
-                  onHorizontalDragUpdate: (details) {
-                    horizontalDragDistance += details.delta.dx;
-                  },
-                  onHorizontalDragEnd: (_) {
-                    if (horizontalDragDistance.abs() > 42) {
-                      onBeginReply(msg);
-                    }
-                    horizontalDragDistance = 0;
-                  },
-                  child: ChatBubble(
-                    key: ValueKey(msg.id),
-                    chatId: conversation.id,
-                    message: msg.content,
-                    isMe: msg.senderId == 'user',
-                    timestamp: msg.timestamp,
-                    type: msg.type,
-                    mediaUrl: msg.mediaUrl,
-                    fileName: msg.fileName,
-                    isRead: msg.isRead,
-                    isEdited: msg.isEdited,
-                    isDeleted: msg.isDeleted,
-                    senderName: showGroupSender && senderId != null
-                        ? groupMemberNames[senderId] ?? 'Member'
-                        : null,
-                    replySender: repliedMessage == null
-                        ? null
-                        : repliedMessage.senderId == 'user'
-                            ? 'You'
-                            : conversation.isGroup
-                                ? groupMemberNames[int.tryParse(repliedMessage.senderId)] ?? 'Member'
-                                : chatName,
-                    replyText: repliedMessage?.previewText,
-                    reactions: msg.reaction == null ? null : [msg.reaction!],
-                  ),
-                ),
-              ],
+                ],
+              ),
             );
           },
         ),
-        if (showJumpToLatest)
+      ),
+      if (showJumpToLatest)
           Positioned(
             right: 14,
-            bottom: 18,
+            bottom: 84,
             child: Material(
               color: isDark ? AppTheme.darkSurface : Colors.white,
               elevation: 4,

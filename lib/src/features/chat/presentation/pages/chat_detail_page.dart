@@ -3,21 +3,16 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
-import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
-import 'package:securecalc/src/core/widgets/typing_dots.dart';
 
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
@@ -77,9 +72,12 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   StreamSubscription<Map<String, dynamic>>? _deletedSubscription;
   StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
 
+  late int _disappearType;
+
   @override
   void initState() {
     super.initState();
+    _disappearType = widget.conversation.disappearType;
     ServerChatManager.instance.activeChatId = widget.conversation.id;
     _chatName = widget.conversation.name;
     _chatAvatar = widget.conversation.avatarUrl;
@@ -88,6 +86,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     _scrollController.addListener(_handleScrollChanged);
     _messages = List.from(widget.conversation.messages);
     if (widget.conversation.isGroup) unawaited(_loadGroupMemberNames());
+    unawaited(_resolvePeerProfileIfNeeded());
     _loadInitialMessages();
     _messageSubscription = SocketChatService.instance.onNewMessage.listen(
       _handleIncomingMessage,
@@ -129,11 +128,96 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     });
   }
 
+  Future<void> _resolvePeerProfileIfNeeded() async {
+    final chatId = int.tryParse(widget.conversation.id);
+    if (chatId == null) return;
+
+    final peerId = widget.conversation.peerUserId;
+
+    if (peerId != null && peerId > 0) {
+      try {
+        final user = await ServerApiService.instance.getUser(peerId);
+        if (user != null && mounted) {
+          _isPeerOnline.value = user.isOnline;
+          String name = user.name;
+          if (name.isEmpty || name == 'User' || name.startsWith('User #')) {
+            if (user.phone?.isNotEmpty == true) {
+              name = user.phone!;
+            } else if (user.email?.isNotEmpty == true) {
+              name = user.email!;
+            }
+          }
+          final newName = (name.isNotEmpty && !name.startsWith('User #')) ? name : _chatName;
+          final newAvatar = (user.avatar != null && user.avatar!.isNotEmpty) ? user.avatar! : _chatAvatar;
+          setState(() {
+            _chatName = newName;
+            _chatAvatar = newAvatar;
+          });
+          await LocalChatStorage.instance.updatePeerProfile(
+            deviceId: widget.conversation.id,
+            displayName: newName,
+            avatarUrl: user.avatar,
+          );
+        }
+      } catch (_) {}
+    }
+
+    try {
+      final details = await ServerApiService.instance.getChatDetails(chatId);
+      if (details != null && mounted) {
+        final currentUserId = ServerApiService.instance.currentUserId;
+        final otherMembers = details.members
+            .where((m) => m.id != currentUserId)
+            .toList();
+        final peer = otherMembers.isNotEmpty ? otherMembers.first : null;
+
+        if (peer != null) {
+          _isPeerOnline.value = peer.isOnline;
+          unawaited(LocalChatStorage.instance.updateConversation(
+            widget.conversation.id,
+            (c) => c.copyWith(isOnline: peer.isOnline),
+          ));
+        }
+
+        final resolvedName = details.isGroup
+            ? (details.groupName ?? 'Group chat')
+            : (peer?.name.isNotEmpty == true &&
+                    !peer!.name.startsWith('User #')
+                ? peer.name
+                : (peer?.phone ?? peer?.email ?? _chatName));
+
+        final resolvedAvatar = details.isGroup
+            ? (details.groupAvatar ?? '')
+            : (peer?.avatar ?? details.groupAvatar ?? '');
+
+        final finalName = (resolvedName.isNotEmpty && !resolvedName.startsWith('User #')) ? resolvedName : _chatName;
+        final finalAvatar = resolvedAvatar.isNotEmpty ? resolvedAvatar : _chatAvatar;
+
+        setState(() {
+          _chatName = finalName;
+          _chatAvatar = finalAvatar;
+        });
+
+        await LocalChatStorage.instance.updatePeerProfile(
+          deviceId: widget.conversation.id,
+          displayName: finalName,
+          avatarUrl: finalAvatar,
+        );
+      }
+    } catch (_) {}
+  }
+
   void _handleScrollChanged() {
     if (!_scrollController.hasClients) return;
     final show = _scrollController.position.pixels > 180;
     if (show != _showJumpToLatest) setState(() => _showJumpToLatest = show);
     if (!show) _newMessagesWhileAway = 0;
+
+    // Minimize keyboard if open when user scrolls/drags chat list
+    if (_inputFocusNode.hasFocus &&
+        _scrollController.position.userScrollDirection != ScrollDirection.idle) {
+      _inputFocusNode.unfocus();
+    }
 
     // Trigger pagination when scrolling UP near top of chat history
     if (_scrollController.position.pixels >=
@@ -204,13 +288,17 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       _messagesReceivedWhileLoading[incoming.id] = incoming;
     }
 
-    // Check if message is already present by ID or matches optimistic local message
+    // Check if message is already present by ID or matches optimistic/existing local message
     final existingIndex = _messages.indexWhere(
       (message) =>
           message.id == incoming.id ||
           (message.id.startsWith('local_') &&
               incoming.senderId == 'user' &&
-              message.content == incoming.content),
+              message.content == incoming.content) ||
+          (incoming.senderId == 'user' &&
+              message.senderId == 'user' &&
+              message.content == incoming.content &&
+              incoming.timestamp.difference(message.timestamp).inSeconds.abs() <= 5),
     );
 
     if (existingIndex >= 0) {
@@ -285,14 +373,28 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     final userId = int.tryParse(
       (data['user_id'] ?? data['userId'] ?? data['id'])?.toString() ?? '',
     );
-    if (peerId == null || userId != peerId) return;
+    final chatHeadId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'])?.toString();
+
+    final matchesChat = chatHeadId != null && chatHeadId.isNotEmpty && chatHeadId == widget.conversation.id;
+    final matchesUser = peerId != null && userId != null && userId == peerId;
+
+    if (!matchesChat && !matchesUser) {
+      if (userId != null && peerId != null && userId != peerId) return;
+    }
+
     final online = data['is_online'] ?? data['online'] ?? data['status'];
-    final isOnline =
-        online == true ||
-        online == 1 ||
-        online?.toString().toLowerCase() == 'online' ||
-        online?.toString().toLowerCase() == 'true';
-    _isPeerOnline.value = isOnline;
+    if (online != null) {
+      final isOnline =
+          online == true ||
+          online == 1 ||
+          online.toString().toLowerCase() == 'online' ||
+          online.toString().toLowerCase() == 'true';
+      _isPeerOnline.value = isOnline;
+      unawaited(LocalChatStorage.instance.updateConversation(
+        widget.conversation.id,
+        (c) => c.copyWith(isOnline: isOnline),
+      ));
+    }
   }
 
   void _handleReadEvent(Map<String, dynamic> data) {
@@ -322,6 +424,25 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
   Future<void> _markChatRead() async {
     await ServerChatManager.instance.markChatRead(widget.conversation.id);
+
+    // Mark unread messages as read in memory without purging immediately during active viewing session
+    if (mounted) {
+      bool changed = false;
+      final updatedMessages = <ChatMessage>[];
+      for (final m in _messages) {
+        if (m.senderId != 'user' && !m.isRead) {
+          updatedMessages.add(m.copyWith(isRead: true));
+          changed = true;
+        } else {
+          updatedMessages.add(m);
+        }
+      }
+      if (changed) {
+        setState(() {
+          _messages = updatedMessages;
+        });
+      }
+    }
   }
 
   Future<void> _reloadMessages() async {
@@ -342,11 +463,17 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
       if (!mounted || generation != _historyLoadGeneration) return;
 
+      final filtered = res.messages
+          .where((m) => !isMessageExpired(m, chatDisappearType: _disappearType, keepReadSessionMessages: true))
+          .toList();
+
       final mergedById = <String, ChatMessage>{
-        for (final message in res.messages) message.id: message,
+        for (final message in filtered) message.id: message,
       };
       mergedById.addAll(_messagesReceivedWhileLoading);
-      final merged = mergedById.values.toList()
+      final merged = mergedById.values
+          .where((m) => !isMessageExpired(m, chatDisappearType: _disappearType, keepReadSessionMessages: true))
+          .toList()
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
       setState(() {
@@ -410,64 +537,52 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     }
   }
 
-  Widget _buildTopLoadingShimmer(bool isDark) {
-    return const SizedBox.shrink(); // Moved to chat_message_list.dart
-  }
-
   Future<void> _loadInitialMessages() async {
     final cached = await LocalChatStorage.instance.loadMessages(
       widget.conversation.id,
     );
     if (!mounted) return;
-    if (cached.isEmpty) {
-      await _reloadMessages();
-      return;
+    final validCached = cached
+        .where((m) => !isMessageExpired(m, chatDisappearType: _disappearType, keepReadSessionMessages: true))
+        .toList();
+    if (validCached.isNotEmpty) {
+      final byId = {for (final message in validCached) message.id: message};
+      byId.addAll(_messagesReceivedWhileLoading);
+      final messages = byId.values
+          .where((m) => !isMessageExpired(m, chatDisappearType: _disappearType, keepReadSessionMessages: true))
+          .toList()
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      setState(() {
+        _messages = messages;
+        _isLoadingMessages = false;
+        _historyError = null;
+      });
+      _messagesReceivedWhileLoading.clear();
+      _scrollToBottom();
+    } else {
+      setState(() {
+        _isLoadingMessages = true;
+      });
     }
 
-    final byId = {for (final message in cached) message.id: message};
-    byId.addAll(_messagesReceivedWhileLoading);
-    final messages = byId.values.toList()
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    setState(() {
-      _messages = messages;
-      _isLoadingMessages = false;
-      _historyError = null;
-    });
-    _messagesReceivedWhileLoading.clear();
-    _scrollToBottom();
-    final historyComplete = await LocalChatStorage.instance.hasCompleteHistory(
-      widget.conversation.id,
-    );
-    if (mounted && !historyComplete) {
-      unawaited(_refreshMessagesAfterIncoming());
-    }
+    // Always call server API to fetch latest updated message list when entering chat screen
+    await _reloadMessages();
+    unawaited(_syncChatDetails());
   }
 
-  Future<void> _refreshMessagesAfterIncoming() async {
-    if (_isRefreshingAfterIncoming) {
-      _refreshAfterIncomingAgain = true;
-      return;
-    }
-    _isRefreshingAfterIncoming = true;
-    do {
-      _refreshAfterIncomingAgain = false;
-      try {
-        final fetched = await ServerChatManager.instance.loadMessages(
-          widget.conversation.id,
-        );
-        if (!mounted) return;
-        final byId = {for (final message in _messages) message.id: message};
-        for (final message in fetched) {
-          byId[message.id] = message;
+  Future<void> _syncChatDetails() async {
+    final chatId = int.tryParse(widget.conversation.id);
+    if (chatId == null) return;
+    try {
+      final details = await ServerApiService.instance.getChatDetails(chatId);
+      if (details != null && mounted) {
+        if (details.disappearType != _disappearType) {
+          setState(() {
+            _disappearType = details.disappearType;
+          });
         }
-        final merged = byId.values.toList()
-          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-        setState(() => _messages = merged);
-      } catch (error) {
-        debugPrint('[CHAT] Could not refresh incoming message: $error');
       }
-    } while (_refreshAfterIncomingAgain && mounted);
-    _isRefreshingAfterIncoming = false;
+    } catch (_) {}
   }
 
   Future<void> _showCachedMessages() async {
@@ -647,40 +762,66 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   Future<void> _showMessageActions(
     ChatMessage message,
     Offset globalPosition,
+    Size bubbleSize,
   ) async {
     if (message.isDeleted) return;
     final messageId = int.tryParse(message.id);
     final isMine = message.senderId == 'user';
     final screen = MediaQuery.sizeOf(context);
     final safePadding = MediaQuery.paddingOf(context);
-    const menuWidth = 236.0;
-    final rows =
-        3 + (isMine ? 1 : 0) + (isMine && message.type == 'text' ? 1 : 0);
-    final menuHeight = rows * 50.0 + 8;
-    final minTop = safePadding.top + 76.0;
-    final maxTop = math.max(
-      minTop,
-      screen.height - menuHeight - safePadding.bottom - 12,
-    );
-    final left = (globalPosition.dx - menuWidth / 2)
-        .clamp(12.0, math.max(12.0, screen.width - menuWidth - 12))
-        .toDouble();
-    final top = (globalPosition.dy + 20).clamp(minTop, maxTop).toDouble();
-    final reactionTop = math.max(safePadding.top + 8, top - 64.0).toDouble();
-    final reactionWidth = math.min(screen.width - 24, 360.0).toDouble();
-    final reactionLeft = (globalPosition.dx - reactionWidth / 2)
-        .clamp(12.0, math.max(12.0, screen.width - reactionWidth - 12))
-        .toDouble();
+
+    final minutesSinceSent = DateTime.now().difference(message.timestamp).inMinutes;
+    final isExpired = minutesSinceSent >= 15;
+    final canEdit = isMine && messageId != null && message.type == 'text' && !isExpired;
+    final canDelete = isMine && messageId != null && !message.isRead && !isExpired;
+
+    const emojiHeight = 50.0;
+    const menuWidth = 220.0;
+    final totalRows = 4 + (canEdit ? 1 : 0) + (canDelete ? 1 : 0);
+    final menuHeight = totalRows * 46.0 + 10;
+
+    final minTop = safePadding.top + 60.0;
+    final maxBottom = screen.height - safePadding.bottom - 16.0;
+
+    final bubbleHeight = math.max(40.0, bubbleSize.height);
+
+    double targetBubbleTop = globalPosition.dy;
+
+    if (targetBubbleTop - emojiHeight - 10 < minTop) {
+      targetBubbleTop = minTop + emojiHeight + 10;
+    }
+    if (targetBubbleTop + bubbleHeight + 10 + menuHeight > maxBottom) {
+      targetBubbleTop = maxBottom - menuHeight - 10 - bubbleHeight;
+      if (targetBubbleTop - emojiHeight - 10 < minTop) {
+        targetBubbleTop = minTop + emojiHeight + 10;
+      }
+    }
+
+    final emojiTop = targetBubbleTop - emojiHeight - 8.0;
+    final menuTop = targetBubbleTop + bubbleHeight + 8.0;
+
+    HapticFeedback.mediumImpact();
 
     await showGeneralDialog<void>(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'Message actions',
-      barrierColor: Colors.black.withValues(alpha: 0.18),
-      transitionDuration: const Duration(milliseconds: 140),
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 180),
+      transitionBuilder: (context, anim1, anim2, child) {
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: anim1, curve: Curves.easeOutCubic),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.95, end: 1.0).animate(
+              CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
+            ),
+            child: child,
+          ),
+        );
+      },
       pageBuilder: (dialogContext, animation1, animation2) {
         final isDark = Theme.of(dialogContext).brightness == Brightness.dark;
-        final menuColor = isDark ? AppTheme.darkSurface : Colors.white;
+        final cardColor = isDark ? const Color(0xFF2C2C2E) : Colors.white;
         final primaryText = isDark ? Colors.white : Colors.black87;
         final emojiItems = ['👍', '❤️', '😂', '😮', '😢', '🙏', '👻'];
 
@@ -689,65 +830,89 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           required String label,
           required VoidCallback onTap,
           Color? color,
-        }) => InkWell(
-          onTap: onTap,
-          child: SizedBox(
-            height: 50,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Icon(icon, size: 20, color: color ?? primaryText),
-                  const SizedBox(width: 14),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: color ?? primaryText,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
+        }) =>
+            InkWell(
+              onTap: onTap,
+              child: Container(
+                height: 46,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Icon(icon, size: 20, color: color ?? primaryText),
+                    const SizedBox(width: 14),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: color ?? primaryText,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ),
-        );
+            );
+
+        Widget divider() => Divider(
+              height: 1,
+              thickness: 0.5,
+              color: isDark ? Colors.white12 : Colors.black12,
+            );
 
         return Stack(
           children: [
+            // 1. Frosted Glass Blur Background
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => Navigator.pop(dialogContext),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                  child: Container(
+                    color: isDark
+                        ? Colors.black.withValues(alpha: 0.35)
+                        : Colors.black.withValues(alpha: 0.22),
+                  ),
+                ),
+              ),
+            ),
+
+            // 2. Emoji Reaction Bar
             Positioned(
-              left: reactionLeft,
-              top: reactionTop,
-              width: reactionWidth,
+              left: isMine ? null : 16,
+              right: isMine ? 16 : null,
+              top: emojiTop,
               child: Material(
-                color: menuColor,
-                elevation: 14,
-                borderRadius: BorderRadius.circular(30),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
+                color: cardColor,
+                elevation: 8,
+                borderRadius: BorderRadius.circular(28),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       ...emojiItems.map(
-                        (emoji) => IconButton(
-                          tooltip: emoji,
-                          constraints: const BoxConstraints(
-                            minWidth: 42,
-                            minHeight: 54,
-                          ),
-                          onPressed: messageId == null
+                        (emoji) => InkWell(
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: messageId == null
                               ? null
                               : () {
                                   Navigator.pop(dialogContext);
                                   _reactToMessage(message, emoji);
                                 },
-                          icon: Text(
-                            emoji,
-                            style: const TextStyle(fontSize: 25),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 6,
+                            ),
+                            child: Text(
+                              emoji,
+                              style: const TextStyle(fontSize: 24),
+                            ),
                           ),
                         ),
                       ),
                       IconButton(
+                        visualDensity: VisualDensity.compact,
                         tooltip: 'More reactions',
                         onPressed: () {
                           Navigator.pop(dialogContext);
@@ -755,7 +920,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                         },
                         icon: const Icon(
                           Icons.add_circle_outline_rounded,
-                          size: 28,
+                          size: 26,
                           color: AppTheme.subtitleGrey,
                         ),
                       ),
@@ -764,18 +929,64 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 ),
               ),
             ),
+
+            // 3. Highlighted Message Bubble
             Positioned(
-              left: left,
-              top: top,
+              left: isMine ? null : 12,
+              right: isMine ? 12 : null,
+              top: targetBubbleTop,
+              width: math.min(bubbleSize.width, screen.width - 24),
+              child: IgnorePointer(
+                child: ChatBubble(
+                  chatId: widget.conversation.id,
+                  message: message.content,
+                  isMe: isMine,
+                  timestamp: message.timestamp,
+                  type: message.type,
+                  mediaUrl: message.mediaUrl,
+                  fileName: message.fileName,
+                  isRead: message.isRead,
+                  isEdited: message.isEdited,
+                  isDeleted: message.isDeleted,
+                  isSaved: message.isSaved,
+                  senderName: !isMine && widget.conversation.isGroup
+                      ? _groupMemberNames[int.tryParse(message.senderId)]
+                      : null,
+                  replyToId: message.replyToId,
+                  repliedMessage: message.replyToId == null
+                      ? null
+                      : _messages.cast<ChatMessage?>().firstWhere(
+                          (m) => m?.id == message.replyToId.toString(),
+                          orElse: () => null,
+                        ),
+                  reactions: message.reaction == null ? null : [message.reaction!],
+                ),
+              ),
+            ),
+
+            // 4. Action Menu Card
+            Positioned(
+              left: isMine ? null : 16,
+              right: isMine ? 16 : null,
+              top: menuTop,
               width: menuWidth,
               child: Material(
-                color: menuColor,
-                elevation: 16,
+                color: cardColor,
+                elevation: 12,
                 borderRadius: BorderRadius.circular(18),
                 clipBehavior: Clip.antiAlias,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    actionRow(
+                      icon: Icons.reply_rounded,
+                      label: 'Reply',
+                      onTap: () {
+                        Navigator.pop(dialogContext);
+                        _beginReply(message);
+                      },
+                    ),
+                    divider(),
                     actionRow(
                       icon: Icons.copy_rounded,
                       label: 'Copy',
@@ -787,6 +998,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                         );
                       },
                     ),
+                    divider(),
                     actionRow(
                       icon: Icons.info_outline_rounded,
                       label: 'Info',
@@ -795,15 +1007,36 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                         _showMessageInfo(message);
                       },
                     ),
+                    divider(),
                     actionRow(
-                      icon: Icons.share_rounded,
-                      label: 'Share',
+                      icon: message.reaction == 'star'
+                          ? Icons.star_rounded
+                          : Icons.star_outline_rounded,
+                      label: message.reaction == 'star' ? 'Unstar' : 'Star',
+                      color: message.reaction == 'star' ? Colors.amber : null,
                       onTap: () {
                         Navigator.pop(dialogContext);
-                        _shareMessage(message);
+                        if (message.reaction == 'star') {
+                          _reactToMessage(message, '');
+                        } else {
+                          _reactToMessage(message, 'star');
+                        }
                       },
                     ),
-                    if (isMine && messageId != null && message.type == 'text')
+                    divider(),
+                    actionRow(
+                      icon: message.isSaved
+                          ? Icons.bookmark_rounded
+                          : Icons.bookmark_border_rounded,
+                      label: message.isSaved ? 'Unsave Message' : 'Save Message',
+                      color: message.isSaved ? AppTheme.primaryColor : null,
+                      onTap: () {
+                        Navigator.pop(dialogContext);
+                        _toggleSaveMessage(message);
+                      },
+                    ),
+                    if (canEdit) ...[
+                      divider(),
                       actionRow(
                         icon: Icons.edit_outlined,
                         label: 'Edit',
@@ -812,16 +1045,19 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                           _beginEditingMessage(message);
                         },
                       ),
-                    if (isMine && messageId != null)
+                    ],
+                    if (canDelete) ...[
+                      divider(),
                       actionRow(
                         icon: Icons.delete_outline_rounded,
                         label: 'Delete',
-                        color: Colors.red,
+                        color: Colors.redAccent,
                         onTap: () {
                           Navigator.pop(dialogContext);
                           _deleteMessage(message);
                         },
                       ),
+                    ],
                   ],
                 ),
               ),
@@ -948,7 +1184,21 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       }
       return;
     }
-    final updated = message.copyWith(reaction: emoji);
+    final newReaction = emoji.isEmpty ? null : emoji;
+    final updated = ChatMessage(
+      id: message.id,
+      senderId: message.senderId,
+      content: message.content,
+      timestamp: message.timestamp,
+      type: message.type,
+      mediaUrl: message.mediaUrl,
+      fileName: message.fileName,
+      isRead: message.isRead,
+      isEdited: message.isEdited,
+      isDeleted: message.isDeleted,
+      reaction: newReaction,
+      replyToId: message.replyToId,
+    );
     if (mounted) {
       setState(() {
         final index = _messages.indexWhere((item) => item.id == message.id);
@@ -961,6 +1211,172 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       message: updated,
       markUnread: false,
       peerUserId: widget.conversation.peerUserId,
+    );
+  }
+
+  static const Map<int, String> _disappearingLabels = {
+    0: 'off',
+    1: '24 hours',
+    2: '1 week',
+    3: 'after read',
+  };
+
+  Future<void> _toggleSaveMessage(ChatMessage message) async {
+    final messageId = int.tryParse(message.id);
+    final chatId = int.tryParse(widget.conversation.id);
+    if (messageId == null || chatId == null) return;
+
+    final newIsSaved = !message.isSaved;
+
+    // Optimistic update
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == message.id);
+      if (index >= 0) {
+        _messages[index] = _messages[index].copyWith(isSaved: newIsSaved);
+      }
+    });
+
+    final success = await ServerApiService.instance.saveMessageREST(
+      chatId: chatId,
+      messageId: messageId,
+      isSaved: newIsSaved,
+    );
+
+    if (!success && mounted) {
+      // Revert if API failed
+      setState(() {
+        final index = _messages.indexWhere((m) => m.id == message.id);
+        if (index >= 0) {
+          _messages[index] = _messages[index].copyWith(isSaved: !newIsSaved);
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not update save status.')),
+      );
+    } else {
+      await LocalChatStorage.instance.cacheMessages(
+        widget.conversation.id,
+        _messages,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newIsSaved ? 'Message saved' : 'Message unsaved'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _changeDisappearingType(int newType) async {
+    final chatId = int.tryParse(widget.conversation.id);
+    if (chatId == null) return;
+
+    final result = await ServerApiService.instance.setDisappearingMessagesREST(
+      chatId: chatId,
+      disappearType: newType,
+    );
+
+    if (result != null && mounted) {
+      final label = _disappearingLabels[newType] ?? 'off';
+      setState(() {
+        _disappearType = newType;
+        _messages.removeWhere(
+            (m) => isMessageExpired(m, chatDisappearType: newType));
+      });
+      await LocalChatStorage.instance.cacheMessages(
+        widget.conversation.id,
+        _messages,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Disappearing messages set to $label'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showDisappearingMessagesPicker() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Text(
+                  'Disappearing Messages',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  'When enabled, new messages sent in this chat will disappear after the selected duration.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.subtitleGrey,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              ..._disappearingLabels.entries.map((entry) {
+                final typeKey = entry.key;
+                final labelText = entry.value;
+                final isSelected = _disappearType == typeKey;
+
+                return ListTile(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  leading: Icon(
+                    typeKey == 0
+                        ? Icons.timer_off_outlined
+                        : Icons.timer_outlined,
+                    color: isSelected
+                        ? AppTheme.primaryColor
+                        : AppTheme.subtitleGrey,
+                  ),
+                  title: Text(
+                    labelText,
+                    style: TextStyle(
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? AppTheme.primaryColor : null,
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? const Icon(Icons.check_circle_rounded,
+                          color: AppTheme.primaryColor)
+                      : null,
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _changeDisappearingType(typeKey);
+                  },
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -1080,25 +1496,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     );
   }
 
-  String _dateLabel(DateTime date) {
-    final now = DateTime.now();
-    final day = DateTime(date.year, date.month, date.day);
-    final today = DateTime(now.year, now.month, now.day);
-    if (day == today) return 'Today';
-    if (day == today.subtract(const Duration(days: 1))) return 'Yesterday';
-    return '${date.day.toString().padLeft(2, '0')}/'
-        '${date.month.toString().padLeft(2, '0')}/${date.year}';
-  }
-
-  bool _sameDay(DateTime first, DateTime second) =>
-      first.year == second.year &&
-      first.month == second.month &&
-      first.day == second.day;
-
-  Widget _buildEmptyHistory(bool isDark) {
-    return const SizedBox.shrink(); // Moved to chat_message_list.dart
-  }
-
   Future<void> _sendMessage() async {
     if (_editingMessage != null) {
       await _saveEditedMessage();
@@ -1178,6 +1575,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     required File file,
     required String fileName,
     required String fileType,
+    String? caption,
   }) async {
     if (_isSending) return;
     if (mounted) setState(() => _isSending = true);
@@ -1229,16 +1627,20 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       final localCopy = File(localCopyPath);
       await file.copy(localCopy.path);
 
+      final messageText = (caption != null && caption.trim().isNotEmpty)
+          ? caption.trim()
+          : (fileType.startsWith('image/')
+              ? 'Photo'
+              : fileType.startsWith('video/')
+                  ? 'Video'
+                  : fileType.startsWith('audio/')
+                      ? 'Voice message'
+                      : fileName);
+
       final sent = await ServerChatManager.instance.sendMessage(
         chatId: widget.conversation.id,
         peerName: _chatName,
-        text: fileType.startsWith('image/')
-            ? 'Photo'
-            : fileType.startsWith('video/')
-            ? 'Video'
-            : fileType.startsWith('audio/')
-            ? 'Voice message'
-            : fileName,
+        text: messageText,
         filePath: uploadedPath,
         fileName: fileName,
         fileType: fileType,
@@ -1275,12 +1677,13 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   }
 
   Future<void> _openChatInfo() async {
-    final cleared = await Navigator.of(context).push<bool>(
+    final result = await Navigator.of(context).push<dynamic>(
       MaterialPageRoute(
         builder: (_) => ChatInfoPage(conversation: widget.conversation),
       ),
     );
-    if (cleared == true && mounted) {
+    if (!mounted) return;
+    if (result == true) {
       setState(() {
         _historyLoadGeneration++;
         _isLoadingMessages = false;
@@ -1290,6 +1693,11 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       });
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Chat cleared.')));
+    } else if (result is String) {
+      final msgId = int.tryParse(result);
+      if (msgId != null) {
+        _scrollToMessage(msgId);
+      }
     }
   }
 
@@ -1298,8 +1706,271 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     _scrollToBottom();
   }
 
+  String? _highlightedMessageId;
+  Timer? _highlightTimer;
+
+  void _scrollToMessage(int replyToId) {
+    final targetId = replyToId.toString();
+    final index = _messages.indexWhere((m) => m.id == targetId);
+    if (index < 0) {
+      AppToast.show('Original message not found in history.');
+      return;
+    }
+
+    final reversedIndex = (_messages.length - 1) - index;
+    final estimatedOffset = (reversedIndex * 78.0).clamp(
+      0.0,
+      _scrollController.position.maxScrollExtent,
+    );
+
+    _scrollController.animateTo(
+      estimatedOffset,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+    );
+
+    _highlightTimer?.cancel();
+    setState(() {
+      _highlightedMessageId = targetId;
+    });
+    _highlightTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) {
+        setState(() {
+          _highlightedMessageId = null;
+        });
+      }
+    });
+  }
+
+  bool _isSearchingMessages = false;
+  final TextEditingController _messageSearchController = TextEditingController();
+  final FocusNode _messageSearchFocusNode = FocusNode();
+  List<ChatMessage> _searchResults = [];
+  int _currentSearchIndex = -1;
+
+  void _toggleMessageSearch() {
+    setState(() {
+      _isSearchingMessages = !_isSearchingMessages;
+      if (!_isSearchingMessages) {
+        _messageSearchController.clear();
+        _searchResults = [];
+        _currentSearchIndex = -1;
+        _messageSearchFocusNode.unfocus();
+      } else {
+        _messageSearchFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _onSearchQueryChanged(String query) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) {
+      setState(() {
+        _searchResults = [];
+        _currentSearchIndex = -1;
+      });
+      return;
+    }
+
+    final results = _messages.where((m) {
+      if (m.isDeleted) return false;
+      final textMatch = m.content.toLowerCase().contains(q);
+      final fileMatch = m.fileName?.toLowerCase().contains(q) == true;
+      return textMatch || fileMatch;
+    }).toList();
+
+    setState(() {
+      _searchResults = results;
+      if (results.isNotEmpty) {
+        _currentSearchIndex = 0;
+        final targetId = int.tryParse(results[0].id);
+        if (targetId != null) {
+          _scrollToMessage(targetId);
+        }
+      } else {
+        _currentSearchIndex = -1;
+      }
+    });
+  }
+
+  void _navigateSearchResult(int direction) {
+    if (_searchResults.isEmpty) return;
+    int nextIndex = _currentSearchIndex + direction;
+    if (nextIndex < 0) nextIndex = _searchResults.length - 1;
+    if (nextIndex >= _searchResults.length) nextIndex = 0;
+
+    setState(() {
+      _currentSearchIndex = nextIndex;
+      final targetId = int.tryParse(_searchResults[nextIndex].id);
+      if (targetId != null) {
+        _scrollToMessage(targetId);
+      }
+    });
+  }
+
+  Widget _buildInChatSearchBanner(bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? const Color(0xFF2C2C2E).withValues(alpha: 0.88)
+                  : Colors.white.withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: AppTheme.glassBorder(isDark),
+                width: 0.8,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.06),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  CupertinoIcons.search,
+                  size: 18,
+                  color: AppTheme.primaryColor,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _messageSearchController,
+                    focusNode: _messageSearchFocusNode,
+                    onChanged: _onSearchQueryChanged,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: AppTheme.primaryText(isDark),
+                      letterSpacing: -0.2,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Search in chat…',
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                      hintStyle: TextStyle(
+                        color: AppTheme.secondaryText(isDark),
+                        fontSize: 15,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                ),
+                if (_messageSearchController.text.isNotEmpty) ...[
+                  Text(
+                    _searchResults.isEmpty
+                        ? '0 matches'
+                        : '${_currentSearchIndex + 1}/${_searchResults.length}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.secondaryText(isDark),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: _searchResults.isEmpty ? null : () => _navigateSearchResult(1),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Icon(
+                        CupertinoIcons.chevron_up,
+                        size: 18,
+                        color: _searchResults.isEmpty
+                            ? AppTheme.secondaryText(isDark).withValues(alpha: 0.4)
+                            : AppTheme.primaryColor,
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: _searchResults.isEmpty ? null : () => _navigateSearchResult(-1),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Icon(
+                        CupertinoIcons.chevron_down,
+                        size: 18,
+                        color: _searchResults.isEmpty
+                            ? AppTheme.secondaryText(isDark).withValues(alpha: 0.4)
+                            : AppTheme.primaryColor,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: _toggleMessageSearch,
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Icon(
+                      CupertinoIcons.xmark_circle_fill,
+                      size: 18,
+                      color: AppTheme.secondaryText(isDark),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _purgeSeenMessagesOnExit() async {
+    // 1. Send markChatRead API call to server when exiting chat screen
+    try {
+      await ServerChatManager.instance.markChatRead(widget.conversation.id);
+    } catch (e) {
+      debugPrint('[CHAT] Error marking chat read on exit: $e');
+    }
+
+    // 2. Mark unread messages as read in memory and filter out expired messages
+    final type = _disappearType;
+    final updatedMessages = <ChatMessage>[];
+    for (final m in _messages) {
+      final updated =
+          m.senderId != 'user' && !m.isRead ? m.copyWith(isRead: true) : m;
+      if (!isMessageExpired(updated,
+          chatDisappearType: type, keepReadSessionMessages: false)) {
+        updatedMessages.add(updated);
+      }
+    }
+
+    _messages = updatedMessages;
+
+    // 3. Cache updated active messages to local storage and update conversation unread count
+    try {
+      await LocalChatStorage.instance.cacheMessages(
+        widget.conversation.id,
+        _messages,
+      );
+      await LocalChatStorage.instance.updateConversation(
+        widget.conversation.id,
+        (conv) => conv.copyWith(
+          unreadCount: 0,
+          messages: _messages,
+          lastMessage: _messages.isNotEmpty
+              ? _messages.last.previewText
+              : 'No messages yet',
+        ),
+      );
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
+    _purgeSeenMessagesOnExit();
+    _messageSearchController.dispose();
+    _messageSearchFocusNode.dispose();
+    _highlightTimer?.cancel();
     if (ServerChatManager.instance.activeChatId == widget.conversation.id) {
       ServerChatManager.instance.activeChatId = null;
     }
@@ -1324,52 +1995,78 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return ShakePanicWrapper(
+    return PopScope(
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          _purgeSeenMessagesOnExit();
+        }
+      },
+      child: ShakePanicWrapper(
       child: Scaffold(
-        backgroundColor: isDark
-            ? AppTheme.darkBackground
-            : AppTheme.lightBackground,
-        body: SafeArea(
-          child: Column(
-            children: [
-              ChatDetailHeader(
+        backgroundColor: AppTheme.chatCanvas(isDark),
+        body: Stack(
+          children: [
+            // Messages List (paints full screen behind header and composer)
+            Positioned.fill(
+              child: Column(
+                children: [
+                  if (_isSearchingMessages) ...[
+                    SizedBox(height: MediaQuery.paddingOf(context).top + 84.0),
+                    _buildInChatSearchBanner(isDark),
+                  ],
+                  Expanded(
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: _isPeerTyping,
+                      builder: (context, isTyping, _) {
+                        return ChatMessageList(
+                          messages: _messages,
+                          isLoadingMessages: _isLoadingMessages,
+                          isLoadingMore: _isLoadingMore,
+                          isPeerTyping: isTyping,
+                          showJumpToLatest: _showJumpToLatest,
+                          newMessagesWhileAway: _newMessagesWhileAway,
+                          historyError: _historyError,
+                          scrollController: _scrollController,
+                          conversation: widget.conversation,
+                          groupMemberNames: _groupMemberNames,
+                          chatName: _chatName,
+                          chatAvatar: _chatAvatar,
+                          onShowMessageActions: _showMessageActions,
+                          onBeginReply: _beginReply,
+                          onTapReply: _scrollToMessage,
+                          highlightedMessageId: _highlightedMessageId,
+                          onJumpToLatest: _jumpToLatest,
+                          onReloadMessages: _reloadMessages,
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Floating Frosted Header
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: ChatDetailHeader(
                 conversation: widget.conversation,
                 chatName: _chatName,
                 chatAvatar: _chatAvatar,
                 isPeerOnline: _isPeerOnline,
                 isPeerTyping: _isPeerTyping,
                 onOpenChatInfo: _openChatInfo,
+                onSearchMessages: _toggleMessageSearch,
               ),
+            ),
 
-              // Messages List
-              Expanded(
-                child: ValueListenableBuilder<bool>(
-                  valueListenable: _isPeerTyping,
-                  builder: (context, isTyping, _) {
-                    return ChatMessageList(
-                      messages: _messages,
-                      isLoadingMessages: _isLoadingMessages,
-                      isLoadingMore: _isLoadingMore,
-                      isPeerTyping: isTyping,
-                      showJumpToLatest: _showJumpToLatest,
-                      newMessagesWhileAway: _newMessagesWhileAway,
-                      historyError: _historyError,
-                      scrollController: _scrollController,
-                      conversation: widget.conversation,
-                      groupMemberNames: _groupMemberNames,
-                      chatName: _chatName,
-                      chatAvatar: _chatAvatar,
-                      onShowMessageActions: _showMessageActions,
-                      onBeginReply: _beginReply,
-                      onJumpToLatest: _jumpToLatest,
-                      onReloadMessages: _reloadMessages,
-                    );
-                  }
-                ),
-              ),
-
-              // Bottom Input Bar
-              ChatComposer(
+            // Bottom Input Bar Composer
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: ChatComposer(
                 inputController: _inputController,
                 inputFocusNode: _inputFocusNode,
                 editingMessage: _editingMessage,
@@ -1383,11 +2080,13 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 onTypingChanged: _onTypingChanged,
                 onSendText: _sendMessage,
                 onSendAttachment: _uploadAndSendAttachment,
+                onDisappearingTap: _showDisappearingMessagesPicker,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

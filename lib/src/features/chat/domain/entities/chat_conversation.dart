@@ -12,6 +12,7 @@ class ChatConversation {
   final bool isTyping;
   final int? peerUserId;
   final bool isGroup;
+  final int disappearType;
   final Map<int, String> memberNames;
   final bool isPinned;
   final bool isMuted;
@@ -29,6 +30,7 @@ class ChatConversation {
     this.isTyping = false,
     this.peerUserId,
     this.isGroup = false,
+    this.disappearType = 0,
     this.memberNames = const {},
     this.isPinned = false,
     this.isMuted = false,
@@ -47,6 +49,7 @@ class ChatConversation {
     bool? isTyping,
     int? peerUserId,
     bool? isGroup,
+    int? disappearType,
     Map<int, String>? memberNames,
     bool? isPinned,
     bool? isMuted,
@@ -64,6 +67,7 @@ class ChatConversation {
       isTyping: isTyping ?? this.isTyping,
       peerUserId: peerUserId ?? this.peerUserId,
       isGroup: isGroup ?? this.isGroup,
+      disappearType: disappearType ?? this.disappearType,
       memberNames: memberNames ?? this.memberNames,
       isPinned: isPinned ?? this.isPinned,
       isMuted: isMuted ?? this.isMuted,

@@ -22,6 +22,36 @@ class AppTheme {
   static const Color darkBubbleMe = Color(0xFF007AFF); // iOS Blue iMessage Bubble
   static const Color darkBubbleOther = Color(0xFF2C2C2E); // iOS Dark Grey Received Bubble
 
+  /// Semantic iOS Glass & Canvas Tokens
+  static Color chatCanvas(bool isDark) =>
+      isDark ? const Color(0xFF000000) : const Color(0xFFF2F2F7);
+
+  static Color glassSurface(bool isDark) =>
+      isDark ? const Color(0xFF1C1C1E).withValues(alpha: 0.68) : Colors.white.withValues(alpha: 0.75);
+
+  static Color glassBorder(bool isDark) =>
+      isDark ? Colors.white.withValues(alpha: 0.12) : Colors.black.withValues(alpha: 0.08);
+
+  static Color listDivider(bool isDark) =>
+      isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA);
+
+  static Color primaryText(bool isDark) =>
+      isDark ? Colors.white : Colors.black;
+
+  static Color secondaryText(bool isDark) =>
+      const Color(0xFF8E8E93);
+
+  static Color composerSurface(bool isDark) =>
+      isDark ? const Color(0xFF1C1C1E).withValues(alpha: 0.75) : Colors.white.withValues(alpha: 0.80);
+
+  static Color receivedBubble(bool isDark) =>
+      isDark ? const Color(0xFF262628) : const Color(0xFFE9E9EB);
+
+  static Color sentBubble(bool isDark) => primaryColor;
+
+  static Color overlayScrim(bool isDark) =>
+      isDark ? Colors.black.withValues(alpha: 0.55) : Colors.black.withValues(alpha: 0.28);
+
   /// iOS Light Style Palette
   static ThemeData get lightTheme {
     return ThemeData(

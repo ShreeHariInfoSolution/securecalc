@@ -65,6 +65,10 @@ class SocketChatService {
 
     _socket!.onConnect((_) {
       debugPrint('[SOCKET] Connected successfully! Socket ID: ${_socket!.id}');
+      try {
+        _socket!.emit('presence', {'status': 'online', 'is_online': true});
+        _socket!.emit('user_online', {'is_online': true});
+      } catch (_) {}
     });
 
     _socket!.onDisconnect((reason) {

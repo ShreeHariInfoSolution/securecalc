@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -14,9 +15,15 @@ import '../../domain/services/chat_invite_service.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
 import '../widgets/conversation_tile.dart';
+import '../widgets/conversation_list_bottom_rail.dart';
+import 'package:securecalc/src/features/calculator/presentation/pages/calculator_page.dart';
+import 'package:securecalc/src/features/private_folder/presentation/pages/private_folder_page.dart';
 import 'chat_detail_page.dart';
+import 'secret_settings_page.dart';
 import 'share/scan_qr_page.dart';
 import 'share/share_qr_page.dart';
+
+enum ConversationFilter { all, unread, read }
 
 class ConversationListPage extends StatefulWidget {
   final bool isDuressMode;
@@ -35,8 +42,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
   final FocusNode _searchFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
 
-  int _selectedTab = 0; // 0: All, 1: Unread
-  bool _showSearchBar = true;
+  ConversationFilter _filter = ConversationFilter.all;
   bool _isSyncing = false;
 
   int _currentChatPage = 1;
@@ -105,6 +111,105 @@ class _ConversationListPageState extends State<ConversationListPage> {
   void _showMessage(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : null),
+    );
+  }
+
+  void _showVaultOptionsSheet(BuildContext context) {
+    showCupertinoModalPopup<void>(
+      context: context,
+      builder: (sheetContext) => CupertinoActionSheet(
+        title: const Text(
+          'Secret Vault Options',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        message: const Text('Access private files, settings, or lock calculator'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(sheetContext);
+              Navigator.of(context).push(
+                CupertinoPageRoute(
+                  builder: (_) => const PrivateFolderPage(),
+                ),
+              );
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  CupertinoIcons.folder_fill_badge_person_crop,
+                  color: Color(0xFFAF52DE),
+                  size: 22,
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Private Vault',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(sheetContext);
+              Navigator.of(context).push(
+                CupertinoPageRoute(
+                  builder: (_) => const SecretSettingsPage(),
+                ),
+              );
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  CupertinoIcons.gear_alt_fill,
+                  color: Color(0xFFFF9500),
+                  size: 22,
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Settings',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            isDestructiveAction: true,
+            onPressed: () {
+              Navigator.pop(sheetContext);
+              Navigator.of(context).pushAndRemoveUntil(
+                PageRouteBuilder(
+                  transitionDuration: Duration.zero,
+                  reverseTransitionDuration: Duration.zero,
+                  pageBuilder: (context, a1, a2) => const CalculatorPage(),
+                ),
+                (route) => false,
+              );
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  CupertinoIcons.lock_fill,
+                  color: Color(0xFFFF3B30),
+                  size: 20,
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Lock Calculator',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          isDefaultAction: true,
+          onPressed: () => Navigator.pop(sheetContext),
+          child: const Text('Cancel'),
+        ),
+      ),
     );
   }
 
@@ -397,6 +502,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                                   ),
                                   leading: IosAvatar(
                                     name: u.name,
+                                    imagePath: u.avatar,
                                     isOnline: u.isOnline,
                                     size: 46,
                                   ),
@@ -853,391 +959,243 @@ class _ConversationListPageState extends State<ConversationListPage> {
 
     return ShakePanicWrapper(
       child: Scaffold(
-        backgroundColor: isDark
-            ? AppTheme.darkBackground
-            : AppTheme.lightBackground,
-        body: SafeArea(
-          child: ValueListenableBuilder<List<ChatConversation>>(
-            valueListenable: LocalChatStorage.instance.conversationsNotifier,
-            builder: (context, rawConversations, _) {
-              final conversations =
-                  widget.isDuressMode ? <ChatConversation>[] : rawConversations;
-              final query = _searchController.text.trim().toLowerCase();
-              final filtered =
-                  conversations.where((conv) {
-                    final matchesQuery =
-                        conv.name.toLowerCase().contains(query) ||
-                        conv.lastMessage.toLowerCase().contains(query);
+        backgroundColor: AppTheme.chatCanvas(isDark),
+        body: ValueListenableBuilder<List<ChatConversation>>(
+          valueListenable: LocalChatStorage.instance.conversationsNotifier,
+          builder: (context, rawConversations, _) {
+            final conversations =
+                widget.isDuressMode ? <ChatConversation>[] : rawConversations;
+            final query = _searchController.text.trim().toLowerCase();
+            final filtered = conversations.where((conv) {
+              final matchesQuery =
+                  conv.name.toLowerCase().contains(query) ||
+                  conv.lastMessage.toLowerCase().contains(query);
 
-                    if (_selectedTab == 1) {
-                      return matchesQuery && conv.unreadCount > 0;
-                    }
-                    return matchesQuery;
-                  }).toList()..sort((a, b) {
-                    if (a.isPinned != b.isPinned) {
-                      return a.isPinned ? -1 : 1;
-                    }
-                    final aTime = a.lastActivityAt?.millisecondsSinceEpoch ?? 0;
-                    final bTime = b.lastActivityAt?.millisecondsSinceEpoch ?? 0;
-                    return bTime.compareTo(aTime);
-                  });
+              if (_filter == ConversationFilter.unread) {
+                return matchesQuery && conv.unreadCount > 0;
+              } else if (_filter == ConversationFilter.read) {
+                return matchesQuery && conv.unreadCount == 0;
+              }
+              return matchesQuery;
+            }).toList()..sort((a, b) {
+              if (a.isPinned != b.isPinned) {
+                return a.isPinned ? -1 : 1;
+              }
+              final aTime = a.lastActivityAt?.millisecondsSinceEpoch ?? 0;
+              final bTime = b.lastActivityAt?.millisecondsSinceEpoch ?? 0;
+              return bTime.compareTo(aTime);
+            });
 
-              final unreadTotal = conversations.fold<int>(
-                0,
-                (sum, c) => sum + c.unreadCount,
-              );
+            final unreadTotal = conversations.fold<int>(
+              0,
+              (sum, c) => sum + c.unreadCount,
+            );
 
-              return RefreshIndicator(
-                onRefresh: _refreshServerChats,
-                color: AppTheme.primaryColor,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // iOS Header Row
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              if (Navigator.canPop(context)) ...[
-                                GestureDetector(
-                                  onTap: () => Navigator.of(context).pop(),
-                                  child: Container(
-                                    width: 36,
-                                    height: 36,
-                                    margin: const EdgeInsets.only(right: 10),
-                                    decoration: BoxDecoration(
-                                      color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.06),
-                                          blurRadius: 4,
-                                          offset: const Offset(0, 1),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Icon(
-                                      Icons.arrow_back_ios_new_rounded,
-                                      size: 16,
-                                      color: isDark ? Colors.white : Colors.black,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                              Text(
-                                'Messages',
-                                style: TextStyle(
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: -0.5,
-                                  color: isDark ? Colors.white : Colors.black,
-                                ),
-                              ),
-                              if (_isSyncing) ...[
-                                const SizedBox(width: 8),
-                                const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      AppTheme.primaryColor,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              // Search Round Button
-                              GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _showSearchBar = !_showSearchBar;
-                                  });
-                                  if (_showSearchBar) {
-                                    _searchFocusNode.requestFocus();
-                                  }
-                                },
-                                child: Container(
-                                  width: 32,
-                                  height: 32,
-                                  decoration: BoxDecoration(
-                                    color: isDark
-                                        ? const Color(0xFF2C2C2E)
-                                        : Colors.white,
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: isDark ? 0.3 : 0.08,
-                                        ),
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 1),
-                                      ),
-                                    ],
-                                  ),
-                                  child: const Icon(
-                                    Icons.search_rounded,
-                                    color: AppTheme.primaryColor,
-                                    size: 18,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-
-                              /*
-                              // Create a group conversation.
-                              GestureDetector(
-                                onTap: () => _showCreateGroupSheet(context),
-                                child: Container(
-                                  width: 32,
-                                  height: 32,
-                                  decoration: BoxDecoration(
-                                    color: isDark
-                                        ? const Color(0xFF2C2C2E)
-                                        : Colors.white,
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: isDark ? 0.3 : 0.08,
-                                        ),
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 1),
-                                      ),
-                                    ],
-                                  ),
-                                  child: const Icon(
-                                    Icons.group_add_rounded,
-                                    color: AppTheme.primaryColor,
-                                    size: 19,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              */
-
-                              // New Chat Server User Search Button
-                              GestureDetector(
-                                onTap: _showNewChatActionsSheet,
-                                child: Container(
-                                  width: 32,
-                                  height: 32,
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.primaryColor,
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: AppTheme.primaryColor.withValues(
-                                          alpha: 0.3,
-                                        ),
-                                        blurRadius: 6,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: const Icon(
-                                    Icons.edit_note_rounded,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+            return Stack(
+              children: [
+                CustomScrollView(
+                  controller: _scrollController,
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
+                  slivers: [
+                    // iOS Collapsing Large Title Header
+                    SliverPersistentHeader(
+                      pinned: true,
+                      delegate: _IosMessagesHeaderDelegate(
+                        topPadding: MediaQuery.paddingOf(context).top,
+                        isDark: isDark,
+                        isSyncing: _isSyncing,
+                        unreadTotal: unreadTotal,
+                        filter: _filter,
+                        onEditTap: () {
+                          if (Navigator.canPop(context)) {
+                            Navigator.of(context).pop();
+                          } else {
+                            _showVaultOptionsSheet(context);
+                          }
+                        },
+                        onFilterTap: () => _showFilterMenu(context),
                       ),
                     ),
 
-                    // Search Bar
-                    if (_showSearchBar)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16.0,
-                          vertical: 6.0,
-                        ),
-                        child: Container(
-                          height: 40,
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? const Color(0xFF1C1C1E)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(
-                                  alpha: isDark ? 0.3 : 0.04,
+                    // Cupertino Pull-to-Refresh
+                    CupertinoSliverRefreshControl(
+                      onRefresh: _refreshServerChats,
+                    ),
+
+                    // Conversation Tiles List
+                    if (filtered.isEmpty)
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(32.0),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  CupertinoIcons.chat_bubble_2,
+                                  size: 48,
+                                  color: AppTheme.secondaryText(isDark),
                                 ),
-                                blurRadius: 4,
-                                offset: const Offset(0, 1),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.search_rounded,
-                                color: AppTheme.subtitleGrey,
-                                size: 18,
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextField(
-                                  controller: _searchController,
-                                  focusNode: _searchFocusNode,
-                                  onChanged: (_) => setState(() {}),
-                                  decoration: const InputDecoration(
-                                    hintText: 'Search server chats',
-                                    border: InputBorder.none,
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                    hintStyle: TextStyle(
-                                      color: AppTheme.subtitleGrey,
-                                      fontSize: 15,
-                                    ),
-                                  ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  _searchController.text.isNotEmpty
+                                      ? 'No results for "${_searchController.text}"'
+                                      : 'No Conversations Yet',
                                   style: TextStyle(
-                                    fontSize: 15,
-                                    color: isDark ? Colors.white : Colors.black,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppTheme.secondaryText(isDark),
                                   ),
                                 ),
-                              ),
-                              if (_searchController.text.isNotEmpty)
-                                GestureDetector(
-                                  onTap: () {
-                                    setState(() {
-                                      _searchController.clear();
-                                    });
-                                  },
-                                  child: const Icon(
-                                    Icons.cancel_rounded,
-                                    color: AppTheme.subtitleGrey,
-                                    size: 16,
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Tap the compose button below to search users and start messaging.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: AppTheme.secondaryText(isDark),
                                   ),
                                 ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-
-                    // Filter Tabs Row
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16.0,
-                        vertical: 8.0,
-                      ),
-                      child: Row(
-                        children: [
-                          _buildFilterTab(0, 'All'),
-                          const SizedBox(width: 8),
-                          _buildFilterTab(
-                            1,
-                            unreadTotal > 0 ? 'Unread $unreadTotal' : 'Unread',
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    // Server Chat Tile List
-                    Expanded(
-                      child: filtered.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(32.0),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    const Icon(
-                                      Icons.forum_outlined,
-                                      size: 44,
-                                      color: AppTheme.subtitleGrey,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      _searchController.text.isNotEmpty
-                                          ? 'No results for "${_searchController.text}"'
-                                          : 'No Server Conversations Yet',
-                                      style: const TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppTheme.subtitleGrey,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    const Text(
-                                      'Tap the edit button above to search users and start messaging.',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: AppTheme.subtitleGrey,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          : ListView.builder(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.only(
-                                bottom: 24,
-                                top: 2,
-                              ),
-                              itemCount: filtered.length + (_isLoadingMoreChats ? 1 : 0),
-                              itemBuilder: (context, index) {
-                                if (index == filtered.length) {
-                                  return const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 16),
-                                    child: Center(
-                                      child: SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          valueColor: AlwaysStoppedAnimation<Color>(
-                                            AppTheme.primaryColor,
-                                          ),
+                      )
+                    else
+                      SliverPadding(
+                        padding: const EdgeInsets.only(bottom: 100),
+                        sliver: SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) {
+                              if (index == filtered.length) {
+                                return const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 20),
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor: AlwaysStoppedAnimation<Color>(
+                                          AppTheme.primaryColor,
                                         ),
                                       ),
                                     ),
-                                  );
-                                }
-                                final conv = filtered[index];
-                                return GestureDetector(
-                                  onLongPress: () =>
-                                      _showChatOptionsSheet(context, conv),
-                                  child: ConversationTile(
-                                    conversation: conv,
-                                    isTyping: conv.isTyping,
-                                    onTap: () {
-                                      Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (context) =>
-                                              VaultEdgePanelWrapper(
-                                            isDuressMode: widget.isDuressMode,
-                                            child: ChatDetailPage(
-                                                conversation: conv),
-                                          ),
-                                        ),
-                                      );
-                                    },
                                   ),
                                 );
-                              },
-                            ),
-                    ),
+                              }
+                              final conv = filtered[index];
+                              return GestureDetector(
+                                onLongPress: () => _showChatOptionsSheet(context, conv),
+                                child: ConversationTile(
+                                  conversation: conv,
+                                  isTyping: conv.isTyping,
+                                  showDivider: index < filtered.length - 1,
+                                  onTap: () {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (context) => VaultEdgePanelWrapper(
+                                          isDuressMode: widget.isDuressMode,
+                                          child: ChatDetailPage(conversation: conv),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              );
+                            },
+                            childCount: filtered.length + (_isLoadingMoreChats ? 1 : 0),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
-              );
+
+                // Floating Bottom Rail Search / New Chat Bar
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: ConversationListBottomRail(
+                    searchController: _searchController,
+                    searchFocusNode: _searchFocusNode,
+                    onChanged: (_) => setState(() {}),
+                    onNewChatTap: _showNewChatActionsSheet,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showFilterMenu(BuildContext context) {
+    showCupertinoModalPopup<void>(
+      context: context,
+      builder: (sheetContext) => CupertinoActionSheet(
+        title: const Text('Filter Messages'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(sheetContext);
+              setState(() => _filter = ConversationFilter.all);
             },
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (_filter == ConversationFilter.all)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8.0),
+                    child: Icon(CupertinoIcons.checkmark, size: 18),
+                  ),
+                const Text('All Messages'),
+              ],
+            ),
           ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(sheetContext);
+              setState(() => _filter = ConversationFilter.unread);
+            },
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (_filter == ConversationFilter.unread)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8.0),
+                    child: Icon(CupertinoIcons.checkmark, size: 18),
+                  ),
+                const Text('Unread Messages'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(sheetContext);
+              setState(() => _filter = ConversationFilter.read);
+            },
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (_filter == ConversationFilter.read)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8.0),
+                    child: Icon(CupertinoIcons.checkmark, size: 18),
+                  ),
+                const Text('Read Messages'),
+              ],
+            ),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          isDefaultAction: true,
+          onPressed: () => Navigator.pop(sheetContext),
+          child: const Text('Cancel'),
         ),
       ),
     );
@@ -1297,50 +1255,225 @@ class _ConversationListPageState extends State<ConversationListPage> {
       ),
     );
   }
+}
 
-  Widget _buildFilterTab(int index, String label) {
-    final isSelected = _selectedTab == index;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final double topPadding;
+  final bool isDark;
+  final bool isSyncing;
+  final int unreadTotal;
+  final ConversationFilter filter;
+  final VoidCallback onEditTap;
+  final VoidCallback onFilterTap;
 
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _selectedTab = index;
-        });
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? AppTheme.primaryColor
-              : (isDark ? const Color(0xFF1C1C1E) : Colors.white),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: AppTheme.primaryColor.withValues(alpha: 0.25),
-                    blurRadius: 4,
-                    offset: const Offset(0, 1),
+  _IosMessagesHeaderDelegate({
+    required this.topPadding,
+    required this.isDark,
+    required this.isSyncing,
+    required this.unreadTotal,
+    required this.filter,
+    required this.onEditTap,
+    required this.onFilterTap,
+  });
+
+  @override
+  double get minExtent => 52.0 + topPadding;
+
+  @override
+  double get maxExtent => 104.0 + topPadding;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final maxScroll = maxExtent - minExtent;
+    final progress = (shrinkOffset / maxScroll).clamp(0.0, 1.0);
+
+    final largeTitleOpacity = (1.0 - (shrinkOffset / 32.0)).clamp(0.0, 1.0);
+    final smallTitleOpacity = ((shrinkOffset - 22.0) / 22.0).clamp(0.0, 1.0);
+
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          color: AppTheme.glassSurface(isDark),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: AppTheme.glassBorder(isDark).withValues(
+                    alpha: progress * 0.8,
                   ),
-                ]
-              : [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
-                    blurRadius: 4,
-                    offset: const Offset(0, 1),
+                  width: 0.5,
+                ),
+              ),
+            ),
+            padding: EdgeInsets.only(top: topPadding),
+            child: Stack(
+              children: [
+                // Top Action Bar (Edit, Centered Small Title, Filter)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 52,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Edit Button
+                        GestureDetector(
+                          onTap: onEditTap,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? const Color(0xFF2C2C2E)
+                                      .withValues(alpha: 0.75)
+                                  : Colors.white.withValues(alpha: 0.85),
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: AppTheme.glassBorder(isDark),
+                                width: 0.8,
+                              ),
+                            ),
+                            child: const Text(
+                              'Edit',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.primaryColor,
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        // Centered Small Title (Fades in when collapsed)
+                        Opacity(
+                          opacity: smallTitleOpacity,
+                          child: Text(
+                            'Messages',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryText(isDark),
+                              letterSpacing: -0.3,
+                            ),
+                          ),
+                        ),
+
+                        // Filter Button
+                        GestureDetector(
+                          onTap: onFilterTap,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? const Color(0xFF2C2C2E)
+                                          .withValues(alpha: 0.75)
+                                      : Colors.white.withValues(alpha: 0.85),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: AppTheme.glassBorder(isDark),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: Icon(
+                                  CupertinoIcons.slider_horizontal_3,
+                                  size: 18,
+                                  color: AppTheme.primaryText(isDark),
+                                ),
+                              ),
+                              if (unreadTotal > 0 || filter != ConversationFilter.all)
+                                Positioned(
+                                  top: -2,
+                                  right: -2,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: const BoxDecoration(
+                                      color: AppTheme.primaryColor,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    constraints: const BoxConstraints(
+                                      minWidth: 16,
+                                      minHeight: 16,
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        unreadTotal > 0 ? '$unreadTotal' : '!',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-            color: isSelected ? Colors.white : AppTheme.subtitleGrey,
+                ),
+
+                // Large Title "Messages" (Fades out and moves slightly on scroll)
+                Positioned(
+                  left: 16,
+                  bottom: 6,
+                  child: Opacity(
+                    opacity: largeTitleOpacity,
+                    child: Transform.translate(
+                      offset: Offset(0, -shrinkOffset * 0.25),
+                      child: Row(
+                        children: [
+                          Text(
+                            'Messages',
+                            style: TextStyle(
+                              fontSize: 34,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: -0.8,
+                              color: AppTheme.primaryText(isDark),
+                            ),
+                          ),
+                          if (isSyncing) ...[
+                            const SizedBox(width: 10),
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  AppTheme.primaryColor,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+
+  @override
+  bool shouldRebuild(_IosMessagesHeaderDelegate oldDelegate) {
+    return oldDelegate.topPadding != topPadding ||
+        oldDelegate.isDark != isDark ||
+        oldDelegate.isSyncing != isSyncing ||
+        oldDelegate.unreadTotal != unreadTotal ||
+        oldDelegate.filter != filter;
   }
 }
