@@ -1339,7 +1339,7 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
                               ),
                             ),
                             child: const Text(
-                              'Edit',
+                              'More',
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,

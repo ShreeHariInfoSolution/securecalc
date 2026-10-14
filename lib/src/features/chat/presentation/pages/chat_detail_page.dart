@@ -38,13 +38,15 @@ class ChatDetailPage extends StatefulWidget {
   State<ChatDetailPage> createState() => _ChatDetailPageState();
 }
 
-class _ChatDetailPageState extends State<ChatDetailPage> {
+class _ChatDetailPageState extends State<ChatDetailPage>
+    with WidgetsBindingObserver {
   late List<ChatMessage> _messages;
   late String _chatName;
   late String _chatAvatar;
   bool _isLoadingMessages = true;
   bool _isRefreshingAfterIncoming = false;
   bool _refreshAfterIncomingAgain = false;
+  bool _didPurgeSeenMessagesOnExit = false;
   int _historyLoadGeneration = 0;
   final Map<String, ChatMessage> _messagesReceivedWhileLoading = {};
   int _currentPage = 1;
@@ -77,6 +79,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _disappearType = widget.conversation.disappearType;
     ServerChatManager.instance.activeChatId = widget.conversation.id;
     _chatName = widget.conversation.name;
@@ -459,6 +462,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         widget.conversation.id,
         page: 1,
         limit: 20,
+        chatDisappearType: _disappearType,
+        keepReadSessionMessages: true,
       );
 
       if (!mounted || generation != _historyLoadGeneration) return;
@@ -468,8 +473,11 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           .toList();
 
       final mergedById = <String, ChatMessage>{
-        for (final message in filtered) message.id: message,
+        for (final m in _messages) m.id: m,
       };
+      for (final message in filtered) {
+        mergedById[message.id] = message;
+      }
       mergedById.addAll(_messagesReceivedWhileLoading);
       final merged = mergedById.values
           .where((m) => !isMessageExpired(m, chatDisappearType: _disappearType, keepReadSessionMessages: true))
@@ -490,6 +498,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       debugPrint('[CHAT] Failed to load server history: $error');
       final cached = await LocalChatStorage.instance.loadMessages(
         widget.conversation.id,
+        chatDisappearType: _disappearType,
+        keepReadSessionMessages: true,
       );
       if (mounted && generation == _historyLoadGeneration) {
         setState(() {
@@ -511,6 +521,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         widget.conversation.id,
         page: nextPage,
         limit: 20,
+        chatDisappearType: _disappearType,
+        keepReadSessionMessages: true,
       );
 
       if (mounted) {
@@ -540,6 +552,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   Future<void> _loadInitialMessages() async {
     final cached = await LocalChatStorage.instance.loadMessages(
       widget.conversation.id,
+      chatDisappearType: _disappearType,
+      keepReadSessionMessages: true,
     );
     if (!mounted) return;
     final validCached = cached
@@ -588,6 +602,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   Future<void> _showCachedMessages() async {
     final cached = await LocalChatStorage.instance.loadMessages(
       widget.conversation.id,
+      chatDisappearType: _disappearType,
+      keepReadSessionMessages: true,
     );
     if (!mounted) return;
     final messagesById = <String, ChatMessage>{
@@ -1284,11 +1300,18 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       setState(() {
         _disappearType = newType;
         _messages.removeWhere(
-            (m) => isMessageExpired(m, chatDisappearType: newType));
+          (m) => isMessageExpired(
+            m,
+            chatDisappearType: newType,
+            keepReadSessionMessages: true,
+          ),
+        );
       });
       await LocalChatStorage.instance.cacheMessages(
         widget.conversation.id,
         _messages,
+        chatDisappearType: newType,
+        keepReadSessionMessages: true,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
@@ -1925,6 +1948,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   }
 
   Future<void> _purgeSeenMessagesOnExit() async {
+    if (_didPurgeSeenMessagesOnExit) return;
+    _didPurgeSeenMessagesOnExit = true;
     // 1. Send markChatRead API call to server when exiting chat screen
     try {
       await ServerChatManager.instance.markChatRead(widget.conversation.id);
@@ -1966,7 +1991,18 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // A terminated app is not guaranteed to run dispose().  Treat leaving the
+    // foreground as the end of this viewing session so after-read messages are
+    // not restored after an app restart.
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      unawaited(_purgeSeenMessagesOnExit());
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _purgeSeenMessagesOnExit();
     _messageSearchController.dispose();
     _messageSearchFocusNode.dispose();

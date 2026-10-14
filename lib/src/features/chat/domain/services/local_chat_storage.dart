@@ -219,7 +219,11 @@ class LocalChatStorage {
     _persistConversations(conversations);
   }
 
-  Future<List<ChatMessage>> loadMessages(String deviceId) async {
+  Future<List<ChatMessage>> loadMessages(
+    String deviceId, {
+    int chatDisappearType = 0,
+    bool keepReadSessionMessages = false,
+  }) async {
     final epoch = _accountEpoch;
     final key = _messageKey(deviceId);
     _prefs ??= await SharedPreferences.getInstance();
@@ -252,7 +256,11 @@ class LocalChatStorage {
           reaction: normalizeChatReaction(m['reaction']),
           replyToId: int.tryParse(m['replyToId']?.toString() ?? ''),
         );
-        if (!isMessageExpired(msg)) {
+        if (!isMessageExpired(
+          msg,
+          chatDisappearType: chatDisappearType,
+          keepReadSessionMessages: keepReadSessionMessages,
+        )) {
           list.add(msg);
         }
       }
@@ -264,15 +272,24 @@ class LocalChatStorage {
 
   Future<void> cacheMessages(
     String deviceId,
-    List<ChatMessage> messages,
-  ) async {
+    List<ChatMessage> messages, {
+    int chatDisappearType = 0,
+    bool keepReadSessionMessages = false,
+  }) async {
     final epoch = _accountEpoch;
     final messageKey = _messageKey(deviceId);
     final historyKey = _historyKey(deviceId);
     _prefs ??= await SharedPreferences.getInstance();
     if (epoch != _accountEpoch) return;
     final jsonList = messages
-        .where((message) => !isMessageExpired(message))
+        .where(
+          (message) =>
+              !isMessageExpired(
+                message,
+                chatDisappearType: chatDisappearType,
+                keepReadSessionMessages: keepReadSessionMessages,
+              ),
+        )
         .map(
           (message) => {
             'id': message.id,

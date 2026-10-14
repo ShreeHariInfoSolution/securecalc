@@ -394,12 +394,18 @@ class ServerChatManager {
     String chatId, {
     int page = 1,
     int limit = 20,
+    int chatDisappearType = 0,
+    bool keepReadSessionMessages = false,
   }) async {
     final requestUserId = ServerApiService.instance.currentUserId;
     final requestToken = ServerApiService.instance.authToken;
     final numericId = int.tryParse(chatId) ?? 0;
     if (numericId <= 0) {
-      final cached = await LocalChatStorage.instance.loadMessages(chatId);
+      final cached = await LocalChatStorage.instance.loadMessages(
+        chatId,
+        chatDisappearType: chatDisappearType,
+        keepReadSessionMessages: keepReadSessionMessages,
+      );
       return PaginatedMessagesResult(
         messages: cached,
         page: 1,
@@ -418,7 +424,11 @@ class ServerChatManager {
 
       if (requestUserId != ServerApiService.instance.currentUserId ||
           requestToken != ServerApiService.instance.authToken) {
-        final cached = await LocalChatStorage.instance.loadMessages(chatId);
+        final cached = await LocalChatStorage.instance.loadMessages(
+          chatId,
+          chatDisappearType: chatDisappearType,
+          keepReadSessionMessages: keepReadSessionMessages,
+        );
         return PaginatedMessagesResult(
           messages: cached,
           page: 1,
@@ -428,7 +438,11 @@ class ServerChatManager {
         );
       }
 
-      final cachedMessages = await LocalChatStorage.instance.loadMessages(chatId);
+      final cachedMessages = await LocalChatStorage.instance.loadMessages(
+        chatId,
+        chatDisappearType: chatDisappearType,
+        keepReadSessionMessages: keepReadSessionMessages,
+      );
       final cachedById = {
         for (final message in cachedMessages) message.id: message,
       };
@@ -477,7 +491,11 @@ class ServerChatManager {
           replyToId: sm.replyToId,
         );
 
-        if (!isMessageExpired(msg)) {
+        if (!isMessageExpired(
+          msg,
+          chatDisappearType: chatDisappearType,
+          keepReadSessionMessages: keepReadSessionMessages,
+        )) {
           messages.add(msg);
         }
       }
@@ -486,16 +504,33 @@ class ServerChatManager {
 
       final mergedById = {
         for (final message in cachedMessages)
-          if (!isMessageExpired(message)) message.id: message
+          if (!isMessageExpired(
+            message,
+            chatDisappearType: chatDisappearType,
+            keepReadSessionMessages: keepReadSessionMessages,
+          ))
+            message.id: message
       };
       for (final message in messages) {
         mergedById[message.id] = message;
       }
       final mergedAll = mergedById.values
-          .where((m) => !isMessageExpired(m))
+          .where(
+            (m) =>
+                !isMessageExpired(
+                  m,
+                  chatDisappearType: chatDisappearType,
+                  keepReadSessionMessages: keepReadSessionMessages,
+                ),
+          )
           .toList()
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-      await LocalChatStorage.instance.cacheMessages(chatId, mergedAll);
+      await LocalChatStorage.instance.cacheMessages(
+        chatId,
+        mergedAll,
+        chatDisappearType: chatDisappearType,
+        keepReadSessionMessages: keepReadSessionMessages,
+      );
 
       return PaginatedMessagesResult(
         messages: messages,
@@ -506,7 +541,11 @@ class ServerChatManager {
       );
     } catch (e) {
       debugPrint('[ServerChatManager] Page $page load failed for $chatId: $e');
-      final cached = await LocalChatStorage.instance.loadMessages(chatId);
+      final cached = await LocalChatStorage.instance.loadMessages(
+        chatId,
+        chatDisappearType: chatDisappearType,
+        keepReadSessionMessages: keepReadSessionMessages,
+      );
       return PaginatedMessagesResult(
         messages: cached,
         page: page,

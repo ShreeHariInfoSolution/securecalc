@@ -1522,6 +1522,7 @@ class _GridTileItem extends StatefulWidget {
 class _GridTileItemState extends State<_GridTileItem> {
   String? _resolvedPath;
   bool _isLoading = true;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -1530,15 +1531,18 @@ class _GridTileItemState extends State<_GridTileItem> {
   }
 
   Future<void> _loadTilePhoto() async {
+    final generation = ++_loadGeneration;
     final rawUrl = widget.photoMessage.mediaUrl;
     if (rawUrl == null || rawUrl.isEmpty) {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _isLoading = false);
+      }
       return;
     }
 
     if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
       if (File(rawUrl).existsSync()) {
-        if (mounted) {
+        if (mounted && generation == _loadGeneration) {
           setState(() {
             _resolvedPath = rawUrl;
             _isLoading = false;
@@ -1550,7 +1554,7 @@ class _GridTileItemState extends State<_GridTileItem> {
 
     final cached = await AttachmentCacheService.instance.resolveLocalPath(rawUrl);
     if (cached != null && File(cached).existsSync()) {
-      if (mounted) {
+      if (mounted && generation == _loadGeneration) {
         setState(() {
           _resolvedPath = cached;
           _isLoading = false;
@@ -1560,11 +1564,20 @@ class _GridTileItemState extends State<_GridTileItem> {
     }
 
     final networkUrl = resolveAvatarUrl(rawUrl);
-    if (mounted) {
+    if (mounted && generation == _loadGeneration) {
       setState(() {
         _resolvedPath = networkUrl;
         _isLoading = false;
       });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _GridTileItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.photoMessage.mediaUrl != widget.photoMessage.mediaUrl) {
+      // Keep the old thumbnail painted while the replacement is resolved.
+      _loadTilePhoto();
     }
   }
 
@@ -1606,18 +1619,7 @@ class _GridTileItemState extends State<_GridTileItem> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return Container(
-        width: widget.width,
-        height: widget.height,
-        color: Colors.grey.withValues(alpha: 0.2),
-        child: const Center(
-          child: SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
+      return _buildThumbnailPlaceholder();
     }
 
     final path = _resolvedPath;
@@ -1649,23 +1651,26 @@ class _GridTileItemState extends State<_GridTileItem> {
           : null;
       imageWidget = Image.network(
         path,
+        key: ValueKey(path),
         headers: headers,
         width: widget.width,
         height: widget.height,
         fit: BoxFit.cover,
+        gaplessPlayback: true,
         loadingBuilder: (context, child, loadingProgress) {
           if (loadingProgress == null) return child;
-          return Container(
-            width: widget.width,
-            height: widget.height,
-            color: Colors.grey.withValues(alpha: 0.2),
-            child: const Center(
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              child,
+              const Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
               ),
-            ),
+            ],
           );
         },
         errorBuilder: (_, __, ___) => const Center(
@@ -1683,6 +1688,27 @@ class _GridTileItemState extends State<_GridTileItem> {
         clipBehavior: Clip.antiAlias,
         decoration: const BoxDecoration(),
         child: imageWidget,
+      ),
+    );
+  }
+
+  Widget _buildThumbnailPlaceholder() {
+    return Container(
+      width: widget.width,
+      height: widget.height,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF2B3A42), Color(0xFF3F51B5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: const Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+        ),
       ),
     );
   }
