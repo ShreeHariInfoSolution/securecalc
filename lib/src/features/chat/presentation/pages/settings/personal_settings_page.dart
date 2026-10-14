@@ -68,7 +68,38 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     AppPreferences.isPickerActive = true;
     try {
       if (source == ImageSource.camera) {
-        await Permission.camera.request();
+        var status = await Permission.camera.status;
+        if (!status.isGranted && !status.isLimited) {
+          status = await Permission.camera.request();
+          if (!status.isGranted && !status.isLimited) {
+            if (mounted) {
+              showCupertinoDialog(
+                context: context,
+                builder: (ctx) => CupertinoAlertDialog(
+                  title: const Text('Camera Access Required'),
+                  content: const Text(
+                    'Calnox Vault needs camera access to update your profile avatar. Please enable Camera in Settings.',
+                  ),
+                  actions: [
+                    CupertinoDialogAction(
+                      child: const Text('Cancel'),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                    CupertinoDialogAction(
+                      isDefaultAction: true,
+                      child: const Text('Settings'),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        openAppSettings();
+                      },
+                    ),
+                  ],
+                ),
+              );
+            }
+            return;
+          }
+        }
       } else if (Platform.isAndroid) {
         await [Permission.photos, Permission.storage].request();
       }

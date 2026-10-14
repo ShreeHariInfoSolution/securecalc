@@ -102,14 +102,52 @@ class _ChatComposerState extends State<ChatComposer> {
   String _attachmentType(String fileName) =>
       inferAttachmentType(fileName: fileName) ?? 'application/octet-stream';
 
+  Future<bool> _checkCameraPermission() async {
+    var status = await Permission.camera.status;
+    if (status.isGranted || status.isLimited) {
+      return true;
+    }
+
+    status = await Permission.camera.request();
+    if (status.isGranted || status.isLimited) {
+      return true;
+    }
+
+    if (mounted) {
+      showCupertinoDialog(
+        context: context,
+        builder: (ctx) => CupertinoAlertDialog(
+          title: const Text('Camera Access Required'),
+          content: const Text(
+            'Calnox Vault needs camera access so you can take and send photos. Please enable Camera in Settings.',
+          ),
+          actions: [
+            CupertinoDialogAction(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.pop(ctx),
+            ),
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              child: const Text('Settings'),
+              onPressed: () {
+                Navigator.pop(ctx);
+                openAppSettings();
+              },
+            ),
+          ],
+        ),
+      );
+    }
+    return false;
+  }
+
   Future<void> _pickAndSendImage(ImageSource source) async {
     AppPreferences.isPickerActive = true;
     try {
       final List<File> pickedFiles = [];
       if (source == ImageSource.camera) {
-        if (!(await Permission.camera.request()).isGranted) {
-          throw Exception('Camera permission is required.');
-        }
+        final hasPermission = await _checkCameraPermission();
+        if (!hasPermission) return;
         final picked = await _picker.pickImage(source: source, imageQuality: 90);
         if (picked == null) return;
         pickedFiles.add(File(picked.path));
