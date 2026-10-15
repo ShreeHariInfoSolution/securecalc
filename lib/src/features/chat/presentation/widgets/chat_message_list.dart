@@ -1,7 +1,5 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
-
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
@@ -57,8 +55,8 @@ class ChatMessageList extends StatelessWidget {
 
   bool _sameDay(DateTime first, DateTime second) =>
       first.year == second.year &&
-      first.month == second.month &&
-      first.day == second.day;
+          first.month == second.month &&
+          first.day == second.day;
 
   String _dateLabel(DateTime date) {
     final now = DateTime.now();
@@ -71,22 +69,8 @@ class ChatMessageList extends StatelessWidget {
     final timeStr = '$hour:$min $period';
 
     if (day == today) return 'Today at $timeStr';
-    if (day == today.subtract(const Duration(days: 1)))
-      return 'Yesterday at $timeStr';
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
+    if (day == today.subtract(const Duration(days: 1))) return 'Yesterday at $timeStr';
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return '${date.day} ${months[date.month - 1]} ${date.year} at $timeStr';
   }
 
@@ -112,17 +96,13 @@ class ChatMessageList extends StatelessWidget {
     if (messageIndex > 0 && _isImageMessage(messages[messageIndex - 1])) {
       final prevMsg = messages[messageIndex - 1];
       if (prevMsg.senderId == currentMsg.senderId &&
-          currentMsg.timestamp.difference(prevMsg.timestamp).inMinutes.abs() <=
-              15) {
+          currentMsg.timestamp.difference(prevMsg.timestamp).inMinutes.abs() <= 15) {
+
         int firstIndex = messageIndex - 1;
         while (firstIndex > 0 &&
             _isImageMessage(messages[firstIndex - 1]) &&
             messages[firstIndex - 1].senderId == currentMsg.senderId &&
-            messages[firstIndex].timestamp
-                    .difference(messages[firstIndex - 1].timestamp)
-                    .inMinutes
-                    .abs() <=
-                15) {
+            messages[firstIndex].timestamp.difference(messages[firstIndex - 1].timestamp).inMinutes.abs() <= 15) {
           firstIndex--;
         }
 
@@ -130,14 +110,8 @@ class ChatMessageList extends StatelessWidget {
         int idx = firstIndex;
         while (idx < messages.length &&
             _isImageMessage(messages[idx]) &&
-            (idx == firstIndex ||
-                messages[idx].senderId == messages[idx - 1].senderId) &&
-            (idx == firstIndex ||
-                messages[idx].timestamp
-                        .difference(messages[idx - 1].timestamp)
-                        .inMinutes
-                        .abs() <=
-                    15)) {
+            (idx == firstIndex || messages[idx].senderId == messages[idx - 1].senderId) &&
+            (idx == firstIndex || messages[idx].timestamp.difference(messages[idx - 1].timestamp).inMinutes.abs() <= 15)) {
           fullGroup.add(messages[idx]);
           idx++;
         }
@@ -154,11 +128,7 @@ class ChatMessageList extends StatelessWidget {
       final nextMsg = messages[nextIndex];
       if (_isImageMessage(nextMsg) &&
           nextMsg.senderId == currentMsg.senderId &&
-          nextMsg.timestamp
-                  .difference(grouped.last.timestamp)
-                  .inMinutes
-                  .abs() <=
-              15) {
+          nextMsg.timestamp.difference(grouped.last.timestamp).inMinutes.abs() <= 15) {
         grouped.add(nextMsg);
         nextIndex++;
       } else {
@@ -267,10 +237,7 @@ class ChatMessageList extends StatelessWidget {
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             reverse: true,
             padding: EdgeInsets.fromLTRB(0, topInset, 0, bottomInset),
-            itemCount:
-                messages.length +
-                (isPeerTyping ? 1 : 0) +
-                (isLoadingMore ? 1 : 0),
+            itemCount: messages.length + (isPeerTyping ? 1 : 0) + (isLoadingMore ? 1 : 0),
             itemBuilder: (context, index) {
               if (isPeerTyping && index == 0) {
                 return ChatTypingIndicator(
@@ -294,13 +261,9 @@ class ChatMessageList extends StatelessWidget {
 
               final showDateHeader =
                   messageIndex == 0 ||
-                  !_sameDay(
-                    messages[messageIndex - 1].timestamp,
-                    msg.timestamp,
-                  );
-              final previousSender = messageIndex > 0
-                  ? messages[messageIndex - 1].senderId
-                  : null;
+                      !_sameDay(messages[messageIndex - 1].timestamp, msg.timestamp);
+              final previousSender =
+              messageIndex > 0 ? messages[messageIndex - 1].senderId : null;
               final showGroupSender =
                   conversation.isGroup && msg.senderId != previousSender;
               final senderId = msg.senderId == 'user'
@@ -316,21 +279,22 @@ class ChatMessageList extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (showDateHeader) DateLabel(_dateLabel(msg.timestamp)),
+                    if (showDateHeader)
+                      DateLabel(_dateLabel(msg.timestamp)),
                     Builder(
                       builder: (bubbleContext) {
                         return GestureDetector(
                           onLongPressStart: int.tryParse(msg.id) != null
                               ? (details) {
-                                  final box =
-                                      bubbleContext.findRenderObject()
-                                          as RenderBox?;
-                                  final globalPos =
-                                      box?.localToGlobal(Offset.zero) ??
-                                      details.globalPosition;
-                                  final size = box?.size ?? const Size(240, 60);
-                                  onShowMessageActions(msg, globalPos, size);
-                                }
+                            final box =
+                            bubbleContext.findRenderObject() as RenderBox?;
+                            final globalPos =
+                                box?.localToGlobal(Offset.zero) ??
+                                    details.globalPosition;
+                            final size =
+                                box?.size ?? const Size(240, 60);
+                            onShowMessageActions(msg, globalPos, size);
+                          }
                               : null,
                           child: ChatBubble(
                             key: ValueKey(msg.id),
@@ -357,17 +321,12 @@ class ChatMessageList extends StatelessWidget {
                                 : repliedMessage.senderId == 'user'
                                 ? 'You'
                                 : conversation.isGroup
-                                ? groupMemberNames[int.tryParse(
-                                        repliedMessage.senderId,
-                                      )] ??
-                                      'Member'
+                                ? groupMemberNames[int.tryParse(repliedMessage.senderId)] ?? 'Member'
                                 : chatName,
                             replyText: repliedMessage?.previewText,
                             onTapReply: onTapReply,
                             isHighlighted: highlightedMessageId == msg.id,
-                            reactions: msg.reaction == null
-                                ? null
-                                : [msg.reaction!],
+                            reactions: msg.reaction == null ? null : [msg.reaction!],
                           ),
                         );
                       },
