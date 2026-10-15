@@ -25,7 +25,15 @@ String? inferAttachmentType({
   String? fileName,
   String? filePath,
 }) {
-  if (fileType != null && fileType.isNotEmpty) return fileType.toLowerCase();
+  final cleanType = fileType?.trim().toLowerCase();
+  if (cleanType != null &&
+      cleanType.isNotEmpty &&
+      cleanType != 'application/octet-stream' &&
+      cleanType != 'binary/octet-stream' &&
+      cleanType != 'octet-stream' &&
+      cleanType != 'binary') {
+    return cleanType;
+  }
   final source = fileName?.isNotEmpty == true ? fileName! : filePath ?? '';
   final extension = source.split('?').first.split('#').first.split('.').last.toLowerCase();
   return switch (extension) {
@@ -33,10 +41,11 @@ String? inferAttachmentType({
     'png' => 'image/png',
     'gif' => 'image/gif',
     'webp' => 'image/webp',
-    'heic' => 'image/heic',
+    'heic' || 'heif' || 'bmp' => 'image/png',
     'mp4' => 'video/mp4',
     'mov' => 'video/quicktime',
     'webm' => 'video/webm',
+    'mkv' || 'avi' || '3gp' => 'video/mp4',
     'mp3' => 'audio/mpeg',
     'm4a' => 'audio/mp4',
     'aac' => 'audio/aac',
@@ -51,7 +60,7 @@ String? inferAttachmentType({
     'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     'txt' => 'text/plain',
     'zip' => 'application/zip',
-    _ => null,
+    _ => cleanType ?? 'application/octet-stream',
   };
 }
 
@@ -69,6 +78,9 @@ class UserModel {
   final String? keyIv;
   final bool isOnline;
   final String? lastSeenAt;
+
+  String get username => name;
+  String get avatarUrl => avatar ?? '';
 
   UserModel({
     required this.id,
@@ -273,6 +285,49 @@ class ServerChatListPageModel {
   }
 }
 
+/// Represents a media attachment item returned in Chat Details API (GET /chats/:chatId)
+class ServerChatMediaItemModel {
+  final int id;
+  final int senderId;
+  final String filePath;
+  final String url;
+  final String fileName;
+  final String fileType;
+  final String kind;
+  final bool isSaved;
+  final String createdAt;
+
+  ServerChatMediaItemModel({
+    required this.id,
+    required this.senderId,
+    required this.filePath,
+    required this.url,
+    required this.fileName,
+    required this.fileType,
+    required this.kind,
+    required this.isSaved,
+    required this.createdAt,
+  });
+
+  factory ServerChatMediaItemModel.fromJson(Map<String, dynamic> json) {
+    return ServerChatMediaItemModel(
+      id: (json['id'] is int)
+          ? json['id'] as int
+          : int.tryParse(json['id']?.toString() ?? '') ?? 0,
+      senderId: (json['sender_id'] is int)
+          ? json['sender_id'] as int
+          : int.tryParse((json['sender_id'] ?? json['senderId'])?.toString() ?? '') ?? 0,
+      filePath: (json['file_path'] ?? json['filePath'])?.toString() ?? '',
+      url: json['url']?.toString() ?? '',
+      fileName: (json['file_name'] ?? json['fileName'])?.toString() ?? '',
+      fileType: (json['file_type'] ?? json['fileType'])?.toString() ?? '',
+      kind: json['kind']?.toString() ?? '',
+      isSaved: json['is_saved'] == true || json['isSaved'] == true,
+      createdAt: (json['created_at'] ?? json['createdAt'])?.toString() ?? '',
+    );
+  }
+}
+
 /// Represents a 1-to-1 or group Chat Head on the server.
 class ServerChatModel {
   final int id;
@@ -293,6 +348,8 @@ class ServerChatModel {
   final String? createdAt;
   final int? createdBy;
   final int? totalMembers;
+  final int mediaTotal;
+  final List<ServerChatMediaItemModel> media;
 
   ServerChatModel({
     required this.id,
@@ -313,6 +370,8 @@ class ServerChatModel {
     this.createdAt,
     this.createdBy,
     this.totalMembers,
+    this.mediaTotal = 0,
+    this.media = const [],
   });
 
   factory ServerChatModel.fromJson(Map<String, dynamic> json) {
@@ -429,6 +488,23 @@ class ServerChatModel {
         ? rawDisappear
         : (int.tryParse(rawDisappear?.toString() ?? '0') ?? 0);
 
+    final rawMedia = json['media'];
+    List<ServerChatMediaItemModel> mediaList = [];
+    if (rawMedia is List) {
+      mediaList = rawMedia
+          .map((item) => ServerChatMediaItemModel.fromJson(
+                item is Map<String, dynamic>
+                    ? item
+                    : (item is Map ? Map<String, dynamic>.from(item) : {}),
+              ))
+          .toList();
+    }
+
+    final rawMediaTotal = json['media_total'] ?? json['mediaTotal'];
+    final mediaTotalVal = rawMediaTotal is int
+        ? rawMediaTotal
+        : int.tryParse(rawMediaTotal?.toString() ?? '') ?? mediaList.length;
+
     return ServerChatModel(
       id: rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? 0),
       groupName: (json['group_name'] ?? json['groupName'] ?? json['name'] ?? json['title'])?.toString(),
@@ -465,6 +541,8 @@ class ServerChatModel {
       totalMembers: json['total_members'] is int
           ? json['total_members'] as int
           : int.tryParse((json['total_members'] ?? json['totalMembers'])?.toString() ?? ''),
+      mediaTotal: mediaTotalVal,
+      media: mediaList,
     );
   }
 }
@@ -482,6 +560,8 @@ class ServerMessageModel {
   final String? fileName;
   final int? replyToId;
   final String? chatReact;
+  final bool isRead;
+  final bool isDelivered;
   final bool isEdited;
   final bool isDeleted;
   final bool isSaved;
@@ -502,6 +582,8 @@ class ServerMessageModel {
     this.fileName,
     this.replyToId,
     this.chatReact,
+    this.isRead = false,
+    this.isDelivered = false,
     this.isEdited = false,
     this.isDeleted = false,
     this.isSaved = false,
@@ -523,6 +605,15 @@ class ServerMessageModel {
     final disappearVal = rawDisappear is int
         ? rawDisappear
         : (int.tryParse(rawDisappear?.toString() ?? '0') ?? 0);
+
+    final rawRead = json['is_read'] ?? json['isRead'] ?? json['read'] ?? json['read_at'];
+    final isReadVal = rawRead == true || rawRead == 1 || (rawRead is String && rawRead.isNotEmpty);
+
+    final rawDelivered = json['is_delivered'] ?? json['isDelivered'] ?? json['delivered'] ?? json['delivered_at'] ?? json['status'];
+    final isDeliveredVal = isReadVal ||
+        rawDelivered == true ||
+        rawDelivered == 1 ||
+        (rawDelivered is String && (rawDelivered == 'delivered' || rawDelivered == 'read' || rawDelivered.isNotEmpty));
 
     return ServerMessageModel(
       id: rawId is int ? rawId : int.tryParse(rawId?.toString() ?? '') ?? 0,
@@ -549,6 +640,8 @@ class ServerMessageModel {
           ? json['reply_to_id']
           : int.tryParse(json['reply_to_id']?.toString() ?? ''),
       chatReact: normalizeChatReaction(json['chat_react']),
+      isRead: isReadVal,
+      isDelivered: isDeliveredVal,
       isEdited: json['is_edited'] == true || json['is_edited'] == 1,
       isDeleted: json['is_deleted'] == true || json['is_deleted'] == 1,
       isSaved: json['is_saved'] == true || json['is_saved'] == 1,

@@ -699,41 +699,78 @@ class ServerApiService {
   Future<ServerMessageModel> sendMessageREST({
     required int chatId,
     required String message,
+    File? file,
     String? filePath,
     String? fileName,
     String? fileType,
     int? replyToId,
     String? clientId,
   }) async {
-    final body = {
-      'message': message,
-      'reply_to_id': replyToId,
-      'client_id': clientId ?? 'local_${DateTime.now().millisecondsSinceEpoch}',
-      if (filePath != null) 'file_path': filePath,
-      if (fileName != null) 'file_name': fileName,
-      if (fileType != null) 'file_type': fileType,
-    };
-
     final url = '$baseUrl/chats/$chatId/messages';
-    debugPrint('[API] POST $url with body: ${jsonEncode(body)}');
 
-    final res = await http.post(
-      Uri.parse(url),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
+    if (file != null && await file.exists()) {
+      debugPrint('[API] POST $url (Multipart File: ${file.path})');
+      final req = http.MultipartRequest('POST', Uri.parse(url));
+      if (_authToken != null) {
+        req.headers['Authorization'] = 'Bearer $_authToken';
+      }
+      req.fields['message'] = message;
+      if (replyToId != null) req.fields['reply_to_id'] = replyToId.toString();
+      if (clientId != null) req.fields['client_id'] = clientId;
+      if (fileType != null) req.fields['file_type'] = fileType;
+      if (fileName != null) req.fields['file_name'] = fileName;
 
-    debugPrint('[API] Send Message Response (${res.statusCode}): ${res.body}');
+      req.files.add(await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        filename: fileName ?? file.path.split(RegExp(r'[/\\]')).last,
+      ));
 
-    if (res.statusCode == 200 || res.statusCode == 201) {
-      final json = jsonDecode(res.body);
-      final data = json['data'] is Map<String, dynamic>
-          ? json['data'] as Map<String, dynamic>
-          : (json is Map<String, dynamic> ? json : <String, dynamic>{});
-      return ServerMessageModel.fromJson(data);
+      final streamedRes = await req.send();
+      final res = await http.Response.fromStream(streamedRes);
+
+      debugPrint('[API] Send Message with File Response (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final json = jsonDecode(res.body);
+        final data = json['data'] is Map<String, dynamic>
+            ? json['data'] as Map<String, dynamic>
+            : (json is Map<String, dynamic> ? json : <String, dynamic>{});
+        return ServerMessageModel.fromJson(data);
+      } else {
+        debugPrint('[API ERROR] Send Message with File Failed (${res.statusCode}): ${res.body}');
+        throw Exception('Send Message REST Error (${res.statusCode}): ${res.body}');
+      }
     } else {
-      debugPrint('[API ERROR] Send Message Failed (${res.statusCode}): ${res.body}');
-      throw Exception('Send Message REST Error (${res.statusCode}): ${res.body}');
+      final body = {
+        'message': message,
+        'reply_to_id': replyToId,
+        'client_id': clientId ?? 'local_${DateTime.now().millisecondsSinceEpoch}',
+        if (filePath != null) 'file_path': filePath,
+        if (fileName != null) 'file_name': fileName,
+        if (fileType != null) 'file_type': fileType,
+      };
+
+      debugPrint('[API] POST $url with body: ${jsonEncode(body)}');
+
+      final res = await http.post(
+        Uri.parse(url),
+        headers: _headers(),
+        body: jsonEncode(body),
+      );
+
+      debugPrint('[API] Send Message Response (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final json = jsonDecode(res.body);
+        final data = json['data'] is Map<String, dynamic>
+            ? json['data'] as Map<String, dynamic>
+            : (json is Map<String, dynamic> ? json : <String, dynamic>{});
+        return ServerMessageModel.fromJson(data);
+      } else {
+        debugPrint('[API ERROR] Send Message Failed (${res.statusCode}): ${res.body}');
+        throw Exception('Send Message REST Error (${res.statusCode}): ${res.body}');
+      }
     }
   }
 

@@ -12,6 +12,7 @@ import '../../../../core/config/app_preferences.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/models/server_models.dart';
+import 'chat_detail_header.dart';
 import 'chat_reply_banner.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../pages/image_preview_editor_page.dart';
@@ -220,19 +221,20 @@ class _ChatComposerState extends State<ChatComposer> {
     try {
       final files = await FilePicker.pickFiles(type: FileType.any);
       if (files.isEmpty) return;
-      final picked = files.first;
-      var path = picked.path;
-      if (path == null || path.isEmpty) {
-        final temporaryDirectory = await getTemporaryDirectory();
-        final safeName = picked.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-        path = '${temporaryDirectory.path}/${DateTime.now().millisecondsSinceEpoch}_$safeName';
-        await File(path).writeAsBytes(await picked.readAsBytes(), flush: true);
+      for (final picked in files) {
+        var path = picked.path;
+        if (path == null || path.isEmpty) {
+          final temporaryDirectory = await getTemporaryDirectory();
+          final safeName = picked.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+          path = '${temporaryDirectory.path}/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+          await File(path).writeAsBytes(await picked.readAsBytes(), flush: true);
+        }
+        await widget.onSendAttachment(
+          file: File(path),
+          fileName: picked.name,
+          fileType: _attachmentType(picked.name),
+        );
       }
-      await widget.onSendAttachment(
-        file: File(path),
-        fileName: picked.name,
-        fileType: _attachmentType(picked.name),
-      );
     } catch (error) {
       debugPrint('[FILE PICK ERROR] $error');
       if (mounted) {
@@ -574,70 +576,50 @@ class _ChatComposerState extends State<ChatComposer> {
             groupMemberNames: widget.groupMemberNames,
             onCancel: widget.onCancelReply,
           ),
-        ClipRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: Container(
-              padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPadding > 0 ? bottomPadding + 4 : 12),
-              decoration: BoxDecoration(
-                color: AppTheme.composerSurface(isDark),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          padding: EdgeInsets.fromLTRB(10, 7, 10, bottomPadding > 0 ? bottomPadding + 4 : 8),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
+            border: Border(
+              top: BorderSide(
+                color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA),
+                width: 0.8,
               ),
-              child: Row(
-                children: [
-                  // Floating Plus Button
-                  GestureDetector(
-                    onTap: () => _showAttachmentOptions(context),
-                    child: Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0xFF2C2C2E).withValues(alpha: 0.85)
-                            : Colors.white,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: AppTheme.glassBorder(isDark),
-                          width: 0.8,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(
-                              alpha: isDark ? 0.3 : 0.06,
-                            ),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Icon(
-                          CupertinoIcons.add,
-                          size: 20,
-                          color: isDark ? Colors.white : Colors.black87,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
+            ),
+          ),
+          child: Row(
+            children: [
+              // Plus Attachment Button (38x38)
+              GlassButton(
+                width: 38,
+                height: 38,
+                radius: 19,
+                isDark: isDark,
+                onTap: () => _showAttachmentOptions(context),
+                child: Icon(
+                  Icons.add_rounded,
+                  size: 24,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(width: 8),
 
-                  // Rounded Pill Input Bar
-                  Expanded(
-                    child: Container(
-                      height: 40,
-                      padding: const EdgeInsets.only(left: 14, right: 6),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0xFF2C2C2E)
-                            : const Color(0xFFF2F2F7),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: isDark
-                              ? Colors.white.withValues(alpha: 0.12)
-                              : const Color(0xFFE5E5EA),
-                          width: 0.8,
-                        ),
-                      ),
+              // Adaptive Input Surface (expandable height up to 110)
+              Expanded(
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minHeight: 38,
+                    maxHeight: 110,
+                  ),
+                  child: GlassSurface(
+                    radius: 19,
+                    isDark: isDark,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 2, 8, 2),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           if (_isRecordingVoice)
                             Expanded(
@@ -648,34 +630,35 @@ class _ChatComposerState extends State<ChatComposer> {
                                     color: Colors.redAccent,
                                     size: 10,
                                   ),
-                                  const SizedBox(width: 8),
+                                  const SizedBox(width: 6),
                                   Text(
                                     _formatRecordingDuration(_recordingDuration),
                                     style: TextStyle(
                                       color: AppTheme.primaryText(isDark),
                                       fontWeight: FontWeight.w600,
+                                      fontSize: 13,
                                     ),
                                   ),
-                                  const SizedBox(width: 10),
+                                  const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      'Recording voice message…',
+                                      'Recording voice…',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
                                         color: AppTheme.secondaryText(isDark),
-                                        fontSize: 13,
+                                        fontSize: 12,
                                       ),
                                     ),
                                   ),
                                   IconButton(
                                     visualDensity: VisualDensity.compact,
                                     padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
                                     onPressed: _cancelVoiceRecording,
                                     icon: Icon(
                                       CupertinoIcons.xmark,
-                                      size: 16,
+                                      size: 15,
                                       color: AppTheme.secondaryText(isDark),
                                     ),
                                   ),
@@ -688,8 +671,10 @@ class _ChatComposerState extends State<ChatComposer> {
                                 controller: widget.inputController,
                                 focusNode: widget.inputFocusNode,
                                 onChanged: _onInputChanged,
+                                minLines: 1,
+                                maxLines: 5,
                                 style: TextStyle(
-                                  fontSize: 16,
+                                  fontSize: 15,
                                   color: AppTheme.primaryText(isDark),
                                   letterSpacing: -0.2,
                                 ),
@@ -697,10 +682,10 @@ class _ChatComposerState extends State<ChatComposer> {
                                   hintText: widget.editingMessage == null ? 'iMessage' : 'Edit message',
                                   border: InputBorder.none,
                                   isDense: true,
-                                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                                  hintStyle: TextStyle(
-                                    color: AppTheme.secondaryText(isDark),
-                                    fontSize: 16,
+                                  contentPadding: const EdgeInsets.symmetric(vertical: 6),
+                                  hintStyle: const TextStyle(
+                                    color: Color(0xFF8E8E93),
+                                    fontSize: 15,
                                     letterSpacing: -0.2,
                                   ),
                                 ),
@@ -716,22 +701,19 @@ class _ChatComposerState extends State<ChatComposer> {
                                       : _toggleVoiceRecording),
                               child: widget.isSending
                                   ? const SizedBox(
-                                      width: 28,
-                                      height: 28,
-                                      child: Padding(
-                                        padding: EdgeInsets.all(4),
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: AppTheme.primaryColor,
-                                        ),
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Color(0xFF007AFF),
                                       ),
                                     )
-                                  : widget.editingMessage != null || widget.inputController.text.trim().isNotEmpty
+                                  : (widget.editingMessage != null || widget.inputController.text.trim().isNotEmpty
                                       ? Container(
                                           width: 28,
                                           height: 28,
                                           decoration: const BoxDecoration(
-                                            color: AppTheme.primaryColor,
+                                            color: Color(0xFF007AFF),
                                             shape: BoxShape.circle,
                                           ),
                                           child: Center(
@@ -744,26 +726,47 @@ class _ChatComposerState extends State<ChatComposer> {
                                             ),
                                           ),
                                         )
-                                      : Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                                          child: Icon(
-                                            CupertinoIcons.waveform,
-                                            size: 20,
-                                            color: AppTheme.secondaryText(isDark),
-                                          ),
-                                        ),
-                            ),
+                                      : const VoiceBars())),
                           ],
                         ],
                       ),
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class VoiceBars extends StatelessWidget {
+  const VoiceBars({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    const heights = [8.0, 14.0, 22.0, 13.0, 18.0, 8.0];
+
+    return SizedBox(
+      height: 24,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: heights
+            .map(
+              (height) => Container(
+                width: 2,
+                height: height,
+                margin: const EdgeInsets.symmetric(horizontal: 1),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFAEB3BB),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            )
+            .toList(),
+      ),
     );
   }
 }

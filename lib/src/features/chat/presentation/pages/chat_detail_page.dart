@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
@@ -17,6 +18,7 @@ import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/models/server_models.dart';
+import '../../domain/services/attachment_cache_service.dart';
 import '../../domain/services/e2e_crypto_service.dart';
 import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/server_api_service.dart';
@@ -26,6 +28,7 @@ import '../widgets/chat_bubble.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/chat_detail_header.dart';
 import '../widgets/chat_message_list.dart';
+import '../widgets/chat_wallpaper_widget.dart';
 import 'chat_info_page.dart';
 
 class ChatDetailPage extends StatefulWidget {
@@ -40,6 +43,7 @@ class ChatDetailPage extends StatefulWidget {
 
 class _ChatDetailPageState extends State<ChatDetailPage>
     with WidgetsBindingObserver {
+  final DateTime _sessionStartTime = DateTime.now();
   late List<ChatMessage> _messages;
   late String _chatName;
   late String _chatAvatar;
@@ -245,6 +249,27 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     setState(() => _replyingMessage = null);
   }
 
+  int _compareChatMessages(ChatMessage a, ChatMessage b) {
+    final timeCmp = a.timestamp.compareTo(b.timestamp);
+    if (timeCmp != 0) return timeCmp;
+
+    final intA = int.tryParse(a.id);
+    final intB = int.tryParse(b.id);
+    if (intA != null && intB != null) {
+      return intA.compareTo(intB);
+    }
+
+    if (a.id.startsWith('temp_') || a.id.startsWith('local_')) {
+      if (!b.id.startsWith('temp_') && !b.id.startsWith('local_')) {
+        return 1;
+      }
+    } else if (b.id.startsWith('temp_') || b.id.startsWith('local_')) {
+      return -1;
+    }
+
+    return a.id.compareTo(b.id);
+  }
+
   void _handleIncomingMessage(ServerMessageModel serverMessage) {
     if (!mounted ||
         serverMessage.chatHeadId.toString() != widget.conversation.id) {
@@ -307,7 +332,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     if (existingIndex >= 0) {
       setState(() {
         _messages[existingIndex] = incoming;
-        _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        _messages.sort(_compareChatMessages);
       });
       if (wasNearLatest || incoming.senderId == 'user') _scrollToBottom();
       return;
@@ -315,7 +340,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
     setState(() {
       _messages = [..._messages, incoming]
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        ..sort(_compareChatMessages);
       if (!wasNearLatest && incoming.senderId != 'user') {
         _newMessagesWhileAway++;
       }
@@ -482,7 +507,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       final merged = mergedById.values
           .where((m) => !isMessageExpired(m, chatDisappearType: _disappearType, keepReadSessionMessages: true))
           .toList()
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        ..sort(_compareChatMessages);
 
       setState(() {
         _messages = merged;
@@ -531,7 +556,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           existingById[m.id] = m;
         }
         final merged = existingById.values.toList()
-          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+          ..sort(_compareChatMessages);
 
         setState(() {
           _messages = merged;
@@ -565,7 +590,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       final messages = byId.values
           .where((m) => !isMessageExpired(m, chatDisappearType: _disappearType, keepReadSessionMessages: true))
           .toList()
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        ..sort(_compareChatMessages);
       setState(() {
         _messages = messages;
         _isLoadingMessages = false;
@@ -611,7 +636,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       for (final message in cached) message.id: message,
     };
     final messages = messagesById.values.toList()
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      ..sort(_compareChatMessages);
     setState(() => _messages = messages);
     _scrollToBottom();
   }
@@ -730,7 +755,13 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     );
 
     if (cachedFile.existsSync()) {
-      return cachedFile.path;
+      if (cachedFile.lengthSync() > 16) {
+        return cachedFile.path;
+      } else {
+        try {
+          cachedFile.deleteSync();
+        } catch (_) {}
+      }
     }
 
     try {
@@ -766,8 +797,14 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
       final response = await http.get(Uri.parse(downloadUrl), headers: headers);
       if (response.statusCode >= 200 && response.statusCode < 300) {
+        var bytes = response.bodyBytes;
+        final secretKey = 'chat_key_${widget.conversation.id}';
+        final decrypted = E2eCryptoService.instance.decryptFileBytes(bytes, secretKey);
+        if (decrypted.length > 16) {
+          bytes = decrypted;
+        }
         await cachedFile.parent.create(recursive: true);
-        await cachedFile.writeAsBytes(response.bodyBytes, flush: true);
+        await cachedFile.writeAsBytes(bytes, flush: true);
         return cachedFile.path;
       }
     } catch (_) {}
@@ -962,6 +999,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                   mediaUrl: message.mediaUrl,
                   fileName: message.fileName,
                   isRead: message.isRead,
+                  isDelivered: message.isDelivered,
                   isEdited: message.isEdited,
                   isDeleted: message.isDeleted,
                   isSaved: message.isSaved,
@@ -1307,6 +1345,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           ),
         );
       });
+      await LocalChatStorage.instance.updateConversation(
+        widget.conversation.id,
+        (current) => current.copyWith(disappearType: newType),
+      );
       await LocalChatStorage.instance.cacheMessages(
         widget.conversation.id,
         _messages,
@@ -1314,13 +1356,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         keepReadSessionMessages: true,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Disappearing messages set to $label'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        AppToast.show('Disappearing messages set to $label');
       }
     }
   }
@@ -1600,12 +1636,11 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     required String fileType,
     String? caption,
   }) async {
-    if (_isSending) return;
     if (mounted) setState(() => _isSending = true);
     try {
       final secretKey = 'chat_key_${widget.conversation.id}';
 
-      // 1. Encrypt file bytes before uploading to server
+      // 1. Encrypt file bytes
       final rawBytes = await file.readAsBytes();
       final encryptedBytes = E2eCryptoService.instance.encryptFileBytes(
         rawBytes,
@@ -1618,21 +1653,61 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       );
       await tempEncFile.writeAsBytes(encryptedBytes, flush: true);
 
-      // 2. Upload encrypted file to server
-      final uploadedPath = await ServerApiService.instance.uploadFile(
-        tempEncFile,
-        filename: fileName,
-      );
+      final messageText = (caption != null && caption.trim().isNotEmpty)
+          ? caption.trim()
+          : (fileType.startsWith('image/')
+              ? 'Photo'
+              : fileType.startsWith('video/')
+                  ? 'Video'
+                  : fileType.startsWith('audio/')
+                      ? 'Voice message'
+                      : fileName);
+
+      // 2. Send file directly via POST /api/chats/:chat_id/messages (multipart form-data)
+      String? uploadedPath;
       try {
-        await tempEncFile.delete();
-      } catch (_) {}
+        final serverMessage = await ServerApiService.instance.sendMessageREST(
+          chatId: int.tryParse(widget.conversation.id) ?? 0,
+          message: E2eCryptoService.instance.encryptText(messageText, secretKey),
+          file: tempEncFile,
+          fileName: fileName,
+          fileType: fileType,
+          replyToId: _replyingMessage == null ? null : int.tryParse(_replyingMessage!.id),
+        );
+        uploadedPath = serverMessage.filePath;
+      } catch (e) {
+        debugPrint('[DIRECT FILE SEND FALLBACK] $e');
+        // Fallback to upload then send
+        uploadedPath = await ServerApiService.instance.uploadFile(
+          tempEncFile,
+          filename: fileName,
+        );
+        if (uploadedPath != null && uploadedPath.isNotEmpty) {
+          final sent = await ServerChatManager.instance.sendMessage(
+            chatId: widget.conversation.id,
+            peerName: _chatName,
+            text: messageText,
+            filePath: uploadedPath,
+            fileName: fileName,
+            fileType: fileType,
+            peerUserId: widget.conversation.peerUserId,
+            replyToId: _replyingMessage == null
+                ? null
+                : int.tryParse(_replyingMessage!.id),
+          );
+          if (!sent) throw Exception('The file message could not be sent.');
+        }
+      } finally {
+        try {
+          await tempEncFile.delete();
+        } catch (_) {}
+      }
 
       if (uploadedPath == null || uploadedPath.isEmpty) {
-        throw Exception('The file could not be uploaded. Please try again.');
+        throw Exception('The file could not be sent. Please try again.');
       }
 
       // 3. Save unencrypted original file copy in local chat_attachments
-      // under standardized key so sender's device already has the local file!
       final documents = await getApplicationDocumentsDirectory();
       final attachmentDirectory = Directory(
         '${documents.path}${Platform.pathSeparator}chat_attachments',
@@ -1650,29 +1725,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       final localCopy = File(localCopyPath);
       await file.copy(localCopy.path);
 
-      final messageText = (caption != null && caption.trim().isNotEmpty)
-          ? caption.trim()
-          : (fileType.startsWith('image/')
-              ? 'Photo'
-              : fileType.startsWith('video/')
-                  ? 'Video'
-                  : fileType.startsWith('audio/')
-                      ? 'Voice message'
-                      : fileName);
+      // Update AttachmentCacheService so sender's device maps mediaUrl to local path instantly
+      AttachmentCacheService.instance.updateCache(uploadedPath, localCopy.path);
 
-      final sent = await ServerChatManager.instance.sendMessage(
-        chatId: widget.conversation.id,
-        peerName: _chatName,
-        text: messageText,
-        filePath: uploadedPath,
-        fileName: fileName,
-        fileType: fileType,
-        peerUserId: widget.conversation.peerUserId,
-        replyToId: _replyingMessage == null
-            ? null
-            : int.tryParse(_replyingMessage!.id),
-      );
-      if (!sent) throw Exception('The file message could not be sent.');
       if (mounted) setState(() => _replyingMessage = null);
       await _showCachedMessages();
     } catch (error) {
@@ -1706,6 +1761,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       ),
     );
     if (!mounted) return;
+    await _syncChatDetails();
+    await _showCachedMessages();
     if (result == true) {
       setState(() {
         _historyLoadGeneration++;
@@ -1714,8 +1771,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         _messages.clear();
         _messagesReceivedWhileLoading.clear();
       });
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Chat cleared.')));
+      AppToast.show('Chat cleared.');
     } else if (result is String) {
       final msgId = int.tryParse(result);
       if (msgId != null) {
@@ -1797,9 +1853,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
     final results = _messages.where((m) {
       if (m.isDeleted) return false;
-      final textMatch = m.content.toLowerCase().contains(q);
-      final fileMatch = m.fileName?.toLowerCase().contains(q) == true;
-      return textMatch || fileMatch;
+      if (m.content.isEmpty || m.content == '[Attachment]') return false;
+      if (m.type != 'text' && !m.type.startsWith('text/')) return false;
+      return m.content.toLowerCase().contains(q);
     }).toList();
 
     setState(() {
@@ -2040,46 +2096,50 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       child: ShakePanicWrapper(
       child: Scaffold(
         backgroundColor: AppTheme.chatCanvas(isDark),
-        body: Stack(
-          children: [
-            // Messages List (paints full screen behind header and composer)
-            Positioned.fill(
-              child: Column(
-                children: [
-                  if (_isSearchingMessages) ...[
-                    SizedBox(height: MediaQuery.paddingOf(context).top + 84.0),
-                    _buildInChatSearchBanner(isDark),
-                  ],
-                  Expanded(
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: _isPeerTyping,
-                      builder: (context, isTyping, _) {
-                        return ChatMessageList(
-                          messages: _messages,
-                          isLoadingMessages: _isLoadingMessages,
-                          isLoadingMore: _isLoadingMore,
-                          isPeerTyping: isTyping,
-                          showJumpToLatest: _showJumpToLatest,
-                          newMessagesWhileAway: _newMessagesWhileAway,
-                          historyError: _historyError,
-                          scrollController: _scrollController,
-                          conversation: widget.conversation,
-                          groupMemberNames: _groupMemberNames,
-                          chatName: _chatName,
-                          chatAvatar: _chatAvatar,
-                          onShowMessageActions: _showMessageActions,
-                          onBeginReply: _beginReply,
-                          onTapReply: _scrollToMessage,
-                          highlightedMessageId: _highlightedMessageId,
-                          onJumpToLatest: _jumpToLatest,
-                          onReloadMessages: _reloadMessages,
-                        );
-                      },
+        body: ValueListenableBuilder<String>(
+          valueListenable: AppPreferences.chatWallpaperNotifier,
+          builder: (context, _, __) {
+            return ValueListenableBuilder<int>(
+              valueListenable: AppPreferences.chatBubbleColorNotifier,
+              builder: (context, _, __) {
+                return Stack(
+                  children: [
+                    // Background Wallpaper Layer
+                    Positioned.fill(
+                      child: ChatWallpaperWidget(
+                        chatId: widget.conversation.id,
+                        isDark: isDark,
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
+                    // Messages List (paints full screen behind header and composer)
+                    Positioned.fill(
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: _isPeerTyping,
+                        builder: (context, isTyping, _) {
+                          return ChatMessageList(
+                            messages: _messages,
+                            isLoadingMessages: _isLoadingMessages,
+                            isLoadingMore: _isLoadingMore,
+                            isPeerTyping: isTyping,
+                            showJumpToLatest: _showJumpToLatest,
+                            newMessagesWhileAway: _newMessagesWhileAway,
+                            historyError: _historyError,
+                            scrollController: _scrollController,
+                            conversation: widget.conversation,
+                            groupMemberNames: _groupMemberNames,
+                            chatName: _chatName,
+                            chatAvatar: _chatAvatar,
+                            onShowMessageActions: _showMessageActions,
+                            onBeginReply: _beginReply,
+                            onTapReply: _scrollToMessage,
+                            highlightedMessageId: _highlightedMessageId,
+                            onJumpToLatest: _jumpToLatest,
+                            onReloadMessages: _reloadMessages,
+                            sessionStartTime: _sessionStartTime,
+                          );
+                        },
+                      ),
+                    ),
 
             // Floating Frosted Header
             Positioned(
@@ -2096,6 +2156,14 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                 onSearchMessages: _toggleMessageSearch,
               ),
             ),
+
+            if (_isSearchingMessages)
+              Positioned(
+                top: MediaQuery.paddingOf(context).top + 62.0,
+                left: 12,
+                right: 12,
+                child: _buildInChatSearchBanner(isDark),
+              ),
 
             // Bottom Input Bar Composer
             Positioned(
@@ -2120,7 +2188,11 @@ class _ChatDetailPageState extends State<ChatDetailPage>
               ),
             ),
           ],
-        ),
+        );
+      },
+    );
+  },
+),
       ),
     ),
   );

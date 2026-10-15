@@ -480,7 +480,8 @@ class ServerChatManager {
                   : cachedMessage?.type ?? 'text'),
           mediaUrl: sm.filePath ?? cachedMessage?.mediaUrl,
           fileName: sm.fileName ?? cachedMessage?.fileName,
-          isRead: true,
+          isRead: isMe ? (sm.isRead || cachedMessage?.isRead == true) : true,
+          isDelivered: isMe ? (sm.isDelivered || sm.isRead || cachedMessage?.isDelivered == true || cachedMessage?.isRead == true) : true,
           isEdited: sm.isEdited,
           isDeleted: sm.isDeleted,
           isSaved: sm.isSaved,
@@ -567,6 +568,7 @@ class ServerChatManager {
     required String chatId,
     required String peerName,
     required String text,
+    File? file,
     String? filePath,
     String? fileName,
     String? fileType,
@@ -590,6 +592,7 @@ class ServerChatManager {
         serverMessage = await ServerApiService.instance.sendMessageREST(
           chatId: numericId,
           message: encryptedText,
+          file: file,
           filePath: filePath,
           fileName: fileName,
           fileType: fileType,
@@ -641,6 +644,7 @@ class ServerChatManager {
       mediaUrl: filePath,
       fileName: fileName,
       isRead: false,
+      isDelivered: serverMessage != null,
       isEdited: serverMessage?.isEdited ?? false,
       replyToId: serverMessage?.replyToId ?? replyToId,
     );
@@ -910,7 +914,8 @@ class ServerChatManager {
               (sm.filePath != null ? 'application/octet-stream' : 'text'),
           mediaUrl: sm.filePath,
           fileName: sm.fileName,
-          isRead: false,
+          isRead: isMe ? sm.isRead : false,
+          isDelivered: true,
           isEdited: sm.isEdited,
           isDeleted: sm.isDeleted,
           isSaved: sm.isSaved,
@@ -985,6 +990,18 @@ class ServerChatManager {
         final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
         if (chatId != null) {
           await LocalChatStorage.instance.markAllOutgoingMessagesAsRead(chatId);
+        }
+      }),
+    );
+
+    // 4b. Messages delivered
+    _socketSubscriptions.add(
+      SocketChatService.instance.onDelivered.listen((data) async {
+        if (generation != _socketGeneration) return;
+        debugPrint('[SERVER CHAT] Socket messages delivered event: $data');
+        final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
+        if (chatId != null) {
+          await LocalChatStorage.instance.markAllOutgoingMessagesAsDelivered(chatId);
         }
       }),
     );

@@ -9,6 +9,7 @@ import '../../domain/services/server_chat_manager.dart';
 import 'settings/appearance_settings_page.dart';
 import 'settings/disguise_settings_page.dart';
 import 'settings/emergency_settings_page.dart';
+import 'settings/media_auto_download_settings_page.dart';
 import 'settings/personal_settings_page.dart';
 
 class SecretSettingsPage extends StatefulWidget {
@@ -107,6 +108,20 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                               icon: Icons.shield_outlined,
                               isDark: isDark,
                               targetPage: const DisguiseSettingsPage(),
+                            ),
+                            Divider(
+                              height: 1,
+                              indent: 52,
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : Colors.black.withValues(alpha: 0.06),
+                            ),
+                            _buildSettingListTile(
+                              context: context,
+                              title: 'Media Auto-Download',
+                              icon: Icons.file_download_outlined,
+                              isDark: isDark,
+                              targetPage: const MediaAutoDownloadSettingsPage(),
                             ),
                             Divider(
                               height: 1,

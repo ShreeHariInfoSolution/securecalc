@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
+import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 
@@ -77,6 +78,9 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                               onChanged: (val) {
                                 setState(() => _panicShakeEnabled = val);
                                 AppPreferences.setPanicShake(val);
+                                AppToast.show(val
+                                    ? 'Shake panic sensor enabled'
+                                    : 'Shake panic sensor disabled');
                               },
                             ),
                             Divider(
@@ -100,6 +104,9 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                               onChanged: (val) {
                                 setState(() => _disguiseTitleEnabled = val);
                                 AppPreferences.setDisguiseTitle(val);
+                                AppToast.show(val
+                                    ? 'Calculator disguise enabled'
+                                    : 'Calculator disguise disabled');
                               },
                             ),
                             Divider(
@@ -123,6 +130,9 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                               onChanged: (val) {
                                 setState(() => _preventScreenshots = val);
                                 AppPreferences.setPreventScreenshots(val);
+                                AppToast.show(val
+                                    ? 'Screenshot prevention enabled'
+                                    : 'Screenshot prevention disabled');
                               },
                             ),
                             Divider(
@@ -146,6 +156,9 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                               onChanged: (val) {
                                 setState(() => _edgePanelEnabled = val);
                                 AppPreferences.setEdgePanelEnabled(val);
+                                AppToast.show(val
+                                    ? 'Vault edge bar enabled'
+                                    : 'Vault edge bar disabled');
                               },
                             ),
                             Divider(
@@ -186,6 +199,8 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                                   if (val != null) {
                                     setState(() => _disappearingDuration = val);
                                     AppPreferences.setDisappearingTimer(val);
+                                    AppToast.show(
+                                        'Disappearing timer set to $val');
                                   }
                                 },
                               ),

@@ -50,6 +50,24 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer> {
   late int _currentIndex;
   bool _showControls = true;
   bool _isSharing = false;
+  double _dragOffset = 0.0;
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      _dragOffset += details.delta.dy;
+    });
+  }
+
+  void _onVerticalDragEnd(DragEndDetails details) {
+    if (_dragOffset.abs() > 90 || (details.primaryVelocity != null && details.primaryVelocity!.abs() > 300)) {
+      HapticFeedback.lightImpact();
+      Navigator.of(context).pop();
+    } else {
+      setState(() {
+        _dragOffset = 0.0;
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -142,118 +160,126 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer> {
   Widget build(BuildContext context) {
     if (widget.photos.isEmpty) return const SizedBox();
 
+    final double bgOpacity = (1.0 - (_dragOffset.abs() / 350.0)).clamp(0.2, 1.0);
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Colors.black.withValues(alpha: bgOpacity),
       body: SafeArea(
         child: GestureDetector(
           onTap: () => setState(() => _showControls = !_showControls),
-          child: Stack(
-            children: [
-              // PageView Gallery
-              PageView.builder(
-                controller: _pageController,
-                itemCount: widget.photos.length,
-                onPageChanged: (index) {
-                  setState(() => _currentIndex = index);
-                },
-                itemBuilder: (context, index) {
-                  final photo = widget.photos[index];
-                  return _GalleryPhotoItem(
-                    photoMessage: photo,
-                    onLongPress: _shareCurrentPhoto,
-                  );
-                },
-              ),
+          onVerticalDragUpdate: _onVerticalDragUpdate,
+          onVerticalDragEnd: _onVerticalDragEnd,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 50),
+            transform: Matrix4.translationValues(0, _dragOffset, 0),
+            child: Stack(
+              children: [
+                // PageView Gallery
+                PageView.builder(
+                  controller: _pageController,
+                  itemCount: widget.photos.length,
+                  onPageChanged: (index) {
+                    setState(() => _currentIndex = index);
+                  },
+                  itemBuilder: (context, index) {
+                    final photo = widget.photos[index];
+                    return _GalleryPhotoItem(
+                      photoMessage: photo,
+                      onLongPress: _shareCurrentPhoto,
+                    );
+                  },
+                ),
 
-              // Top Header Bar
-              if (_showControls)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.black87, Colors.transparent],
+                // Top Header Bar
+                if (_showControls)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.black87, Colors.transparent],
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          // Close button
+                          GestureDetector(
+                            onTap: () => Navigator.of(context).pop(),
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: const BoxDecoration(
+                                color: Colors.white24,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.close_rounded,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+
+                          // Counter index
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '${_currentIndex + 1} of ${widget.photos.length}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                _formatTimestamp(widget.photos[_currentIndex].timestamp),
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          // Share button
+                          GestureDetector(
+                            onTap: _shareCurrentPhoto,
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: const BoxDecoration(
+                                color: Colors.white24,
+                                shape: BoxShape.circle,
+                              ),
+                              child: _isSharing
+                                  ? const Padding(
+                                      padding: EdgeInsets.all(9.0),
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation(Colors.white),
+                                      ),
+                                    )
+                                  : const Icon(
+                                      CupertinoIcons.share,
+                                      color: Colors.white,
+                                      size: 18,
+                                    ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        // Close button
-                        GestureDetector(
-                          onTap: () => Navigator.of(context).pop(),
-                          child: Container(
-                            width: 38,
-                            height: 38,
-                            decoration: const BoxDecoration(
-                              color: Colors.white24,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.close_rounded,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                        ),
-
-                        // Counter index
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '${_currentIndex + 1} of ${widget.photos.length}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              _formatTimestamp(widget.photos[_currentIndex].timestamp),
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        // Share button
-                        GestureDetector(
-                          onTap: _shareCurrentPhoto,
-                          child: Container(
-                            width: 38,
-                            height: 38,
-                            decoration: const BoxDecoration(
-                              color: Colors.white24,
-                              shape: BoxShape.circle,
-                            ),
-                            child: _isSharing
-                                ? const Padding(
-                                    padding: EdgeInsets.all(9.0),
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor:
-                                          AlwaysStoppedAnimation(Colors.white),
-                                    ),
-                                  )
-                                : const Icon(
-                                    CupertinoIcons.share,
-                                    color: Colors.white,
-                                    size: 18,
-                                  ),
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

@@ -1,13 +1,17 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
+import 'package:securecalc/src/features/chat/domain/services/attachment_cache_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
 
 String? resolveAvatarUrl(String? raw) {
   if (raw == null || raw.trim().isEmpty) return null;
   final trimmed = raw.trim();
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-  if (File(trimmed).existsSync()) return trimmed;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://'))
+    return trimmed;
 
   final apiBase = ServerApiService.baseUrl.replaceFirst(RegExp(r'/+$'), '');
   final origin = apiBase.replaceFirst(RegExp(r'/api$'), '');
@@ -22,6 +26,10 @@ String? resolveAvatarUrl(String? raw) {
     return '$origin$trimmed';
   }
   if (trimmed.startsWith('/')) {
+    // Check if it's an absolute local path (e.g. /data/user/0/...)
+    if (trimmed.contains('/data/') || trimmed.contains('/storage/')) {
+      return trimmed;
+    }
     return '$origin$trimmed';
   }
 
@@ -36,6 +44,15 @@ String? resolveAvatarUrl(String? raw) {
   if (clean.startsWith('uploads/')) {
     return '$origin/$clean';
   }
+
+  // If it's a typical local Windows or Android path like C:\ or /data/user/...
+  if (RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(trimmed) ||
+      trimmed.startsWith('/data/') ||
+      trimmed.startsWith('/storage/') ||
+      trimmed.startsWith('/Users/')) {
+    return trimmed;
+  }
+
   return '$apiBase/files/$clean';
 }
 
@@ -91,11 +108,11 @@ class IosAvatar extends StatelessWidget {
     final badgeSize = size > 44 ? 14.0 : 10.0;
 
     final resolvedImage = resolveAvatarUrl(imagePath);
-    final hasLocalImage = resolvedImage != null &&
-        !resolvedImage.startsWith('http') &&
-        File(resolvedImage).existsSync();
-    final hasNetworkImage = resolvedImage != null &&
-        (resolvedImage.startsWith('http://') || resolvedImage.startsWith('https://'));
+    final hasNetworkImage =
+        resolvedImage != null &&
+        (resolvedImage.startsWith('http://') ||
+            resolvedImage.startsWith('https://'));
+    final hasLocalImage = resolvedImage != null && !hasNetworkImage;
 
     final baseColor = _getDeterministicColor(name);
 
@@ -144,22 +161,10 @@ class IosAvatar extends StatelessWidget {
         ),
       );
     } else if (hasNetworkImage) {
-      final headers = ServerApiService.instance.authToken != null
-          ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
-          : null;
-      avatarWidget = ClipOval(
-        child: Image.network(
-          resolvedImage,
-          headers: headers,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => fallbackInitials,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return fallbackInitials;
-          },
-        ),
+      avatarWidget = _CachedNetworkAvatar(
+        url: resolvedImage,
+        size: size,
+        fallback: fallbackInitials,
       );
     } else {
       avatarWidget = fallbackInitials;
@@ -183,13 +188,129 @@ class IosAvatar extends StatelessWidget {
                   color: AppTheme.onlineGreen,
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
+                    color: isDark
+                        ? AppTheme.darkBackground
+                        : AppTheme.lightSurface,
                     width: 2.0,
                   ),
                 ),
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _CachedNetworkAvatar extends StatefulWidget {
+  final String url;
+  final double size;
+  final Widget fallback;
+
+  const _CachedNetworkAvatar({
+    required this.url,
+    required this.size,
+    required this.fallback,
+  });
+
+  @override
+  State<_CachedNetworkAvatar> createState() => _CachedNetworkAvatarState();
+}
+
+class _CachedNetworkAvatarState extends State<_CachedNetworkAvatar> {
+  String? _localPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveAvatar();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CachedNetworkAvatar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _resolveAvatar();
+    }
+  }
+
+  Future<void> _resolveAvatar() async {
+    final cached = AttachmentCacheService.instance.resolveLocalPathSync(
+      widget.url,
+    );
+    if (cached != null) {
+      if (mounted) setState(() => _localPath = cached);
+      return;
+    }
+    final resolved = await AttachmentCacheService.instance.resolveLocalPath(
+      widget.url,
+    );
+    if (resolved != null) {
+      if (mounted) setState(() => _localPath = resolved);
+      return;
+    }
+
+    // Download and cache locally
+    try {
+      final headers = ServerApiService.instance.authToken != null
+          ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
+          : <String, String>{};
+      final response = await http.get(Uri.parse(widget.url), headers: headers);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final bytes = response.bodyBytes;
+        final dir = await getApplicationDocumentsDirectory();
+        final avatarsDir = Directory(
+          '${dir.path}${Platform.pathSeparator}avatars',
+        );
+        if (!avatarsDir.existsSync()) {
+          await avatarsDir.create(recursive: true);
+        }
+        final safeName = widget.url
+            .split('/')
+            .last
+            .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+        final file = File(
+          '${avatarsDir.path}${Platform.pathSeparator}$safeName',
+        );
+        await file.writeAsBytes(bytes, flush: true);
+        AttachmentCacheService.instance.updateCache(widget.url, file.path);
+        if (mounted) {
+          setState(() => _localPath = file.path);
+        }
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_localPath != null) {
+      return ClipOval(
+        child: Image.file(
+          File(_localPath!),
+          width: widget.size,
+          height: widget.size,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => widget.fallback,
+        ),
+      );
+    }
+
+    final headers = ServerApiService.instance.authToken != null
+        ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
+        : null;
+
+    return ClipOval(
+      child: Image.network(
+        widget.url,
+        headers: headers,
+        width: widget.size,
+        height: widget.size,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => widget.fallback,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return widget.fallback;
+        },
       ),
     );
   }

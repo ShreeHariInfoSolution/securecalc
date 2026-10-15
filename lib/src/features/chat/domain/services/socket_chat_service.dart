@@ -18,6 +18,7 @@ class SocketChatService {
   final _messageDeletedStreamController = StreamController<Map<String, dynamic>>.broadcast();
   final _messageReactionStreamController = StreamController<Map<String, dynamic>>.broadcast();
   final _readStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _deliveredStreamController = StreamController<Map<String, dynamic>>.broadcast();
   final _typingStreamController = StreamController<Map<String, dynamic>>.broadcast();
   final _presenceStreamController = StreamController<Map<String, dynamic>>.broadcast();
 
@@ -26,6 +27,7 @@ class SocketChatService {
   Stream<Map<String, dynamic>> get onMessageDeleted => _messageDeletedStreamController.stream;
   Stream<Map<String, dynamic>> get onMessageReaction => _messageReactionStreamController.stream;
   Stream<Map<String, dynamic>> get onRead => _readStreamController.stream;
+  Stream<Map<String, dynamic>> get onDelivered => _deliveredStreamController.stream;
   Stream<Map<String, dynamic>> get onTyping => _typingStreamController.stream;
   Stream<Map<String, dynamic>> get onPresence => _presenceStreamController.stream;
 
@@ -186,6 +188,18 @@ class SocketChatService {
         _readStreamController.add(Map<String, dynamic>.from(data));
       }
     });
+
+    // 5b. Messages Delivered
+    void handleDelivered(dynamic data) {
+      debugPrint('[SOCKET] Event messages_delivered: $data');
+      if (data is Map) {
+        _deliveredStreamController.add(Map<String, dynamic>.from(data));
+      }
+    }
+
+    _socket!.on('messages_delivered', handleDelivered);
+    _socket!.on('message_delivered', handleDelivered);
+    _socket!.on('delivered', handleDelivered);
 
     // 6. Typing Indicator
     _socket!.on('typing', (data) {

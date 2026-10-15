@@ -16,6 +16,7 @@ class ChatConversation {
   final Map<int, String> memberNames;
   final bool isPinned;
   final bool isMuted;
+  final bool isArchived;
   final List<ChatMessage> messages;
 
   const ChatConversation({
@@ -34,6 +35,7 @@ class ChatConversation {
     this.memberNames = const {},
     this.isPinned = false,
     this.isMuted = false,
+    this.isArchived = false,
     required this.messages,
   });
 
@@ -53,6 +55,7 @@ class ChatConversation {
     Map<int, String>? memberNames,
     bool? isPinned,
     bool? isMuted,
+    bool? isArchived,
     List<ChatMessage>? messages,
   }) {
     return ChatConversation(
@@ -71,6 +74,7 @@ class ChatConversation {
       memberNames: memberNames ?? this.memberNames,
       isPinned: isPinned ?? this.isPinned,
       isMuted: isMuted ?? this.isMuted,
+      isArchived: isArchived ?? this.isArchived,
       messages: messages ?? this.messages,
     );
   }

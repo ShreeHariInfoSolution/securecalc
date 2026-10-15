@@ -110,6 +110,8 @@ class LocalChatStorage {
           final name = map['name'] as String;
           final avatarUrl = (map['avatarUrl'] as String?) ?? '';
           final isPinned = (map['isPinned'] as bool?) ?? false;
+          final isMuted = (map['isMuted'] as bool?) ?? false;
+          final isArchived = (map['isArchived'] as bool?) ?? false;
 
           final messages = await loadMessages(deviceId);
           final lastMsg = messages.isNotEmpty
@@ -147,6 +149,9 @@ class LocalChatStorage {
                 ),
               )..remove(-1),
               isPinned: isPinned,
+              isMuted: isMuted,
+              isArchived: isArchived,
+              disappearType: (map['disappearType'] as int?) ?? 0,
               messages: messages,
             ),
           );
@@ -190,6 +195,7 @@ class LocalChatStorage {
             'lastActivityAt': c.lastActivityAt?.millisecondsSinceEpoch,
             'unreadCount': c.unreadCount,
             'isPinned': c.isPinned,
+            'disappearType': c.disappearType,
             'isOnline': c.isOnline,
             'isTyping': c.isTyping,
             'peerUserId': c.peerUserId,
@@ -246,6 +252,7 @@ class LocalChatStorage {
           mediaUrl: m['mediaUrl'] as String?,
           fileName: m['fileName'] as String?,
           isRead: (m['isRead'] as bool?) ?? false,
+          isDelivered: (m['isDelivered'] as bool?) ?? ((m['isRead'] as bool?) ?? false),
           isEdited: (m['isEdited'] as bool?) ?? false,
           isDeleted: (m['isDeleted'] as bool?) ?? false,
           isSaved: (m['isSaved'] as bool?) ?? false,
@@ -300,6 +307,7 @@ class LocalChatStorage {
             'mediaUrl': message.mediaUrl,
             'fileName': message.fileName,
             'isRead': message.isRead,
+            'isDelivered': message.isDelivered,
             'isEdited': message.isEdited,
             'isDeleted': message.isDeleted,
             'isSaved': message.isSaved,
@@ -396,6 +404,7 @@ class LocalChatStorage {
         'mediaUrl': m.mediaUrl,
         'fileName': m.fileName,
         'isRead': m.isRead,
+        'isDelivered': m.isDelivered,
         'isEdited': m.isEdited,
         'isDeleted': m.isDeleted,
         'isSaved': m.isSaved,
@@ -459,7 +468,7 @@ class LocalChatStorage {
     _persistConversations(conversations);
   }
 
-  Future<void> markAllOutgoingMessagesAsRead(String deviceId) async {
+  Future<void> markAllOutgoingMessagesAsDelivered(String deviceId) async {
     final epoch = _accountEpoch;
     final messageKey = _messageKey(deviceId);
     _prefs ??= await SharedPreferences.getInstance();
@@ -469,8 +478,8 @@ class LocalChatStorage {
     var updated = false;
 
     for (var i = 0; i < messages.length; i++) {
-      if (messages[i].senderId == 'user' && !messages[i].isRead) {
-        messages[i] = messages[i].copyWith(isRead: true);
+      if (messages[i].senderId == 'user' && !messages[i].isDelivered) {
+        messages[i] = messages[i].copyWith(isDelivered: true);
         updated = true;
       }
     }
@@ -486,6 +495,7 @@ class LocalChatStorage {
           'mediaUrl': m.mediaUrl,
           'fileName': m.fileName,
           'isRead': m.isRead,
+          'isDelivered': m.isDelivered,
           'isEdited': m.isEdited,
           'isDeleted': m.isDeleted,
           'reaction': m.reaction,
@@ -505,6 +515,62 @@ class LocalChatStorage {
         _persistConversations(conversations);
       }
     }
+  }
+
+  Future<void> markAllOutgoingMessagesAsRead(String deviceId) async {
+    final epoch = _accountEpoch;
+    final messageKey = _messageKey(deviceId);
+    _prefs ??= await SharedPreferences.getInstance();
+    if (epoch != _accountEpoch) return;
+    final messages = await loadMessages(deviceId);
+    if (epoch != _accountEpoch) return;
+    var updated = false;
+
+    for (var i = 0; i < messages.length; i++) {
+      if (messages[i].senderId == 'user' && (!messages[i].isRead || !messages[i].isDelivered)) {
+        messages[i] = messages[i].copyWith(isRead: true, isDelivered: true);
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      final msgJsonList = messages.map((m) {
+        return {
+          'id': m.id,
+          'senderId': m.senderId,
+          'content': m.content,
+          'timestamp': m.timestamp.millisecondsSinceEpoch,
+          'type': m.type,
+          'mediaUrl': m.mediaUrl,
+          'fileName': m.fileName,
+          'isRead': m.isRead,
+          'isDelivered': m.isDelivered,
+          'isEdited': m.isEdited,
+          'isDeleted': m.isDeleted,
+          'reaction': m.reaction,
+          'replyToId': m.replyToId,
+        };
+      }).toList();
+
+      await _prefs?.setString(messageKey, jsonEncode(msgJsonList));
+      if (epoch != _accountEpoch) return;
+      final conversations = await _currentConversations();
+      if (epoch != _accountEpoch) return;
+      final index = conversations.indexWhere((item) => item.id == deviceId);
+      if (index >= 0) {
+        conversations[index] = conversations[index].copyWith(
+          messages: messages,
+        );
+        _persistConversations(conversations);
+      }
+    }
+  }
+
+  ChatConversation? getConversationSync(String chatId) {
+    for (final c in conversationsNotifier.value) {
+      if (c.id == chatId) return c;
+    }
+    return null;
   }
 
   Future<void> markAsRead(String deviceId) async {
@@ -529,6 +595,59 @@ class LocalChatStorage {
       conversations[index] = existing.copyWith(isPinned: !existing.isPinned);
       _persistConversations(conversations);
     }
+  }
+
+  Future<void> toggleMuteConversation(String chatId) async {
+    final epoch = _accountEpoch;
+    final conversations = await _currentConversations();
+    if (epoch != _accountEpoch) return;
+    final index = conversations.indexWhere((c) => c.id == chatId);
+    if (index >= 0) {
+      final existing = conversations[index];
+      conversations[index] = existing.copyWith(isMuted: !existing.isMuted);
+      _persistConversations(conversations);
+    }
+  }
+
+  Future<void> toggleUnreadConversation(String chatId) async {
+    final epoch = _accountEpoch;
+    final conversations = await _currentConversations();
+    if (epoch != _accountEpoch) return;
+    final index = conversations.indexWhere((c) => c.id == chatId);
+    if (index >= 0) {
+      final existing = conversations[index];
+      final newCount = existing.unreadCount > 0 ? 0 : 1;
+      conversations[index] = existing.copyWith(unreadCount: newCount);
+      _persistConversations(conversations);
+    }
+  }
+
+  Future<void> toggleArchiveConversation(String chatId) async {
+    final epoch = _accountEpoch;
+    final conversations = await _currentConversations();
+    if (epoch != _accountEpoch) return;
+    final index = conversations.indexWhere((c) => c.id == chatId);
+    if (index >= 0) {
+      final existing = conversations[index];
+      conversations[index] = existing.copyWith(isArchived: !existing.isArchived);
+      _persistConversations(conversations);
+    }
+  }
+
+  Future<void> markAllAsRead() async {
+    final epoch = _accountEpoch;
+    final conversations = await _currentConversations();
+    if (epoch != _accountEpoch) return;
+    final updated = conversations.map((c) => c.copyWith(unreadCount: 0)).toList();
+    _persistConversations(updated);
+  }
+
+  Future<void> deleteConversation(String chatId) async {
+    final epoch = _accountEpoch;
+    final conversations = await _currentConversations();
+    if (epoch != _accountEpoch) return;
+    conversations.removeWhere((c) => c.id == chatId);
+    _persistConversations(conversations);
   }
 
   Future<void> createOrGetConversation({
@@ -590,6 +709,9 @@ class LocalChatStorage {
         'lastActivityAt': c.lastActivityAt?.millisecondsSinceEpoch,
         'unreadCount': c.unreadCount,
         'isPinned': c.isPinned,
+        'isMuted': c.isMuted,
+        'isArchived': c.isArchived,
+        'disappearType': c.disappearType,
         'isOnline': c.isOnline,
         'isTyping': c.isTyping,
         'peerUserId': c.peerUserId,

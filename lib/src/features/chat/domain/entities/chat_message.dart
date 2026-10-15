@@ -8,6 +8,7 @@ class ChatMessage {
   final String? mediaUrl;
   final String? fileName;
   final bool isRead;
+  final bool isDelivered;
   final bool isEdited;
   final bool isDeleted;
   final bool isSaved;
@@ -35,6 +36,7 @@ class ChatMessage {
     this.mediaUrl,
     this.fileName,
     this.isRead = false,
+    this.isDelivered = false,
     this.isEdited = false,
     this.isDeleted = false,
     this.isSaved = false,
@@ -54,6 +56,7 @@ class ChatMessage {
     String? mediaUrl,
     String? fileName,
     bool? isRead,
+    bool? isDelivered,
     bool? isEdited,
     bool? isDeleted,
     bool? isSaved,
@@ -72,6 +75,7 @@ class ChatMessage {
       mediaUrl: mediaUrl ?? this.mediaUrl,
       fileName: fileName ?? this.fileName,
       isRead: isRead ?? this.isRead,
+      isDelivered: isDelivered ?? this.isDelivered,
       isEdited: isEdited ?? this.isEdited,
       isDeleted: isDeleted ?? this.isDeleted,
       isSaved: isSaved ?? this.isSaved,

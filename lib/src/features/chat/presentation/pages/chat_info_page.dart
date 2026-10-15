@@ -5,9 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
+import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
+import '../widgets/chat_wallpaper_widget.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/models/server_models.dart';
@@ -181,12 +185,12 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                       setState(() {
                         _disappearType = typeKey;
                       });
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Disappearing messages set to ${_disappearingLabels[typeKey]}',
-                          ),
-                        ),
+                      await LocalChatStorage.instance.updateConversation(
+                        widget.conversation.id,
+                        (current) => current.copyWith(disappearType: typeKey),
+                      );
+                      AppToast.show(
+                        'Disappearing messages set to ${_disappearingLabels[typeKey]}',
                       );
                     }
                   },
@@ -197,6 +201,548 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
           ),
         ),
       ),
+    );
+  }
+
+  String _getBubbleColorName(Color color) {
+    final val = color.toARGB32();
+    switch (val) {
+      case 0xFF007AFF:
+        return 'iOS Blue (Default)';
+      case 0xFF34C759:
+        return 'Emerald Green';
+      case 0xFFAF52DE:
+        return 'Vibrant Purple';
+      case 0xFFFF9500:
+        return 'Sunset Orange';
+      case 0xFF30B0C7:
+        return 'Ocean Teal';
+      case 0xFFFF2D55:
+        return 'Neon Pink';
+      case 0xFFFF3B30:
+        return 'Crimson Red';
+      case 0xFF3A3A3C:
+        return 'Dark Charcoal';
+      case 0xFF5856D6:
+        return 'Royal Indigo';
+      case 0xFFFFCC00:
+        return 'Electric Gold';
+      default:
+        return 'Custom Color';
+    }
+  }
+
+  String _getWallpaperTypeName(String type) {
+    if (type == 'custom') return 'Custom Gallery Photo';
+    switch (type) {
+      case 'preset_1':
+        return 'Midnight Mesh';
+      case 'preset_2':
+        return 'Sunset Glow';
+      case 'preset_3':
+        return 'Emerald Forest';
+      case 'preset_4':
+        return 'Cyberpunk Neon';
+      case 'preset_5':
+        return 'Royal Velvet';
+      default:
+        return 'Default Canvas';
+    }
+  }
+
+  void _showBubbleColorPicker() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final chatId = widget.conversation.id;
+    final currentColor = AppPreferences.getChatBubbleColor(chatId: chatId);
+
+    final colors = <Map<String, dynamic>>[
+      {'name': 'iOS Blue', 'color': const Color(0xFF007AFF)},
+      {'name': 'Emerald Green', 'color': const Color(0xFF34C759)},
+      {'name': 'Vibrant Purple', 'color': const Color(0xFFAF52DE)},
+      {'name': 'Sunset Orange', 'color': const Color(0xFFFF9500)},
+      {'name': 'Ocean Teal', 'color': const Color(0xFF30B0C7)},
+      {'name': 'Neon Pink', 'color': const Color(0xFFFF2D55)},
+      {'name': 'Crimson Red', 'color': const Color(0xFFFF3B30)},
+      {'name': 'Dark Charcoal', 'color': const Color(0xFF3A3A3C)},
+      {'name': 'Royal Indigo', 'color': const Color(0xFF5856D6)},
+      {'name': 'Electric Gold', 'color': const Color(0xFFFFCC00)},
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        Color selectedColor = currentColor;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.85,
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                    Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppTheme.subtitleGrey.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Choose Bubble Color',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Select color for sent chat messages',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.subtitleGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Live Bubble Preview Card
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppTheme.chatCanvas(isDark),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: isDark ? Colors.white12 : Colors.black12,
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: AppTheme.receivedBubble(isDark),
+                                borderRadius: const BorderRadius.only(
+                                  topLeft: Radius.circular(16),
+                                  topRight: Radius.circular(16),
+                                  bottomRight: Radius.circular(16),
+                                  bottomLeft: Radius.circular(4),
+                                ),
+                              ),
+                              child: Text(
+                                'Hey! How does this look?',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: isDark ? Colors.white : Colors.black,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: selectedColor,
+                                borderRadius: const BorderRadius.only(
+                                  topLeft: Radius.circular(16),
+                                  topRight: Radius.circular(16),
+                                  bottomLeft: Radius.circular(16),
+                                  bottomRight: Radius.circular(4),
+                                ),
+                              ),
+                              child: const Text(
+                                'Looks awesome!',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // Color Palette Swatches
+                    Wrap(
+                      spacing: 14,
+                      runSpacing: 14,
+                      children: colors.map((c) {
+                        final Color col = c['color'] as Color;
+                        final bool isSelected = (selectedColor.toARGB32() & 0x00FFFFFF) == (col.toARGB32() & 0x00FFFFFF);
+                        return GestureDetector(
+                          onTap: () {
+                            setSheetState(() => selectedColor = col);
+                          },
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: col,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: isSelected ? Colors.white : Colors.transparent,
+                                width: 3,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: col.withValues(alpha: 0.4),
+                                  blurRadius: isSelected ? 8 : 2,
+                                  spreadRadius: isSelected ? 2 : 0,
+                                ),
+                              ],
+                            ),
+                            child: isSelected
+                                ? const Icon(Icons.check_rounded, color: Colors.white, size: 22)
+                                : null,
+                          ),
+                        );
+                      }).toList(),
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    // Color Shade / Brightness Slider
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Color Shade / Brightness',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          '${(HSLColor.fromColor(selectedColor).lightness * 100).round()}%',
+                          style: const TextStyle(fontSize: 12, color: AppTheme.subtitleGrey, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      value: HSLColor.fromColor(selectedColor).lightness.clamp(0.25, 0.75),
+                      min: 0.25,
+                      max: 0.75,
+                      divisions: 20,
+                      activeColor: selectedColor,
+                      onChanged: (val) {
+                        setSheetState(() {
+                          selectedColor = HSLColor.fromColor(selectedColor).withLightness(val).toColor();
+                        });
+                      },
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Apply Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: selectedColor,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed: () async {
+                          await AppPreferences.setChatBubbleColor(selectedColor, chatId: chatId);
+                          if (mounted) {
+                            setState(() {});
+                            Navigator.of(context).pop();
+                            AppToast.show('Bubble color updated!');
+                          }
+                        },
+                        child: const Text(
+                          'Apply Bubble Color',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+  }
+
+  void _showWallpaperPicker() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final chatId = widget.conversation.id;
+    final currentType = AppPreferences.getWallpaperType(chatId: chatId);
+    final currentDim = AppPreferences.getWallpaperDim(chatId: chatId);
+
+    final presets = <Map<String, String>>[
+      {'type': 'default', 'title': 'Default Canvas'},
+      {'type': 'preset_1', 'title': 'Midnight Mesh'},
+      {'type': 'preset_2', 'title': 'Sunset Glow'},
+      {'type': 'preset_3', 'title': 'Emerald Forest'},
+      {'type': 'preset_4', 'title': 'Cyber Neon'},
+      {'type': 'preset_5', 'title': 'Royal Velvet'},
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        String selectedType = currentType;
+        String? customPath = AppPreferences.getWallpaperPath(chatId: chatId);
+        double dimValue = currentDim;
+
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppTheme.subtitleGrey.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Chat Wallpaper',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Customize background image for this chat screen',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppTheme.subtitleGrey,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Presets Horizontal Carousel
+                      SizedBox(
+                        height: 110,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: presets.length + 1,
+                          separatorBuilder: (_, __) => const SizedBox(width: 12),
+                          itemBuilder: (context, idx) {
+                            if (idx == presets.length) {
+                              // Custom Photo Option
+                              final isSelected = selectedType == 'custom';
+                              return GestureDetector(
+                                onTap: () async {
+                                  AppPreferences.isPickerActive = true;
+                                  try {
+                                    final files = await FilePicker.pickFiles(type: FileType.image);
+                                    if (files != null && files.isNotEmpty && files.first.path != null) {
+                                      final picked = files.first.path!;
+                                      final dir = await getApplicationDocumentsDirectory();
+                                      final wallDir = Directory('${dir.path}${Platform.pathSeparator}chat_wallpapers');
+                                      if (!wallDir.existsSync()) {
+                                        await wallDir.create(recursive: true);
+                                      }
+                                      final dest = '${wallDir.path}${Platform.pathSeparator}wall_${chatId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+                                      await File(picked).copy(dest);
+                                      setSheetState(() {
+                                        customPath = dest;
+                                        selectedType = 'custom';
+                                      });
+                                    }
+                                  } catch (e) {
+                                    debugPrint('[WALLPAPER PICK ERROR] $e');
+                                  } finally {
+                                    AppPreferences.isPickerActive = false;
+                                  }
+                                },
+                                child: Container(
+                                  width: 80,
+                                  decoration: BoxDecoration(
+                                    color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: isSelected ? AppTheme.primaryColor : Colors.transparent,
+                                      width: 2.5,
+                                    ),
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.add_photo_alternate_rounded,
+                                        size: 28,
+                                        color: isSelected ? AppTheme.primaryColor : AppTheme.subtitleGrey,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'From Gallery',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: isSelected ? AppTheme.primaryColor : AppTheme.subtitleGrey,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }
+
+                            final preset = presets[idx];
+                            final type = preset['type']!;
+                            final title = preset['title']!;
+                            final isSelected = selectedType == type;
+
+                            return GestureDetector(
+                              onTap: () => setSheetState(() => selectedType = type),
+                              child: Container(
+                                width: 80,
+                                clipBehavior: Clip.antiAlias,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: isSelected ? AppTheme.primaryColor : Colors.transparent,
+                                    width: 2.5,
+                                  ),
+                                ),
+                                child: Stack(
+                                  children: [
+                                    Positioned.fill(
+                                      child: ChatWallpaperWidget.buildPresetWallpaper(type, isDark),
+                                    ),
+                                    Container(
+                                      color: Colors.black.withValues(alpha: 0.25),
+                                    ),
+                                    Center(
+                                      child: Text(
+                                        title,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    if (isSelected)
+                                      const Positioned(
+                                        top: 6,
+                                        right: 6,
+                                        child: CircleAvatar(
+                                          radius: 10,
+                                          backgroundColor: AppTheme.primaryColor,
+                                          child: Icon(Icons.check_rounded, size: 12, color: Colors.white),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // Dimming Slider
+                      if (selectedType != 'default') ...[
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Background Darkening',
+                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              '${(dimValue * 100).round()}%',
+                              style: const TextStyle(fontSize: 13, color: AppTheme.primaryColor, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        Slider(
+                          value: dimValue,
+                          min: 0.0,
+                          max: 0.6,
+                          divisions: 12,
+                          activeColor: AppTheme.primaryColor,
+                          onChanged: (val) => setSheetState(() => dimValue = val),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+
+                      // Apply Button
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.primaryColor,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: () async {
+                            await AppPreferences.setChatWallpaper(
+                              type: selectedType,
+                              customPath: customPath,
+                              dim: dimValue,
+                              chatId: chatId,
+                            );
+                            if (mounted) {
+                              setState(() {});
+                              Navigator.of(context).pop();
+                              AppToast.show('Wallpaper updated!');
+                            }
+                          },
+                          child: const Text(
+                            'Save Wallpaper',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -212,6 +758,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     if (!mounted) return;
     setState(() {
       _details = details;
+      if (details != null) {
+        _disappearType = details.disappearType;
+      }
       _loading = false;
       if (details == null) _error = 'Chat information could not be loaded.';
     });
@@ -227,7 +776,49 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     final chatId = int.tryParse(chatIdStr);
 
     try {
-      // 1. Load local cached messages
+      // 1. Fetch Chat Details from API (GET /api/chats/:chat_id)
+      final details = _details ??
+          (chatId == null
+              ? null
+              : await ServerApiService.instance.getChatDetails(chatId));
+
+      if (details != null && details.media.isNotEmpty) {
+        for (final m in details.media) {
+          final isMe = m.senderId == currentUserId;
+          final targetUrl = m.url.isNotEmpty ? m.url : m.filePath;
+          final filename = m.fileName.isNotEmpty ? m.fileName : _basename(targetUrl);
+          
+          final inferred = inferAttachmentType(
+            fileType: m.fileType,
+            fileName: filename,
+            filePath: targetUrl,
+          ) ?? m.fileType;
+          final typeLower = inferred.toLowerCase();
+
+          String folder = 'doc';
+          if (typeLower.startsWith('image') || _isImageExt(filename)) {
+            folder = 'image';
+          } else if (typeLower.startsWith('video') || _isVideoExt(filename)) {
+            folder = 'video';
+          } else if (typeLower.startsWith('audio') || _isAudioExt(filename)) {
+            folder = 'audio';
+          }
+
+          items.add(ChatMediaItem(
+            id: m.id.toString(),
+            fileName: filename,
+            rawUrl: targetUrl,
+            fileType: m.fileType,
+            fileSize: 0,
+            createdAt: DateTime.tryParse(m.createdAt)?.toLocal() ?? DateTime.now(),
+            isMe: isMe,
+            senderName: isMe ? 'You' : widget.conversation.name,
+            folder: folder,
+          ));
+        }
+      }
+
+      // 2. Load local cached messages (for any unsynced offline items)
       final localMsgs = await LocalChatStorage.instance.loadMessages(chatIdStr);
       for (final m in localMsgs) {
         final url = m.mediaUrl;
@@ -245,93 +836,19 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
             folder = 'audio';
           }
 
-          items.add(ChatMediaItem(
-            id: m.id,
-            fileName: filename,
-            rawUrl: url,
-            fileType: m.type,
-            fileSize: 0,
-            createdAt: m.timestamp,
-            isMe: isMe,
-            senderName: isMe ? 'You' : widget.conversation.name,
-            folder: folder,
-          ));
-        }
-      }
-
-      // 2. Fetch server messages for this chat
-      if (chatId != null) {
-        try {
-          final serverMsgs = await ServerApiService.instance.getMessages(chatId);
-          for (final sm in serverMsgs) {
-            final filePath = sm.filePath;
-            if (filePath != null && filePath.isNotEmpty) {
-              final isMe = sm.senderId == currentUserId;
-              final fileType = sm.fileType ?? inferAttachmentType(fileName: sm.fileName, filePath: filePath) ?? '';
-              final filename = sm.fileName?.isNotEmpty == true ? sm.fileName! : _basename(filePath);
-              final typeLower = fileType.toLowerCase();
-
-              String folder = 'doc';
-              if (typeLower.startsWith('image') || _isImageExt(filename)) {
-                folder = 'image';
-              } else if (typeLower.startsWith('video') || _isVideoExt(filename)) {
-                folder = 'video';
-              } else if (typeLower.startsWith('audio') || _isAudioExt(filename)) {
-                folder = 'audio';
-              }
-
-              if (!items.any((x) => x.rawUrl == filePath || x.id == sm.id.toString())) {
-                DateTime date = DateTime.now();
-                try {
-                  date = DateTime.parse(sm.createdAt).toLocal();
-                } catch (_) {}
-
-                items.add(ChatMediaItem(
-                  id: sm.id.toString(),
-                  fileName: filename,
-                  rawUrl: filePath,
-                  fileType: fileType,
-                  fileSize: 0,
-                  createdAt: date,
-                  isMe: isMe,
-                  senderName: isMe ? 'You' : widget.conversation.name,
-                  folder: folder,
-                ));
-              }
-            }
+          if (!items.any((x) => x.rawUrl == url || x.id == m.id)) {
+            items.add(ChatMediaItem(
+              id: m.id,
+              fileName: filename,
+              rawUrl: url,
+              fileType: m.type,
+              fileSize: 0,
+              createdAt: m.timestamp,
+              isMe: isMe,
+              senderName: isMe ? 'You' : widget.conversation.name,
+              folder: folder,
+            ));
           }
-        } catch (e) {
-          debugPrint('[CHAT INFO] Fetch server messages error: $e');
-        }
-      }
-
-      // 3. Query /uploads endpoint for folders ('image', 'video', 'audio', 'doc')
-      for (final folder in ['image', 'video', 'audio', 'doc']) {
-        try {
-          final uploads = await ServerApiService.instance.getUploads(folder: folder, limit: 50);
-          for (final up in uploads.items) {
-            final targetUrl = up.url.isNotEmpty ? up.url : up.filePath;
-            if (targetUrl.isNotEmpty && !items.any((x) => x.rawUrl == targetUrl || x.id == up.id.toString())) {
-              DateTime date = DateTime.now();
-              try {
-                date = DateTime.parse(up.createdAt).toLocal();
-              } catch (_) {}
-
-              items.add(ChatMediaItem(
-                id: up.id.toString(),
-                fileName: up.fileName.isNotEmpty ? up.fileName : _basename(targetUrl),
-                rawUrl: targetUrl,
-                fileType: up.fileType,
-                fileSize: up.fileSize,
-                createdAt: date,
-                isMe: true,
-                senderName: 'You',
-                folder: folder,
-              ));
-            }
-          }
-        } catch (e) {
-          debugPrint('[CHAT INFO] Fetch $folder uploads error: $e');
         }
       }
 
@@ -903,6 +1420,57 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           color: AppTheme.subtitleGrey,
                         ),
                         onTap: _showDisappearingPicker,
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Chat Customization Section (Bubble Color & Wallpaper)
+                  _InfoCard(
+                    surface: surface,
+                    children: [
+                      ListTile(
+                        leading: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: AppPreferences.getChatBubbleColor(chatId: widget.conversation.id),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.15),
+                                blurRadius: 4,
+                              ),
+                            ],
+                          ),
+                        ),
+                        title: const Text('Chat Bubble Color'),
+                        subtitle: Text(
+                          _getBubbleColorName(AppPreferences.getChatBubbleColor(chatId: widget.conversation.id)),
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right_rounded,
+                          color: AppTheme.subtitleGrey,
+                        ),
+                        onTap: _showBubbleColorPicker,
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      ListTile(
+                        leading: const Icon(
+                          Icons.wallpaper_rounded,
+                          color: AppTheme.primaryColor,
+                        ),
+                        title: const Text('Chat Background Wallpaper'),
+                        subtitle: Text(
+                          _getWallpaperTypeName(AppPreferences.getWallpaperType(chatId: widget.conversation.id)),
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right_rounded,
+                          color: AppTheme.subtitleGrey,
+                        ),
+                        onTap: _showWallpaperPicker,
                       ),
                     ],
                   ),

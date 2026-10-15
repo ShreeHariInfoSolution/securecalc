@@ -28,11 +28,22 @@ class AppPreferences {
   static const String _keyProfileImagePath = 'PREF_PROFILE_IMAGE_PATH';
   static const String _keyShowOnlineStatus = 'PREF_SHOW_ONLINE_STATUS';
   static const String _keyHasConsented = 'PREF_HAS_CONSENTED';
+  static const String _keyAutoDownloadImages = 'PREF_AUTO_DOWNLOAD_IMAGES';
+  static const String _keyAutoDownloadVideos = 'PREF_AUTO_DOWNLOAD_VIDEOS';
+  static const String _keyAutoDownloadDocs = 'PREF_AUTO_DOWNLOAD_DOCS';
+  static const String _keyChatBubbleColor = 'PREF_CHAT_BUBBLE_COLOR';
+  static const String _keyChatWallpaperType = 'PREF_CHAT_WALLPAPER_TYPE';
+  static const String _keyChatWallpaperPath = 'PREF_CHAT_WALLPAPER_PATH';
+  static const String _keyChatWallpaperDim = 'PREF_CHAT_WALLPAPER_DIM';
 
   static final ValueNotifier<bool> edgePanelEnabledNotifier =
       ValueNotifier<bool>(true);
   static final ValueNotifier<double> edgePanelYNotifier =
       ValueNotifier<double>(0.28);
+  static final ValueNotifier<int> chatBubbleColorNotifier =
+      ValueNotifier<int>(0xFF007AFF); // Default iOS Blue
+  static final ValueNotifier<String> chatWallpaperNotifier =
+      ValueNotifier<String>('default');
 
   /// Flag indicating if an image/camera picker is currently open to prevent lifecycle route pop.
   static bool isPickerActive = false;
@@ -90,6 +101,11 @@ class AppPreferences {
 
     displayNameNotifier.value = getDisplayName();
     profileImagePathNotifier.value = getProfileImagePath();
+
+    // Restore Chat Customizations (Default Bubble Color: Blue 0xFF007AFF)
+    final savedBubbleColor = _prefs.getInt(_keyChatBubbleColor) ?? 0xFF007AFF;
+    chatBubbleColorNotifier.value = savedBubbleColor;
+    chatWallpaperNotifier.value = _prefs.getString(_keyChatWallpaperType) ?? 'default';
   }
 
   // Setters
@@ -235,10 +251,95 @@ class AppPreferences {
     await _prefs.setBool(_keyHasConsented, value);
   }
 
+  static bool getAutoDownloadImages() =>
+      _prefs.getBool(_keyAutoDownloadImages) ?? true;
+
+  static Future<void> setAutoDownloadImages(bool enabled) async {
+    await _prefs.setBool(_keyAutoDownloadImages, enabled);
+  }
+
+  static bool getAutoDownloadVideos() =>
+      _prefs.getBool(_keyAutoDownloadVideos) ?? true;
+
+  static Future<void> setAutoDownloadVideos(bool enabled) async {
+    await _prefs.setBool(_keyAutoDownloadVideos, enabled);
+  }
+
+  static bool getAutoDownloadDocs() =>
+      _prefs.getBool(_keyAutoDownloadDocs) ?? true;
+
+  static Future<void> setAutoDownloadDocs(bool enabled) async {
+    await _prefs.setBool(_keyAutoDownloadDocs, enabled);
+  }
+
   static Future<void> updateSecureFlag() async {
     try {
       final prevent = getPreventScreenshots();
       await _securityChannel.invokeMethod('setSecureFlag', {'enable': prevent});
     } catch (_) {}
+  }
+
+  // --- Chat Customizations: Bubble Color & Wallpaper ---
+  static Color getChatBubbleColor({String? chatId}) {
+    if (chatId != null && chatId.isNotEmpty) {
+      final perChat = _prefs.getInt('${_keyChatBubbleColor}_$chatId');
+      if (perChat != null) return Color(perChat);
+    }
+    final colorInt = _prefs.getInt(_keyChatBubbleColor) ?? 0xFF007AFF;
+    return Color(colorInt);
+  }
+
+  static Future<void> setChatBubbleColor(Color color, {String? chatId}) async {
+    final val = color.value;
+    if (chatId != null && chatId.isNotEmpty) {
+      await _prefs.setInt('${_keyChatBubbleColor}_$chatId', val);
+    }
+    await _prefs.setInt(_keyChatBubbleColor, val);
+    chatBubbleColorNotifier.value = val;
+  }
+
+  static String getWallpaperType({String? chatId}) {
+    if (chatId != null && chatId.isNotEmpty) {
+      final perChat = _prefs.getString('${_keyChatWallpaperType}_$chatId');
+      if (perChat != null) return perChat;
+    }
+    return _prefs.getString(_keyChatWallpaperType) ?? 'default';
+  }
+
+  static String? getWallpaperPath({String? chatId}) {
+    if (chatId != null && chatId.isNotEmpty) {
+      final perChat = _prefs.getString('${_keyChatWallpaperPath}_$chatId');
+      if (perChat != null && perChat.isNotEmpty) return perChat;
+    }
+    return _prefs.getString(_keyChatWallpaperPath);
+  }
+
+  static double getWallpaperDim({String? chatId}) {
+    if (chatId != null && chatId.isNotEmpty) {
+      final perChat = _prefs.getDouble('${_keyChatWallpaperDim}_$chatId');
+      if (perChat != null) return perChat;
+    }
+    return _prefs.getDouble(_keyChatWallpaperDim) ?? 0.15;
+  }
+
+  static Future<void> setChatWallpaper({
+    required String type,
+    String? customPath,
+    double dim = 0.15,
+    String? chatId,
+  }) async {
+    if (chatId != null && chatId.isNotEmpty) {
+      await _prefs.setString('${_keyChatWallpaperType}_$chatId', type);
+      if (customPath != null) {
+        await _prefs.setString('${_keyChatWallpaperPath}_$chatId', customPath);
+      }
+      await _prefs.setDouble('${_keyChatWallpaperDim}_$chatId', dim);
+    }
+    await _prefs.setString(_keyChatWallpaperType, type);
+    if (customPath != null) {
+      await _prefs.setString(_keyChatWallpaperPath, customPath);
+    }
+    await _prefs.setDouble(_keyChatWallpaperDim, dim);
+    chatWallpaperNotifier.value = '$type:${DateTime.now().millisecondsSinceEpoch}';
   }
 }

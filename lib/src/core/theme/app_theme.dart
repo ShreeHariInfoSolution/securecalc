@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_preferences.dart';
 
 /// Pure iOS Style Application Theme setup using Material 3.
 /// Matches Apple iOS Messages & System Blue specifications.
@@ -47,7 +48,8 @@ class AppTheme {
   static Color receivedBubble(bool isDark) =>
       isDark ? const Color(0xFF262628) : const Color(0xFFE9E9EB);
 
-  static Color sentBubble(bool isDark) => primaryColor;
+  static Color sentBubble(bool isDark, {Color? customColor}) =>
+      customColor ?? AppPreferences.getChatBubbleColor();
 
   static Color overlayScrim(bool isDark) =>
       isDark ? Colors.black.withValues(alpha: 0.55) : Colors.black.withValues(alpha: 0.28);
