@@ -88,7 +88,19 @@ class ChatMessageList extends StatelessWidget {
     return false;
   }
 
+  bool _isImageDownloaded(ChatMessage msg) {
+    final rawUrl = msg.mediaUrl;
+    if (rawUrl == null || rawUrl.isEmpty) return false;
+    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+      if (File(rawUrl).existsSync()) return true;
+    }
+    final cached = AttachmentCacheService.instance.resolveLocalPathSync(rawUrl);
+    if (cached != null && File(cached).existsSync()) return true;
+    return false;
+  }
+
   /// Groups consecutive image messages sent by the same sender into a single list.
+  /// ONLY groups images AFTER ALL images in the group are downloaded locally!
   List<ChatMessage>? _getGroupedImages(int messageIndex) {
     final currentMsg = messages[messageIndex];
     if (!_isImageMessage(currentMsg)) return null;
@@ -116,7 +128,15 @@ class ChatMessageList extends StatelessWidget {
           idx++;
         }
 
-        if (fullGroup.length > 1) {
+        bool allDownloaded = true;
+        for (final m in fullGroup) {
+          if (!_isImageDownloaded(m)) {
+            allDownloaded = false;
+            break;
+          }
+        }
+
+        if (allDownloaded && fullGroup.length > 1) {
           return const <ChatMessage>[];
         }
       }
@@ -137,6 +157,11 @@ class ChatMessageList extends StatelessWidget {
     }
 
     if (grouped.length > 1) {
+      for (final gMsg in grouped) {
+        if (!_isImageDownloaded(gMsg)) {
+          return null;
+        }
+      }
       return grouped;
     }
 
