@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Calculator</string>
+	<string>Calnox Vault</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>securecalc</string>
+	<string>CalnoxVault</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -26,6 +26,13 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+
+	<!-- App Transport Security for HTTP/WebSocket connections -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 
 	<!-- Required Active Privacy Permissions -->
 	<key>NSCameraUsageDescription</key>
@@ -42,6 +49,12 @@
 
 	<key>NSMotionUsageDescription</key>
 	<string>This app uses motion sensors to detect shake gestures to trigger emergency panic mode and quickly lock your vault.</string>
+
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>This app requires Bluetooth access to connect and communicate with nearby secure devices and accessories.</string>
+
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>This app requires Bluetooth access to connect and communicate with nearby secure devices and accessories.</string>
 
 	<key>UIApplicationSceneManifest</key>
 	<dict>

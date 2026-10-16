@@ -1,5 +1,6 @@
 package com.shis.securecalc
 
+import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import android.view.WindowManager
@@ -23,6 +24,13 @@ class MainActivity : FlutterActivity() {
                 }
                 "getSystemDeviceId" -> {
                     try {
+                        val prefs = getSharedPreferences("securecalc_device_identity", Context.MODE_PRIVATE)
+                        val storedId = prefs.getString("persistent_device_id", null)
+                        if (!storedId.isNullOrEmpty()) {
+                            result.success(storedId)
+                            return@setMethodCallHandler
+                        }
+
                         val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: ""
                         val manufacturer = Build.MANUFACTURER.lowercase()
                         val model = Build.MODEL.lowercase()
@@ -31,6 +39,11 @@ class MainActivity : FlutterActivity() {
                         } else {
                             "${manufacturer}${model}"
                         }
+
+                        if (hardwareId.isNotEmpty()) {
+                            prefs.edit().putString("persistent_device_id", hardwareId).apply()
+                        }
+
                         result.success(hardwareId)
                     } catch (e: Exception) {
                         result.error("DEVICE_ID_ERROR", e.toString(), null)
