@@ -22,6 +22,7 @@ import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
 import '../widgets/photo_gallery_viewer.dart';
+import '../widgets/app_video_player.dart';
 import 'share/share_qr_page.dart';
 import 'starred_messages_page.dart';
 
@@ -1384,6 +1385,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
 
   Future<void> _openDocument(ChatMediaItem item) async {
     final url = item.fullUrl;
+    if (item.folder == 'video') {
+      AppVideoPlayerModal.open(
+        context,
+        mediaUrl: url,
+        title: item.fileName,
+      );
+      return;
+    }
     try {
       if (!url.startsWith('http://') &&
           !url.startsWith('https://') &&
@@ -2419,28 +2428,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
             child: Container(
               color: Colors.black87,
               child: Stack(
+                fit: StackFit.expand,
                 alignment: Alignment.center,
                 children: [
-                  const Icon(
-                    CupertinoIcons.play_circle_fill,
-                    size: 36,
-                    color: Colors.white70,
-                  ),
-                  Positioned(
-                    bottom: 4,
-                    left: 4,
-                    right: 4,
-                    child: Text(
-                      item.fileName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+                  VideoThumbnailCard(
+                    mediaUrl: item.rawUrl,
+                    width: double.infinity,
+                    height: double.infinity,
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   Positioned(
                     top: 4,

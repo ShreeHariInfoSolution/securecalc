@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:securecalc/src/features/chat/domain/models/server_models.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
+import 'package:securecalc/src/features/chat/presentation/widgets/app_video_player.dart';
 
 class MediaGridItem extends StatelessWidget {
   final UploadItemModel item;
@@ -229,9 +230,6 @@ class MediaGridItem extends StatelessWidget {
 
   Widget _buildVideoSquareTile(BuildContext context, bool isDark) {
     final mediaUrl = item.fullUrl;
-    final headers = ServerApiService.instance.authToken != null
-        ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
-        : null;
 
     return GestureDetector(
       onTap: onTap,
@@ -247,88 +245,11 @@ class MediaGridItem extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (mediaUrl.isNotEmpty)
-                Image.network(
-                  mediaUrl,
-                  headers: headers,
-                  fit: BoxFit.cover,
-                  cacheWidth: 300,
-                  filterQuality: FilterQuality.low,
-                  errorBuilder: (context, error, stackTrace) => _buildFallbackThumbnail(
-                    isDark,
-                    CupertinoIcons.videocam_fill,
-                    const Color(0xFF007AFF),
-                  ),
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return Container(
-                      color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
-                      child: const Center(
-                        child: CupertinoActivityIndicator(radius: 10),
-                      ),
-                    );
-                  },
-                )
-              else
-                _buildFallbackThumbnail(
-                  isDark,
-                  CupertinoIcons.videocam_fill,
-                  const Color(0xFF007AFF),
-                ),
-              // Dark gradient overlay
-              Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.transparent,
-                      Colors.black.withOpacity(0.6),
-                    ],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                ),
-              ),
-              // Play Button Icon
-              Center(
-                child: Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.55),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.8), width: 1.5),
-                  ),
-                  child: const Icon(
-                    CupertinoIcons.play_fill,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                ),
-              ),
-              // Size tag overlay
-              Positioned(
-                bottom: 6,
-                right: 6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.75),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    item.formattedSize,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+          child: VideoThumbnailCard(
+            mediaUrl: mediaUrl,
+            width: double.infinity,
+            height: double.infinity,
+            borderRadius: BorderRadius.circular(14),
           ),
         ),
       ),

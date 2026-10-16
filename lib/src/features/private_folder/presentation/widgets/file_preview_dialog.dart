@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:securecalc/src/features/chat/domain/models/server_models.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
+import 'package:securecalc/src/features/chat/presentation/widgets/app_video_player.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
 
 class FilePreviewDialog extends StatefulWidget {
@@ -563,9 +564,6 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
       );
     } else if (item.isVideo) {
       final url = item.fullUrl;
-      final headers = ServerApiService.instance.authToken != null
-          ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
-          : null;
 
       return Center(
         child: SingleChildScrollView(
@@ -574,65 +572,32 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                height: 220,
-                margin: const EdgeInsets.symmetric(horizontal: 24),
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    if (url.isNotEmpty)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: Image.network(
-                          url,
-                          headers: headers,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return const Center(
-                              child: CupertinoActivityIndicator(radius: 12, color: Colors.white),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) => const Center(
-                            child: Icon(CupertinoIcons.videocam_fill, color: Color(0xFF007AFF), size: 56),
-                          ),
-                        ),
-                      ),
-                    Center(
-                      child: GestureDetector(
-                        onTap: _isDownloading ? null : _openFileExternally,
-                        child: Container(
-                          width: 60,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF007AFF),
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF007AFF).withOpacity(0.4),
-                                blurRadius: 16,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: _isDownloading
-                              ? const CupertinoActivityIndicator(radius: 12, color: Colors.white)
-                              : const Icon(CupertinoIcons.play_fill, color: Colors.white, size: 28),
-                        ),
-                      ),
-                    ),
-                  ],
+              GestureDetector(
+                onTap: () {
+                  AppVideoPlayerModal.open(
+                    context,
+                    mediaUrl: url,
+                    title: item.fileName,
+                  );
+                },
+                child: Container(
+                  height: 220,
+                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: VideoThumbnailCard(
+                    mediaUrl: url,
+                    width: double.infinity,
+                    height: 220,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
               Text(
-                _isDownloading
-                    ? 'Loading video file...'
-                    : 'Tap play button to open video in media player',
+                'Tap video to play in app',
                 style: TextStyle(
                   color: isDark ? const Color(0xFF8E8E93) : const Color(0xFF6C6C70),
                   fontSize: 13,

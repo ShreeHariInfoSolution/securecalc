@@ -22,6 +22,7 @@ import '../../domain/services/e2e_crypto_service.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/attachment_cache_service.dart';
 import 'photo_gallery_viewer.dart';
+import 'app_video_player.dart';
 
 class ChatBubble extends StatefulWidget {
   final String message;
@@ -471,6 +472,16 @@ class _ChatBubbleState extends State<ChatBubble> {
   Future<void> _openAttachment() async {
     try {
       final path = await _downloadAttachment();
+      if (_isVideo) {
+        if (mounted) {
+          AppVideoPlayerModal.open(
+            context,
+            mediaUrl: path,
+            title: widget.fileName ?? 'Video',
+          );
+        }
+        return;
+      }
       await OpenFilex.open(path);
     } catch (error) {
       AppToast.show('Could not open attachment: $error', isError: true);
@@ -1207,7 +1218,107 @@ class _ChatBubbleState extends State<ChatBubble> {
       );
     }
 
-    // ─── 2. OTHER ATTACHMENTS (Video, Audio, Document/File) ─────────────────
+    // ─── 2. VIDEO ATTACHMENTS ─────────────────
+    if (_isVideo) {
+      final videoSource = _downloadedPath ?? widget.mediaUrl ?? '';
+      return GestureDetector(
+        onTap: hasLocal
+            ? _openAttachment
+            : (_isDownloading ? null : _revealImage),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(
+            maxWidth: 260,
+            maxHeight: 220,
+            minWidth: 180,
+            minHeight: 140,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (videoSource.isNotEmpty)
+                VideoThumbnailCard(
+                  mediaUrl: videoSource,
+                  width: double.infinity,
+                  height: 220,
+                  borderRadius: BorderRadius.circular(14),
+                )
+              else
+                Container(
+                  color: const Color(0xFF1C1C1E),
+                  child: const Center(
+                    child: Icon(
+                      CupertinoIcons.videocam_fill,
+                      size: 44,
+                      color: Colors.white38,
+                    ),
+                  ),
+                ),
+              if (!hasLocal)
+                Container(
+                  color: Colors.black.withValues(alpha: 0.45),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (_isDownloading)
+                        const SizedBox(
+                          width: 32,
+                          height: 32,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.download_rounded,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _downloadFailed
+                                    ? 'Download again'
+                                    : 'Download',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ─── 3. OTHER ATTACHMENTS (Audio, Document/File) ─────────────────
     final icon = _isVideo
         ? Icons.movie_outlined
         : _isAudio
