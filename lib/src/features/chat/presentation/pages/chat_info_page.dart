@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
+
 import '../widgets/chat_wallpaper_widget.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
@@ -47,7 +49,8 @@ class ChatMediaItem {
   });
 
   String get fullUrl {
-    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) return rawUrl;
+    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))
+      return rawUrl;
     if (File(rawUrl).existsSync()) return rawUrl;
     return resolveAvatarUrl(rawUrl) ?? rawUrl;
   }
@@ -126,20 +129,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                 padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 child: Text(
                   'Disappearing Messages',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
               ),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 8),
                 child: Text(
                   'When enabled, new messages sent in this chat will disappear after the selected duration.',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: AppTheme.subtitleGrey,
-                  ),
+                  style: TextStyle(fontSize: 13, color: AppTheme.subtitleGrey),
                 ),
               ),
               const SizedBox(height: 12),
@@ -163,14 +160,17 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                   title: Text(
                     labelText,
                     style: TextStyle(
-                      fontWeight:
-                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.normal,
                       color: isSelected ? AppTheme.primaryColor : null,
                     ),
                   ),
                   trailing: isSelected
-                      ? const Icon(Icons.check_circle_rounded,
-                          color: AppTheme.primaryColor)
+                      ? const Icon(
+                          Icons.check_circle_rounded,
+                          color: AppTheme.primaryColor,
+                        )
                       : null,
                   onTap: () async {
                     Navigator.pop(sheetContext);
@@ -178,9 +178,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                     if (chatId == null) return;
                     final res = await ServerApiService.instance
                         .setDisappearingMessagesREST(
-                      chatId: chatId,
-                      disappearType: typeKey,
-                    );
+                          chatId: chatId,
+                          disappearType: typeKey,
+                        );
                     if (res != null && mounted) {
                       setState(() {
                         _disappearType = typeKey;
@@ -289,208 +289,242 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                    Container(
-                      width: 36,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppTheme.subtitleGrey.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Choose Bubble Color',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Select color for sent chat messages',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppTheme.subtitleGrey,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Live Bubble Preview Card
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: AppTheme.chatCanvas(isDark),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: isDark ? Colors.white12 : Colors.black12,
+                      Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppTheme.subtitleGrey.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                      child: Column(
-                        children: [
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: AppTheme.receivedBubble(isDark),
-                                borderRadius: const BorderRadius.only(
-                                  topLeft: Radius.circular(16),
-                                  topRight: Radius.circular(16),
-                                  bottomRight: Radius.circular(16),
-                                  bottomLeft: Radius.circular(4),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Choose Bubble Color',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Select color for sent chat messages',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppTheme.subtitleGrey,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Live Bubble Preview Card
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: AppTheme.chatCanvas(isDark),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: isDark ? Colors.white12 : Colors.black12,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 8,
                                 ),
-                              ),
-                              child: Text(
-                                'Hey! How does this look?',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: isDark ? Colors.white : Colors.black,
+                                decoration: BoxDecoration(
+                                  color: AppTheme.receivedBubble(isDark),
+                                  borderRadius: const BorderRadius.only(
+                                    topLeft: Radius.circular(16),
+                                    topRight: Radius.circular(16),
+                                    bottomRight: Radius.circular(16),
+                                    bottomLeft: Radius.circular(4),
+                                  ),
+                                ),
+                                child: Text(
+                                  'Hey! How does this look?',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: isDark ? Colors.white : Colors.black,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerRight,
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: selectedColor,
+                                  borderRadius: const BorderRadius.only(
+                                    topLeft: Radius.circular(16),
+                                    topRight: Radius.circular(16),
+                                    bottomLeft: Radius.circular(16),
+                                    bottomRight: Radius.circular(4),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Looks awesome!',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // Color Palette Swatches
+                      Wrap(
+                        spacing: 14,
+                        runSpacing: 14,
+                        children: colors.map((c) {
+                          final Color col = c['color'] as Color;
+                          final bool isSelected =
+                              (selectedColor.toARGB32() & 0x00FFFFFF) ==
+                              (col.toARGB32() & 0x00FFFFFF);
+                          return GestureDetector(
+                            onTap: () {
+                              setSheetState(() => selectedColor = col);
+                            },
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              width: 44,
+                              height: 44,
                               decoration: BoxDecoration(
-                                color: selectedColor,
-                                borderRadius: const BorderRadius.only(
-                                  topLeft: Radius.circular(16),
-                                  topRight: Radius.circular(16),
-                                  bottomLeft: Radius.circular(16),
-                                  bottomRight: Radius.circular(4),
+                                color: col,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: isSelected
+                                      ? Colors.white
+                                      : Colors.transparent,
+                                  width: 3,
                                 ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: col.withValues(alpha: 0.4),
+                                    blurRadius: isSelected ? 8 : 2,
+                                    spreadRadius: isSelected ? 2 : 0,
+                                  ),
+                                ],
                               ),
-                              child: const Text(
-                                'Looks awesome!',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
+                              child: isSelected
+                                  ? const Icon(
+                                      Icons.check_rounded,
+                                      color: Colors.white,
+                                      size: 22,
+                                    )
+                                  : null,
+                            ),
+                          );
+                        }).toList(),
+                      ),
+
+                      const SizedBox(height: 18),
+
+                      // Color Shade / Brightness Slider
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Color Shade / Brightness',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            '${(HSLColor.fromColor(selectedColor).lightness * 100).round()}%',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.subtitleGrey,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
                         ],
                       ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    // Color Palette Swatches
-                    Wrap(
-                      spacing: 14,
-                      runSpacing: 14,
-                      children: colors.map((c) {
-                        final Color col = c['color'] as Color;
-                        final bool isSelected = (selectedColor.toARGB32() & 0x00FFFFFF) == (col.toARGB32() & 0x00FFFFFF);
-                        return GestureDetector(
-                          onTap: () {
-                            setSheetState(() => selectedColor = col);
-                          },
-                          child: Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              color: col,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: isSelected ? Colors.white : Colors.transparent,
-                                width: 3,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: col.withValues(alpha: 0.4),
-                                  blurRadius: isSelected ? 8 : 2,
-                                  spreadRadius: isSelected ? 2 : 0,
-                                ),
-                              ],
-                            ),
-                            child: isSelected
-                                ? const Icon(Icons.check_rounded, color: Colors.white, size: 22)
-                                : null,
-                          ),
-                        );
-                      }).toList(),
-                    ),
-
-                    const SizedBox(height: 18),
-
-                    // Color Shade / Brightness Slider
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Color Shade / Brightness',
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          '${(HSLColor.fromColor(selectedColor).lightness * 100).round()}%',
-                          style: const TextStyle(fontSize: 12, color: AppTheme.subtitleGrey, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                    Slider(
-                      value: HSLColor.fromColor(selectedColor).lightness.clamp(0.25, 0.75),
-                      min: 0.25,
-                      max: 0.75,
-                      divisions: 20,
-                      activeColor: selectedColor,
-                      onChanged: (val) {
-                        setSheetState(() {
-                          selectedColor = HSLColor.fromColor(selectedColor).withLightness(val).toColor();
-                        });
-                      },
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // Apply Button
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: selectedColor,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        onPressed: () async {
-                          await AppPreferences.setChatBubbleColor(selectedColor, chatId: chatId);
-                          if (mounted) {
-                            setState(() {});
-                            Navigator.of(context).pop();
-                            AppToast.show('Bubble color updated!');
-                          }
+                      Slider(
+                        value: HSLColor.fromColor(selectedColor).lightness
+                            .clamp(0.25, 0.75),
+                        min: 0.25,
+                        max: 0.75,
+                        divisions: 20,
+                        activeColor: selectedColor,
+                        onChanged: (val) {
+                          setSheetState(() {
+                            selectedColor = HSLColor.fromColor(selectedColor)
+                                .withLightness(val)
+                                .toColor();
+                          });
                         },
-                        child: const Text(
-                          'Apply Bubble Color',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // Apply Button
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: selectedColor,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: () async {
+                            await AppPreferences.setChatBubbleColor(
+                              selectedColor,
+                              chatId: chatId,
+                            );
+                            if (mounted) {
+                              setState(() {});
+                              Navigator.of(context).pop();
+                              AppToast.show('Bubble color updated!');
+                            }
+                          },
+                          child: const Text(
+                            'Apply Bubble Color',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          );
-        },
-      );
-    },
-  );
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showWallpaperPicker() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final chatId = widget.conversation.id;
-    final currentType = AppPreferences.getWallpaperType(chatId: chatId);
+    final currentServerBg =
+        widget.conversation.backgroundUrl ?? _details?.backgroundUrl;
+
+    String initialType = AppPreferences.getWallpaperType(chatId: chatId);
+    if (currentServerBg != null && currentServerBg.isNotEmpty) {
+      initialType = 'custom';
+    }
+
     final currentDim = AppPreferences.getWallpaperDim(chatId: chatId);
 
     final presets = <Map<String, String>>[
@@ -510,9 +544,11 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
-        String selectedType = currentType;
+        String selectedType = initialType;
         String? customPath = AppPreferences.getWallpaperPath(chatId: chatId);
         double dimValue = currentDim;
+        File? newUploadFile;
+        bool isUploading = false;
 
         return StatefulBuilder(
           builder: (context, setSheetState) {
@@ -549,13 +585,77 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                       ),
                       const SizedBox(height: 20),
 
+                      // Live preview of custom photo
+                      if (selectedType == 'custom' &&
+                          (newUploadFile != null ||
+                              (customPath != null &&
+                                  File(customPath!).existsSync()) ||
+                              (currentServerBg != null &&
+                                  currentServerBg.isNotEmpty)))
+                        Container(
+                          width: double.infinity,
+                          height: 140,
+                          margin: const EdgeInsets.only(bottom: 16),
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: AppTheme.subtitleGrey.withValues(
+                                alpha: 0.3,
+                              ),
+                            ),
+                          ),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              if (newUploadFile != null)
+                                Image.file(newUploadFile!, fit: BoxFit.cover)
+                              else if (customPath != null &&
+                                  File(customPath!).existsSync())
+                                Image.file(File(customPath!), fit: BoxFit.cover)
+                              else if (currentServerBg != null)
+                                ChatWallpaperWidget(
+                                  isDark: isDark,
+                                  backgroundUrl: currentServerBg,
+                                ),
+                              Container(
+                                color: Colors.black.withValues(alpha: dimValue),
+                              ),
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.white,
+                                    shadows: [
+                                      Shadow(
+                                        color: Colors.black54,
+                                        blurRadius: 4,
+                                      ),
+                                    ],
+                                  ),
+                                  onPressed: () {
+                                    setSheetState(() {
+                                      newUploadFile = null;
+                                      customPath = null;
+                                      selectedType = 'default';
+                                    });
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
                       // Presets Horizontal Carousel
                       SizedBox(
                         height: 110,
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
                           itemCount: presets.length + 1,
-                          separatorBuilder: (_, __) => const SizedBox(width: 12),
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(width: 12),
                           itemBuilder: (context, idx) {
                             if (idx == presets.length) {
                               // Custom Photo Option
@@ -564,18 +664,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                                 onTap: () async {
                                   AppPreferences.isPickerActive = true;
                                   try {
-                                    final files = await FilePicker.pickFiles(type: FileType.image);
-                                    if (files != null && files.isNotEmpty && files.first.path != null) {
+                                    final files = await FilePicker.pickFiles(
+                                      type: FileType.image,
+                                    );
+                                    if (files.isNotEmpty &&
+                                        files.first.path != null) {
                                       final picked = files.first.path!;
-                                      final dir = await getApplicationDocumentsDirectory();
-                                      final wallDir = Directory('${dir.path}${Platform.pathSeparator}chat_wallpapers');
-                                      if (!wallDir.existsSync()) {
-                                        await wallDir.create(recursive: true);
-                                      }
-                                      final dest = '${wallDir.path}${Platform.pathSeparator}wall_${chatId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-                                      await File(picked).copy(dest);
                                       setSheetState(() {
-                                        customPath = dest;
+                                        newUploadFile = File(picked);
                                         selectedType = 'custom';
                                       });
                                     }
@@ -588,10 +684,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                                 child: Container(
                                   width: 80,
                                   decoration: BoxDecoration(
-                                    color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA),
+                                    color: isDark
+                                        ? const Color(0xFF2C2C2E)
+                                        : const Color(0xFFE5E5EA),
                                     borderRadius: BorderRadius.circular(16),
                                     border: Border.all(
-                                      color: isSelected ? AppTheme.primaryColor : Colors.transparent,
+                                      color: isSelected
+                                          ? AppTheme.primaryColor
+                                          : Colors.transparent,
                                       width: 2.5,
                                     ),
                                   ),
@@ -601,7 +701,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                                       Icon(
                                         Icons.add_photo_alternate_rounded,
                                         size: 28,
-                                        color: isSelected ? AppTheme.primaryColor : AppTheme.subtitleGrey,
+                                        color: isSelected
+                                            ? AppTheme.primaryColor
+                                            : AppTheme.subtitleGrey,
                                       ),
                                       const SizedBox(height: 6),
                                       Text(
@@ -610,7 +712,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                                         style: TextStyle(
                                           fontSize: 10,
                                           fontWeight: FontWeight.bold,
-                                          color: isSelected ? AppTheme.primaryColor : AppTheme.subtitleGrey,
+                                          color: isSelected
+                                              ? AppTheme.primaryColor
+                                              : AppTheme.subtitleGrey,
                                         ),
                                       ),
                                     ],
@@ -625,24 +729,33 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                             final isSelected = selectedType == type;
 
                             return GestureDetector(
-                              onTap: () => setSheetState(() => selectedType = type),
+                              onTap: () =>
+                                  setSheetState(() => selectedType = type),
                               child: Container(
                                 width: 80,
                                 clipBehavior: Clip.antiAlias,
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(16),
                                   border: Border.all(
-                                    color: isSelected ? AppTheme.primaryColor : Colors.transparent,
+                                    color: isSelected
+                                        ? AppTheme.primaryColor
+                                        : Colors.transparent,
                                     width: 2.5,
                                   ),
                                 ),
                                 child: Stack(
                                   children: [
                                     Positioned.fill(
-                                      child: ChatWallpaperWidget.buildPresetWallpaper(type, isDark),
+                                      child:
+                                          ChatWallpaperWidget.buildPresetWallpaper(
+                                            type,
+                                            isDark,
+                                          ),
                                     ),
                                     Container(
-                                      color: Colors.black.withValues(alpha: 0.25),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.25,
+                                      ),
                                     ),
                                     Center(
                                       child: Text(
@@ -661,8 +774,13 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                                         right: 6,
                                         child: CircleAvatar(
                                           radius: 10,
-                                          backgroundColor: AppTheme.primaryColor,
-                                          child: Icon(Icons.check_rounded, size: 12, color: Colors.white),
+                                          backgroundColor:
+                                              AppTheme.primaryColor,
+                                          child: Icon(
+                                            Icons.check_rounded,
+                                            size: 12,
+                                            color: Colors.white,
+                                          ),
                                         ),
                                       ),
                                   ],
@@ -682,11 +800,18 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           children: [
                             const Text(
                               'Background Darkening',
-                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                             Text(
                               '${(dimValue * 100).round()}%',
-                              style: const TextStyle(fontSize: 13, color: AppTheme.primaryColor, fontWeight: FontWeight.bold),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: AppTheme.primaryColor,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ],
                         ),
@@ -696,7 +821,8 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           max: 0.6,
                           divisions: 12,
                           activeColor: AppTheme.primaryColor,
-                          onChanged: (val) => setSheetState(() => dimValue = val),
+                          onChanged: (val) =>
+                              setSheetState(() => dimValue = val),
                         ),
                         const SizedBox(height: 12),
                       ],
@@ -712,27 +838,81 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                               borderRadius: BorderRadius.circular(14),
                             ),
                           ),
-                          onPressed: () async {
-                            await AppPreferences.setChatWallpaper(
-                              type: selectedType,
-                              customPath: customPath,
-                              dim: dimValue,
-                              chatId: chatId,
-                            );
-                            if (mounted) {
-                              setState(() {});
-                              Navigator.of(context).pop();
-                              AppToast.show('Wallpaper updated!');
-                            }
-                          },
-                          child: const Text(
-                            'Save Wallpaper',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          onPressed: isUploading
+                              ? null
+                              : () async {
+                                  setSheetState(() => isUploading = true);
+                                  try {
+                                    final cid = int.tryParse(chatId);
+                                    if (cid != null) {
+                                      if (selectedType == 'custom' &&
+                                          newUploadFile != null) {
+                                        // Upload new background to server
+                                        await ServerApiService.instance
+                                            .uploadChatBackground(
+                                              cid,
+                                              newUploadFile!,
+                                            );
+                                      } else if (selectedType != 'custom' &&
+                                          currentServerBg != null &&
+                                          currentServerBg.isNotEmpty) {
+                                        // Remove server background if a preset or default is selected instead
+                                        await ServerApiService.instance
+                                            .removeChatBackground(cid);
+                                      } else if (selectedType == 'default' &&
+                                          customPath == null &&
+                                          currentServerBg != null) {
+                                        await ServerApiService.instance
+                                            .removeChatBackground(cid);
+                                      }
+                                    }
+
+                                    await AppPreferences.setChatWallpaper(
+                                      type: selectedType,
+                                      customPath:
+                                          newUploadFile?.path ?? customPath,
+                                      dim: dimValue,
+                                      chatId: chatId,
+                                    );
+
+                                    if (mounted) {
+                                      setState(() {});
+                                      if (cid != null &&
+                                          (newUploadFile != null ||
+                                              selectedType != 'custom')) {
+                                        await _loadDetails();
+                                        await ServerChatManager.instance
+                                            .syncChats();
+                                      }
+                                      if (context.mounted) {
+                                        Navigator.of(context).pop();
+                                        AppToast.show('Wallpaper updated!');
+                                      }
+                                    }
+                                  } catch (e) {
+                                    debugPrint('Wallpaper apply error: $e');
+                                    AppToast.show('Failed to update wallpaper');
+                                  } finally {
+                                    setSheetState(() => isUploading = false);
+                                  }
+                                },
+                          child: isUploading
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text(
+                                  'Save Wallpaper',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                         ),
                       ),
                     ],
@@ -777,7 +957,8 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
 
     try {
       // 1. Fetch Chat Details from API (GET /api/chats/:chat_id)
-      final details = _details ??
+      final details =
+          _details ??
           (chatId == null
               ? null
               : await ServerApiService.instance.getChatDetails(chatId));
@@ -786,13 +967,17 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
         for (final m in details.media) {
           final isMe = m.senderId == currentUserId;
           final targetUrl = m.url.isNotEmpty ? m.url : m.filePath;
-          final filename = m.fileName.isNotEmpty ? m.fileName : _basename(targetUrl);
-          
-          final inferred = inferAttachmentType(
-            fileType: m.fileType,
-            fileName: filename,
-            filePath: targetUrl,
-          ) ?? m.fileType;
+          final filename = m.fileName.isNotEmpty
+              ? m.fileName
+              : _basename(targetUrl);
+
+          final inferred =
+              inferAttachmentType(
+                fileType: m.fileType,
+                fileName: filename,
+                filePath: targetUrl,
+              ) ??
+              m.fileType;
           final typeLower = inferred.toLowerCase();
 
           String folder = 'doc';
@@ -804,17 +989,20 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
             folder = 'audio';
           }
 
-          items.add(ChatMediaItem(
-            id: m.id.toString(),
-            fileName: filename,
-            rawUrl: targetUrl,
-            fileType: m.fileType,
-            fileSize: 0,
-            createdAt: DateTime.tryParse(m.createdAt)?.toLocal() ?? DateTime.now(),
-            isMe: isMe,
-            senderName: isMe ? 'You' : widget.conversation.name,
-            folder: folder,
-          ));
+          items.add(
+            ChatMediaItem(
+              id: m.id.toString(),
+              fileName: filename,
+              rawUrl: targetUrl,
+              fileType: m.fileType,
+              fileSize: 0,
+              createdAt:
+                  DateTime.tryParse(m.createdAt)?.toLocal() ?? DateTime.now(),
+              isMe: isMe,
+              senderName: isMe ? 'You' : widget.conversation.name,
+              folder: folder,
+            ),
+          );
         }
       }
 
@@ -825,7 +1013,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
         if (url != null && url.isNotEmpty) {
           final isMe = m.senderId == currentUserId?.toString();
           final typeLower = m.type.toLowerCase();
-          final filename = m.fileName?.isNotEmpty == true ? m.fileName! : _basename(url);
+          final filename = m.fileName?.isNotEmpty == true
+              ? m.fileName!
+              : _basename(url);
 
           String folder = 'doc';
           if (typeLower.startsWith('image') || _isImageExt(filename)) {
@@ -837,17 +1027,19 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
           }
 
           if (!items.any((x) => x.rawUrl == url || x.id == m.id)) {
-            items.add(ChatMediaItem(
-              id: m.id,
-              fileName: filename,
-              rawUrl: url,
-              fileType: m.type,
-              fileSize: 0,
-              createdAt: m.timestamp,
-              isMe: isMe,
-              senderName: isMe ? 'You' : widget.conversation.name,
-              folder: folder,
-            ));
+            items.add(
+              ChatMediaItem(
+                id: m.id,
+                fileName: filename,
+                rawUrl: url,
+                fileType: m.type,
+                fileSize: 0,
+                createdAt: m.timestamp,
+                isMe: isMe,
+                senderName: isMe ? 'You' : widget.conversation.name,
+                folder: folder,
+              ),
+            );
           }
         }
       }
@@ -867,17 +1059,38 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
   }
 
   bool _isImageExt(String path) {
-    final ext = path.split('?').first.split('#').first.split('.').last.toLowerCase();
+    final ext = path
+        .split('?')
+        .first
+        .split('#')
+        .first
+        .split('.')
+        .last
+        .toLowerCase();
     return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp'].contains(ext);
   }
 
   bool _isVideoExt(String path) {
-    final ext = path.split('?').first.split('#').first.split('.').last.toLowerCase();
+    final ext = path
+        .split('?')
+        .first
+        .split('#')
+        .first
+        .split('.')
+        .last
+        .toLowerCase();
     return ['mp4', 'mov', 'webm', 'mkv', 'avi', '3gp'].contains(ext);
   }
 
   bool _isAudioExt(String path) {
-    final ext = path.split('?').first.split('#').first.split('.').last.toLowerCase();
+    final ext = path
+        .split('?')
+        .first
+        .split('#')
+        .first
+        .split('.')
+        .last
+        .toLowerCase();
     return ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'opus', 'flac'].contains(ext);
   }
 
@@ -909,7 +1122,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       if (_directionFilter == 'sent' && !item.isMe) return false;
       if (_directionFilter == 'received' && item.isMe) return false;
       if (_searchQuery.trim().isNotEmpty) {
-        return item.fileName.toLowerCase().contains(_searchQuery.trim().toLowerCase());
+        return item.fileName.toLowerCase().contains(
+          _searchQuery.trim().toLowerCase(),
+        );
       }
       return true;
     }).toList();
@@ -945,7 +1160,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     if (!cleared) {
       setState(() => _clearingChat = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not clear this chat. Please try again.')),
+        const SnackBar(
+          content: Text('Could not clear this chat. Please try again.'),
+        ),
       );
       return;
     }
@@ -974,9 +1191,11 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       if (!mounted) return;
       final existingIds = _details!.members.map((member) => member.id).toSet();
       final candidates = allUsers
-          .where((user) =>
-              user.id != ServerApiService.instance.currentUserId &&
-              !existingIds.contains(user.id))
+          .where(
+            (user) =>
+                user.id != ServerApiService.instance.currentUserId &&
+                !existingIds.contains(user.id),
+          )
           .toList();
       if (candidates.isEmpty) {
         setState(() => _updatingMembers = false);
@@ -1012,9 +1231,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           onPressed: selectedIds.isEmpty
                               ? null
                               : () => Navigator.pop(
-                                    sheetContext,
-                                    selectedIds.toList(),
-                                  ),
+                                  sheetContext,
+                                  selectedIds.toList(),
+                                ),
                           child: Text('Add (${selectedIds.length})'),
                         ),
                       ],
@@ -1134,7 +1353,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       } else if (File(url).existsSync()) {
         await _audioPlayer?.play(DeviceFileSource(url));
       } else {
-        final cached = await AttachmentCacheService.instance.resolveLocalPath(url);
+        final cached = await AttachmentCacheService.instance.resolveLocalPath(
+          url,
+        );
         if (cached != null && File(cached).existsSync()) {
           await _audioPlayer?.play(DeviceFileSource(cached));
         }
@@ -1164,21 +1385,24 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
   Future<void> _openDocument(ChatMediaItem item) async {
     final url = item.fullUrl;
     try {
-      if (!url.startsWith('http://') && !url.startsWith('https://') && File(url).existsSync()) {
+      if (!url.startsWith('http://') &&
+          !url.startsWith('https://') &&
+          File(url).existsSync()) {
         await OpenFilex.open(url);
         return;
       }
 
-      final cached = await AttachmentCacheService.instance.resolveLocalPath(url);
+      final cached = await AttachmentCacheService.instance.resolveLocalPath(
+        url,
+      );
       if (cached != null && File(cached).existsSync()) {
         await OpenFilex.open(cached);
         return;
       }
 
       // Download
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Opening ${item.fileName}...')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Opening ${item.fileName}...')));
 
       final headers = ServerApiService.instance.authToken != null
           ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
@@ -1194,28 +1418,33 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to download document (${res.statusCode})')),
+            SnackBar(
+              content: Text('Failed to download document (${res.statusCode})'),
+            ),
           );
         }
       }
     } catch (e) {
       debugPrint('[DOC OPEN ERROR] $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open file: $e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not open file: $e')));
       }
     }
   }
 
   void _openImageGallery(ChatMediaItem selectedItem) {
     final imageItems = _mediaItems.where((x) => x.folder == 'image').toList();
-    final initialIdx = imageItems.indexWhere((x) => x.id == selectedItem.id).clamp(0, imageItems.length - 1);
+    final initialIdx = imageItems
+        .indexWhere((x) => x.id == selectedItem.id)
+        .clamp(0, imageItems.length - 1);
 
     final photos = imageItems.map((item) {
       return ChatMessage(
         id: item.id,
-        senderId: item.isMe ? (ServerApiService.instance.currentUserId?.toString() ?? 'me') : 'peer',
+        senderId: item.isMe
+            ? (ServerApiService.instance.currentUserId?.toString() ?? 'me')
+            : 'peer',
         content: item.fileName,
         timestamp: item.createdAt,
         type: 'image',
@@ -1225,18 +1454,25 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     }).toList();
 
     if (photos.isNotEmpty) {
-      PhotoGalleryViewer.open(context, photos: photos, initialIndex: initialIdx);
+      PhotoGalleryViewer.open(
+        context,
+        photos: photos,
+        initialIndex: initialIdx,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final background = isDark ? AppTheme.darkBackground : AppTheme.lightBackground;
+    final background = isDark
+        ? AppTheme.darkBackground
+        : AppTheme.lightBackground;
     final surface = isDark ? AppTheme.darkSurface : Colors.white;
     final details = _details;
     final currentUserId = ServerApiService.instance.currentUserId;
-    final peers = details?.members
+    final peers =
+        details?.members
             .where((member) => member.id != currentUserId)
             .toList() ??
         const <UserModel>[];
@@ -1249,14 +1485,16 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     final displayName = details?.isGroup == true
         ? details?.groupName ?? widget.conversation.name
         : peers.isNotEmpty
-            ? peers.first.name
-            : widget.conversation.name;
+        ? peers.first.name
+        : widget.conversation.name;
 
     final avatar = details?.isGroup == true
         ? details?.groupAvatar ?? widget.conversation.avatarUrl
-        : (peers.isNotEmpty && peers.first.avatar != null && peers.first.avatar!.isNotEmpty
-            ? peers.first.avatar!
-            : widget.conversation.avatarUrl);
+        : (peers.isNotEmpty &&
+                  peers.first.avatar != null &&
+                  peers.first.avatar!.isNotEmpty
+              ? peers.first.avatar!
+              : widget.conversation.avatarUrl);
 
     return Scaffold(
       backgroundColor: background,
@@ -1301,7 +1539,8 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           textAlign: TextAlign.center,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
                                 fontSize: 21,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -1311,10 +1550,10 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           details?.isGroup == true
                               ? '${details?.totalMembers ?? members.length} members'
                               : (firstPeer?.isOnline == true
-                                  ? 'online'
-                                  : firstPeer?.phone ??
-                                      firstPeer?.email ??
-                                      'Calculator Chat contact'),
+                                    ? 'online'
+                                    : firstPeer?.phone ??
+                                          firstPeer?.email ??
+                                          'Calculator Chat contact'),
                           style: const TextStyle(
                             color: AppTheme.subtitleGrey,
                             fontSize: 14,
@@ -1328,7 +1567,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           const SizedBox(height: 12),
                           Text(
                             _error!,
-                            style: const TextStyle(color: AppTheme.subtitleGrey),
+                            style: const TextStyle(
+                              color: AppTheme.subtitleGrey,
+                            ),
                           ),
                           TextButton.icon(
                             onPressed: _loadDetails,
@@ -1387,19 +1628,22 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           color: Colors.amber,
                         ),
                         title: const Text('Starred Messages'),
-                        subtitle: const Text('View starred messages in this chat'),
+                        subtitle: const Text(
+                          'View starred messages in this chat',
+                        ),
                         trailing: const Icon(
                           Icons.chevron_right_rounded,
                           color: AppTheme.subtitleGrey,
                         ),
                         onTap: () async {
-                          final selectedId = await Navigator.of(context).push<String>(
-                            MaterialPageRoute(
-                              builder: (_) => StarredMessagesPage(
-                                conversation: widget.conversation,
-                              ),
-                            ),
-                          );
+                          final selectedId = await Navigator.of(context)
+                              .push<String>(
+                                MaterialPageRoute(
+                                  builder: (_) => StarredMessagesPage(
+                                    conversation: widget.conversation,
+                                  ),
+                                ),
+                              );
                           if (selectedId != null && context.mounted) {
                             Navigator.of(context).pop(selectedId);
                           }
@@ -1435,7 +1679,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           width: 24,
                           height: 24,
                           decoration: BoxDecoration(
-                            color: AppPreferences.getChatBubbleColor(chatId: widget.conversation.id),
+                            color: AppPreferences.getChatBubbleColor(
+                              chatId: widget.conversation.id,
+                            ),
                             shape: BoxShape.circle,
                             border: Border.all(color: Colors.white, width: 2),
                             boxShadow: [
@@ -1448,7 +1694,11 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                         ),
                         title: const Text('Chat Bubble Color'),
                         subtitle: Text(
-                          _getBubbleColorName(AppPreferences.getChatBubbleColor(chatId: widget.conversation.id)),
+                          _getBubbleColorName(
+                            AppPreferences.getChatBubbleColor(
+                              chatId: widget.conversation.id,
+                            ),
+                          ),
                         ),
                         trailing: const Icon(
                           Icons.chevron_right_rounded,
@@ -1464,7 +1714,11 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                         ),
                         title: const Text('Chat Background Wallpaper'),
                         subtitle: Text(
-                          _getWallpaperTypeName(AppPreferences.getWallpaperType(chatId: widget.conversation.id)),
+                          _getWallpaperTypeName(
+                            AppPreferences.getWallpaperType(
+                              chatId: widget.conversation.id,
+                            ),
+                          ),
                         ),
                         trailing: const Icon(
                           Icons.chevron_right_rounded,
@@ -1516,8 +1770,10 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                                 MaterialPageRoute(
                                   builder: (_) => ShareQrPage(
                                     title: 'Invite to Group',
-                                    subtitle: 'Share this QR code or link to invite friends to join "$displayName".',
-                                    shareLink: 'securecalc://join?group_id=${details.id}',
+                                    subtitle:
+                                        'Share this QR code or link to invite friends to join "$displayName".',
+                                    shareLink:
+                                        'securecalc://join?group_id=${details.id}',
                                   ),
                                 ),
                               );
@@ -1602,7 +1858,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                             ? const SizedBox(
                                 width: 22,
                                 height: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(
                                 Icons.delete_sweep_outlined,
@@ -1648,10 +1906,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
               const Expanded(
                 child: Text(
                   'Media, Docs & Files',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
               Container(
@@ -1671,7 +1926,8 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
               ),
               const SizedBox(width: 8),
               GestureDetector(
-                onTap: () => setState(() => _isMediaExpanded = !_isMediaExpanded),
+                onTap: () =>
+                    setState(() => _isMediaExpanded = !_isMediaExpanded),
                 child: Row(
                   children: [
                     Text(
@@ -1705,13 +1961,37 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  _buildFolderTab('image', 'Images', CupertinoIcons.photo, _imageCount, isDark),
+                  _buildFolderTab(
+                    'image',
+                    'Images',
+                    CupertinoIcons.photo,
+                    _imageCount,
+                    isDark,
+                  ),
                   const SizedBox(width: 8),
-                  _buildFolderTab('video', 'Videos', CupertinoIcons.video_camera, _videoCount, isDark),
+                  _buildFolderTab(
+                    'video',
+                    'Videos',
+                    CupertinoIcons.video_camera,
+                    _videoCount,
+                    isDark,
+                  ),
                   const SizedBox(width: 8),
-                  _buildFolderTab('audio', 'Audio', CupertinoIcons.music_note, _audioCount, isDark),
+                  _buildFolderTab(
+                    'audio',
+                    'Audio',
+                    CupertinoIcons.music_note,
+                    _audioCount,
+                    isDark,
+                  ),
                   const SizedBox(width: 8),
-                  _buildFolderTab('doc', 'Docs', CupertinoIcons.doc_text, _docCount, isDark),
+                  _buildFolderTab(
+                    'doc',
+                    'Docs',
+                    CupertinoIcons.doc_text,
+                    _docCount,
+                    isDark,
+                  ),
                 ],
               ),
             ),
@@ -1747,16 +2027,20 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                         _selectedFolder == 'image'
                             ? CupertinoIcons.photo_on_rectangle
                             : _selectedFolder == 'video'
-                                ? CupertinoIcons.video_camera
-                                : _selectedFolder == 'audio'
-                                    ? CupertinoIcons.music_note
-                                    : CupertinoIcons.doc,
+                            ? CupertinoIcons.video_camera
+                            : _selectedFolder == 'audio'
+                            ? CupertinoIcons.music_note
+                            : CupertinoIcons.doc,
                         size: 38,
                         color: AppTheme.subtitleGrey.withValues(alpha: 0.5),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'No ${_selectedFolder == 'doc' ? 'documents' : '${_selectedFolder}s'} ${_directionFilter == 'all' ? 'found' : _directionFilter == 'sent' ? 'sent' : 'received'}.',
+                        'No ${_selectedFolder == 'doc' ? 'documents' : '${_selectedFolder}s'} ${_directionFilter == 'all'
+                            ? 'found'
+                            : _directionFilter == 'sent'
+                            ? 'sent'
+                            : 'received'}.',
                         style: const TextStyle(
                           color: AppTheme.subtitleGrey,
                           fontSize: 13,
@@ -1804,10 +2088,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
             const SizedBox(width: 8),
             const Text(
               'No media shared in this chat yet.',
-              style: TextStyle(
-                color: AppTheme.subtitleGrey,
-                fontSize: 13,
-              ),
+              style: TextStyle(color: AppTheme.subtitleGrey, fontSize: 13),
             ),
           ],
         ),
@@ -1867,9 +2148,6 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
               }
 
               final item = recentItems[index];
-              final url = item.fullUrl;
-              final isLocal =
-                  !url.startsWith('http://') && !url.startsWith('https://');
 
               return GestureDetector(
                 onTap: () {
@@ -1893,33 +2171,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        if (item.folder == 'image' || item.folder == 'video') ...[
-                          if (isLocal)
-                            Image.file(
-                              File(url),
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  const Center(
-                                child: Icon(Icons.broken_image_rounded,
-                                    size: 24, color: AppTheme.subtitleGrey),
-                              ),
-                            )
-                          else
-                            Image.network(
-                              url,
-                              headers: ServerApiService.instance.authToken != null
-                                  ? {
-                                      'Authorization':
-                                          'Bearer ${ServerApiService.instance.authToken}'
-                                    }
-                                  : null,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  const Center(
-                                child: Icon(Icons.broken_image_rounded,
-                                    size: 24, color: AppTheme.subtitleGrey),
-                              ),
-                            ),
+                        if (item.folder == 'image' ||
+                            item.folder == 'video') ...[
+                          _ChatMediaThumbnail(rawUrl: item.rawUrl),
                           if (item.folder == 'video')
                             Center(
                               child: Container(
@@ -1950,8 +2204,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                                 ),
                                 const SizedBox(height: 4),
                                 Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                  ),
                                   child: Text(
                                     item.fileName,
                                     maxLines: 1,
@@ -1978,7 +2233,13 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     );
   }
 
-  Widget _buildFolderTab(String key, String label, IconData icon, int count, bool isDark) {
+  Widget _buildFolderTab(
+    String key,
+    String label,
+    IconData icon,
+    int count,
+    bool isDark,
+  ) {
     final isSelected = _selectedFolder == key;
     return InkWell(
       onTap: () => setState(() => _selectedFolder = key),
@@ -2006,7 +2267,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                color: isSelected ? Colors.white : (isDark ? Colors.white70 : Colors.black87),
+                color: isSelected
+                    ? Colors.white
+                    : (isDark ? Colors.white70 : Colors.black87),
               ),
             ),
             if (count > 0) ...[
@@ -2014,7 +2277,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                 decoration: BoxDecoration(
-                  color: isSelected ? Colors.white24 : AppTheme.subtitleGrey.withValues(alpha: 0.2),
+                  color: isSelected
+                      ? Colors.white24
+                      : AppTheme.subtitleGrey.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -2040,10 +2305,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
-          color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.18) : Colors.transparent,
+          color: isSelected
+              ? AppTheme.primaryColor.withValues(alpha: 0.18)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? AppTheme.primaryColor : AppTheme.subtitleGrey.withValues(alpha: 0.3),
+            color: isSelected
+                ? AppTheme.primaryColor
+                : AppTheme.subtitleGrey.withValues(alpha: 0.3),
             width: 1,
           ),
         ),
@@ -2073,8 +2342,6 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       ),
       itemBuilder: (context, index) {
         final item = items[index];
-        final url = item.fullUrl;
-        final isLocal = !url.startsWith('http://') && !url.startsWith('https://');
 
         return GestureDetector(
           onTap: () => _openImageGallery(item),
@@ -2083,43 +2350,17 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                if (isLocal)
-                  Image.file(
-                    File(url),
-                    fit: BoxFit.cover,
-                    errorBuilder: (c, e, s) => Container(
-                      color: Colors.grey.withValues(alpha: 0.2),
-                      child: const Icon(Icons.broken_image_rounded, size: 24),
-                    ),
-                  )
-                else
-                  Image.network(
-                    url,
-                    headers: ServerApiService.instance.authToken != null
-                        ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
-                        : null,
-                    fit: BoxFit.cover,
-                    loadingBuilder: (c, child, progress) {
-                      if (progress == null) return child;
-                      return Container(
-                        color: Colors.grey.withValues(alpha: 0.15),
-                        child: const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      );
-                    },
-                    errorBuilder: (c, e, s) => Container(
-                      color: Colors.grey.withValues(alpha: 0.2),
-                      child: const Icon(Icons.broken_image_rounded, size: 24),
-                    ),
-                  ),
+                _ChatMediaThumbnail(rawUrl: item.rawUrl),
 
                 // Direction Pill Tag (Sent / Received)
                 Positioned(
                   top: 4,
                   right: 4,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.65),
                       borderRadius: BorderRadius.circular(6),
@@ -2128,9 +2369,13 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          item.isMe ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                          item.isMe
+                              ? Icons.arrow_upward_rounded
+                              : Icons.arrow_downward_rounded,
                           size: 10,
-                          color: item.isMe ? Colors.lightBlueAccent : Colors.lightGreenAccent,
+                          color: item.isMe
+                              ? Colors.lightBlueAccent
+                              : Colors.lightGreenAccent,
                         ),
                         const SizedBox(width: 2),
                         Text(
@@ -2201,7 +2446,10 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                     top: 4,
                     right: 4,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black54,
                         borderRadius: BorderRadius.circular(4),
@@ -2209,7 +2457,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                       child: Text(
                         item.isMe ? 'Sent' : 'Recv',
                         style: TextStyle(
-                          color: item.isMe ? Colors.lightBlueAccent : Colors.lightGreenAccent,
+                          color: item.isMe
+                              ? Colors.lightBlueAccent
+                              : Colors.lightGreenAccent,
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
                         ),
@@ -2249,7 +2499,8 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      (_currentlyPlayingAudioUrl == item.fullUrl && _isPlayingAudio)
+                      (_currentlyPlayingAudioUrl == item.fullUrl &&
+                              _isPlayingAudio)
                           ? Icons.pause_rounded
                           : Icons.play_arrow_rounded,
                       color: Colors.white,
@@ -2275,20 +2526,32 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                       Row(
                         children: [
                           Icon(
-                            item.isMe ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                            item.isMe
+                                ? Icons.arrow_upward_rounded
+                                : Icons.arrow_downward_rounded,
                             size: 11,
-                            color: item.isMe ? AppTheme.primaryColor : Colors.green,
+                            color: item.isMe
+                                ? AppTheme.primaryColor
+                                : Colors.green,
                           ),
                           const SizedBox(width: 3),
                           Text(
-                            item.isMe ? 'Sent by You' : 'Received from ${item.senderName}',
+                            item.isMe
+                                ? 'Sent by You'
+                                : 'Received from ${item.senderName}',
                             style: const TextStyle(
                               fontSize: 11,
                               color: AppTheme.subtitleGrey,
                             ),
                           ),
                           if (item.fileSize > 0) ...[
-                            const Text(' · ', style: TextStyle(color: AppTheme.subtitleGrey, fontSize: 11)),
+                            const Text(
+                              ' · ',
+                              style: TextStyle(
+                                color: AppTheme.subtitleGrey,
+                                fontSize: 11,
+                              ),
+                            ),
                             Text(
                               _formatFileSize(item.fileSize),
                               style: const TextStyle(
@@ -2321,7 +2584,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                color: isDark
+                    ? const Color(0xFF2C2C2E)
+                    : const Color(0xFFF2F2F7),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -2345,9 +2610,16 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                         Row(
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 1,
+                              ),
                               decoration: BoxDecoration(
-                                color: (item.isMe ? AppTheme.primaryColor : Colors.green).withValues(alpha: 0.15),
+                                color:
+                                    (item.isMe
+                                            ? AppTheme.primaryColor
+                                            : Colors.green)
+                                        .withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
@@ -2355,7 +2627,9 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,
-                                  color: item.isMe ? AppTheme.primaryColor : Colors.green,
+                                  color: item.isMe
+                                      ? AppTheme.primaryColor
+                                      : Colors.green,
                                 ),
                               ),
                             ),
@@ -2429,6 +2703,168 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
   }
 }
 
+/// Resolves attachment-cache entries before falling back to the authenticated
+/// network URL, so media thumbnails use the same source as the full viewer.
+class _ChatMediaThumbnail extends StatefulWidget {
+  final String rawUrl;
+
+  const _ChatMediaThumbnail({required this.rawUrl});
+
+  @override
+  State<_ChatMediaThumbnail> createState() => _ChatMediaThumbnailState();
+}
+
+class _ChatMediaThumbnailState extends State<_ChatMediaThumbnail>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmerController;
+  String? _resolvedPath;
+  bool _isResolving = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmerController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1050),
+    )..repeat();
+    _resolveImage();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ChatMediaThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.rawUrl != widget.rawUrl) {
+      _resolvedPath = null;
+      _isResolving = true;
+      _resolveImage();
+    }
+  }
+
+  @override
+  void dispose() {
+    _shimmerController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _resolveImage() async {
+    final rawUrl = widget.rawUrl.trim();
+    if (rawUrl.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _resolvedPath = null;
+          _isResolving = false;
+        });
+      }
+      return;
+    }
+
+    if (File(rawUrl).existsSync()) {
+      if (mounted) {
+        setState(() {
+          _resolvedPath = rawUrl;
+          _isResolving = false;
+        });
+      }
+      return;
+    }
+
+    final networkUrl = resolveAvatarUrl(rawUrl);
+    var cached = await AttachmentCacheService.instance.resolveLocalPath(rawUrl);
+    cached ??= await AttachmentCacheService.instance.resolveLocalPath(
+      networkUrl,
+    );
+    if (!mounted || rawUrl != widget.rawUrl.trim()) return;
+
+    setState(() {
+      _resolvedPath = cached ?? networkUrl;
+      _isResolving = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isResolving) {
+      return _MediaThumbnailShimmer(controller: _shimmerController);
+    }
+
+    if (_resolvedPath == null) return const _MediaThumbnailUnavailable();
+
+    final path = _resolvedPath!;
+    final isLocal = !path.startsWith('http://') && !path.startsWith('https://');
+    final image = isLocal
+        ? Image.file(
+            File(path),
+            fit: BoxFit.cover,
+            cacheWidth: 240,
+            errorBuilder: (_, __, ___) => const _MediaThumbnailUnavailable(),
+          )
+        : Image.network(
+            path,
+            headers: ServerApiService.instance.authToken != null
+                ? {
+                    'Authorization':
+                        'Bearer ${ServerApiService.instance.authToken}',
+                  }
+                : null,
+            fit: BoxFit.cover,
+            cacheWidth: 240,
+            gaplessPlayback: true,
+            loadingBuilder: (_, child, loadingProgress) =>
+                loadingProgress == null
+                ? child
+                : _MediaThumbnailShimmer(controller: _shimmerController),
+            errorBuilder: (_, __, ___) => const _MediaThumbnailUnavailable(),
+          );
+
+    return SizedBox.expand(child: image);
+  }
+}
+
+class _MediaThumbnailShimmer extends StatelessWidget {
+  final Animation<double> controller;
+
+  const _MediaThumbnailShimmer({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => ShaderMask(
+        blendMode: BlendMode.srcATop,
+        shaderCallback: (bounds) => LinearGradient(
+          begin: Alignment(-1.5 + (controller.value * 3), -0.3),
+          end: Alignment(-0.5 + (controller.value * 3), 0.3),
+          colors: const [
+            Color(0xFFE3E6EA),
+            Color(0xFFF7F8FA),
+            Color(0xFFE3E6EA),
+          ],
+          stops: const [0.0, 0.48, 1.0],
+        ).createShader(bounds),
+        child: const ColoredBox(color: Color(0xFFE3E6EA)),
+      ),
+    );
+  }
+}
+
+class _MediaThumbnailUnavailable extends StatelessWidget {
+  const _MediaThumbnailUnavailable();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ColoredBox(
+      color: Color(0xFFE9E9EF),
+      child: Center(
+        child: Icon(
+          CupertinoIcons.photo,
+          size: 22,
+          color: AppTheme.subtitleGrey,
+        ),
+      ),
+    );
+  }
+}
+
 class _InfoCard extends StatelessWidget {
   final Color surface;
   final List<Widget> children;
@@ -2437,11 +2873,11 @@ class _InfoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-        color: surface,
-        borderRadius: BorderRadius.circular(20),
-        clipBehavior: Clip.antiAlias,
-        child: Column(mainAxisSize: MainAxisSize.min, children: children),
-      );
+    color: surface,
+    borderRadius: BorderRadius.circular(20),
+    clipBehavior: Clip.antiAlias,
+    child: Column(mainAxisSize: MainAxisSize.min, children: children),
+  );
 }
 
 class _InfoRow extends StatelessWidget {
@@ -2459,15 +2895,16 @@ class _InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(
-        children: [
-          ListTile(
-            leading: Icon(icon, color: AppTheme.primaryColor),
-            title: Text(label,
-                style: const TextStyle(color: AppTheme.subtitleGrey, fontSize: 12)),
-            subtitle: Text(value, style: const TextStyle(fontSize: 15)),
-          ),
-          if (!last)
-            const Divider(height: 1, indent: 56, endIndent: 16),
-        ],
-      );
+    children: [
+      ListTile(
+        leading: Icon(icon, color: AppTheme.primaryColor),
+        title: Text(
+          label,
+          style: const TextStyle(color: AppTheme.subtitleGrey, fontSize: 12),
+        ),
+        subtitle: Text(value, style: const TextStyle(fontSize: 15)),
+      ),
+      if (!last) const Divider(height: 1, indent: 56, endIndent: 16),
+    ],
+  );
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -10,10 +11,7 @@ class ImageEditorResult {
   final List<File> images;
   final String caption;
 
-  ImageEditorResult({
-    required this.images,
-    required this.caption,
-  });
+  ImageEditorResult({required this.images, required this.caption});
 }
 
 class DrawingStroke {
@@ -31,10 +29,7 @@ class DrawingStroke {
 class ImagePreviewEditorPage extends StatefulWidget {
   final List<File> imageFiles;
 
-  const ImagePreviewEditorPage({
-    super.key,
-    required this.imageFiles,
-  });
+  const ImagePreviewEditorPage({super.key, required this.imageFiles});
 
   @override
   State<ImagePreviewEditorPage> createState() => _ImagePreviewEditorPageState();
@@ -138,10 +133,7 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
       final double imgH = image.height.toDouble();
 
       final recorder = ui.PictureRecorder();
-      final canvas = Canvas(
-        recorder,
-        Rect.fromLTWH(0, 0, imgW, imgH),
-      );
+      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, imgW, imgH));
 
       // Draw original image
       canvas.drawImage(image, Offset.zero, Paint());
@@ -215,14 +207,24 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
               child: Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: Colors.white,
+                      size: 28,
+                    ),
                     onPressed: () => Navigator.pop(context),
                   ),
                   const Spacer(),
                   if (_isDrawingMode) ...[
                     IconButton(
-                      icon: const Icon(Icons.undo_rounded, color: Colors.white, size: 26),
-                      onPressed: _currentStrokes.isNotEmpty ? _undoStroke : null,
+                      icon: const Icon(
+                        Icons.undo_rounded,
+                        color: Colors.white,
+                        size: 26,
+                      ),
+                      onPressed: _currentStrokes.isNotEmpty
+                          ? _undoStroke
+                          : null,
                       tooltip: 'Undo draw',
                     ),
                     const SizedBox(width: 8),
@@ -230,7 +232,9 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
                   IconButton(
                     icon: Icon(
                       Icons.draw_rounded,
-                      color: _isDrawingMode ? AppTheme.primaryColor : Colors.white,
+                      color: _isDrawingMode
+                          ? AppTheme.primaryColor
+                          : Colors.white,
                       size: 26,
                     ),
                     onPressed: () {
@@ -269,10 +273,7 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
                                 width: 2.5,
                               ),
                               boxShadow: const [
-                                BoxShadow(
-                                  color: Colors.black45,
-                                  blurRadius: 4,
-                                ),
+                                BoxShadow(color: Colors.black45, blurRadius: 4),
                               ],
                             ),
                           ),
@@ -302,7 +303,10 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
 
                   return LayoutBuilder(
                     builder: (context, constraints) {
-                      final boxSize = Size(constraints.maxWidth, constraints.maxHeight);
+                      final boxSize = Size(
+                        constraints.maxWidth,
+                        constraints.maxHeight,
+                      );
 
                       return GestureDetector(
                         onPanStart: _isDrawingMode
@@ -388,7 +392,9 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: selected ? AppTheme.primaryColor : Colors.transparent,
+                            color: selected
+                                ? AppTheme.primaryColor
+                                : Colors.transparent,
                             width: 2.5,
                           ),
                         ),
@@ -418,14 +424,14 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
                       decoration: BoxDecoration(
                         color: const Color(0xFF1C1C1E),
                         borderRadius: BorderRadius.circular(24),
-                        border: Border.all(
-                          color: Colors.white12,
-                          width: 1,
-                        ),
+                        border: Border.all(color: Colors.white12, width: 1),
                       ),
                       child: TextField(
                         controller: _captionController,
-                        style: const TextStyle(color: Colors.white, fontSize: 15),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                        ),
                         decoration: const InputDecoration(
                           hintText: 'Add a caption…',
                           hintStyle: TextStyle(
@@ -477,10 +483,7 @@ class _DrawingCanvasPainter extends CustomPainter {
   final List<DrawingStroke> strokes;
   final Size imageSize;
 
-  _DrawingCanvasPainter({
-    required this.strokes,
-    required this.imageSize,
-  });
+  _DrawingCanvasPainter({required this.strokes, required this.imageSize});
 
   @override
   void paint(Canvas canvas, Size size) {

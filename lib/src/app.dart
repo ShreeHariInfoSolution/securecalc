@@ -1,10 +1,13 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
+
 import 'core/config/app_preferences.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/font_size_controller.dart';
 import 'core/theme/theme_controller.dart';
 import 'features/calculator/presentation/pages/calculator_page.dart';
+import 'features/chat/domain/services/push_service.dart';
 import 'features/chat/domain/services/server_api_service.dart';
 import 'features/chat/domain/services/server_chat_manager.dart';
 import 'features/chat/domain/services/socket_chat_service.dart';
@@ -20,8 +23,7 @@ class SynqChatApp extends StatefulWidget {
   State<SynqChatApp> createState() => _SynqChatAppState();
 }
 
-class _SynqChatAppState extends State<SynqChatApp>
-    with WidgetsBindingObserver {
+class _SynqChatAppState extends State<SynqChatApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
@@ -30,9 +32,11 @@ class _SynqChatAppState extends State<SynqChatApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (AppPreferences.isPickerActive || AppPreferences.isChangingSettings) return;
+    if (AppPreferences.isPickerActive || AppPreferences.isChangingSettings)
+      return;
 
     if (state == AppLifecycleState.resumed) {
+      unawaited(PushService.instance.clearBadge());
       if (ServerApiService.instance.authToken != null) {
         SocketChatService.instance.connect();
         unawaited(ServerChatManager.instance.syncChats());
@@ -86,9 +90,8 @@ class _SynqChatAppState extends State<SynqChatApp>
               themeMode: themeMode,
               builder: (context, child) {
                 return MediaQuery(
-                  data: MediaQuery.of(context).copyWith(
-                    textScaler: TextScaler.linear(fontScale),
-                  ),
+                  data: MediaQuery.of(context)
+                      .copyWith(textScaler: TextScaler.linear(fontScale)),
                   child: child!,
                 );
               },

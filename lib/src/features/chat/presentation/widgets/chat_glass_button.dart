@@ -1,5 +1,7 @@
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
+
 import '../../../../core/theme/app_theme.dart';
 
 class ChatGlassButton extends StatelessWidget {
@@ -32,15 +34,13 @@ class ChatGlassButton extends StatelessWidget {
           height: size,
           padding: padding,
           decoration: BoxDecoration(
-            color: customColor ??
+            color:
+                customColor ??
                 (isDark
                     ? const Color(0xFF2C2C2E).withValues(alpha: 0.75)
                     : Colors.white.withValues(alpha: 0.82)),
             shape: BoxShape.circle,
-            border: Border.all(
-              color: AppTheme.glassBorder(isDark),
-              width: 0.8,
-            ),
+            border: Border.all(color: AppTheme.glassBorder(isDark), width: 0.8),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
@@ -57,7 +57,9 @@ class ChatGlassButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: tooltip != null ? Tooltip(message: tooltip!, child: button) : button,
+      child: tooltip != null
+          ? Tooltip(message: tooltip!, child: button)
+          : button,
     );
   }
 }

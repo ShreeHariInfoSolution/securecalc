@@ -22,7 +22,9 @@ class _ScanQrPageState extends State<ScanQrPage> {
 
   void _onDetect(BarcodeCapture capture) {
     if (_handled) return;
-    final value = capture.barcodes.isEmpty ? null : capture.barcodes.first.rawValue;
+    final value = capture.barcodes.isEmpty
+        ? null
+        : capture.barcodes.first.rawValue;
     if (value == null || value.trim().isEmpty) return;
     _handled = true;
     _controller.stop();

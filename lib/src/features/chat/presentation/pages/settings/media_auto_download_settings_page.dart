@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../../../../core/config/app_preferences.dart';
 import '../../../../../core/theme/app_theme.dart';
 import '../../../../../core/utils/app_toast.dart';
@@ -30,8 +31,9 @@ class _MediaAutoDownloadSettingsPageState
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor:
-          isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
+      backgroundColor: isDark
+          ? AppTheme.darkBackground
+          : AppTheme.lightBackground,
       appBar: AppBar(
         title: const Text('Media Auto-Download'),
         elevation: 0,
@@ -45,10 +47,7 @@ class _MediaAutoDownloadSettingsPageState
               padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Text(
                 'Automatically download incoming media files when received. If disabled, a download button will be displayed on each file.',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: AppTheme.subtitleGrey,
-                ),
+                style: TextStyle(fontSize: 13, color: AppTheme.subtitleGrey),
               ),
             ),
             const SizedBox(height: 16),
@@ -67,8 +66,10 @@ class _MediaAutoDownloadSettingsPageState
               child: Column(
                 children: [
                   SwitchListTile(
-                    secondary: const Icon(Icons.photo_outlined,
-                        color: AppTheme.primaryColor),
+                    secondary: const Icon(
+                      Icons.photo_outlined,
+                      color: AppTheme.primaryColor,
+                    ),
                     activeTrackColor: AppTheme.onlineGreen,
                     title: const Text(
                       'Photos / Images',
@@ -103,8 +104,10 @@ class _MediaAutoDownloadSettingsPageState
                         : Colors.black.withValues(alpha: 0.06),
                   ),
                   SwitchListTile(
-                    secondary: const Icon(Icons.videocam_outlined,
-                        color: AppTheme.primaryColor),
+                    secondary: const Icon(
+                      Icons.videocam_outlined,
+                      color: AppTheme.primaryColor,
+                    ),
                     activeTrackColor: AppTheme.onlineGreen,
                     title: const Text(
                       'Videos',
@@ -139,8 +142,10 @@ class _MediaAutoDownloadSettingsPageState
                         : Colors.black.withValues(alpha: 0.06),
                   ),
                   SwitchListTile(
-                    secondary: const Icon(Icons.insert_drive_file_outlined,
-                        color: AppTheme.primaryColor),
+                    secondary: const Icon(
+                      Icons.insert_drive_file_outlined,
+                      color: AppTheme.primaryColor,
+                    ),
                     activeTrackColor: AppTheme.onlineGreen,
                     title: const Text(
                       'Documents & Audio',

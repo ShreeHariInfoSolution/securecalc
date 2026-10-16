@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:path_provider/path_provider.dart';
+
 import '../../../../core/config/app_preferences.dart';
 import '../../../../core/utils/app_logger.dart';
 import '../entities/chat_message.dart';
@@ -70,16 +72,21 @@ class P2pChatService {
       final senderDisplayName =
           (jsonMap['senderDisplayName'] as String?) ?? senderDeviceId ?? 'Peer';
       final messageId =
-          (jsonMap['messageId'] as String?) ?? DateTime.now().millisecondsSinceEpoch.toString();
+          (jsonMap['messageId'] as String?) ??
+          DateTime.now().millisecondsSinceEpoch.toString();
       final timestamp = DateTime.fromMillisecondsSinceEpoch(
-          (jsonMap['timestamp'] as int?) ?? DateTime.now().millisecondsSinceEpoch);
+        (jsonMap['timestamp'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
+      );
 
-      if (senderDeviceId == null || senderDeviceId == AppPreferences.getDeviceIdSync()) {
+      if (senderDeviceId == null ||
+          senderDeviceId == AppPreferences.getDeviceIdSync()) {
         return; // Ignore self or invalid
       }
 
       if (type == 'READ_ACK') {
-        await LocalChatStorage.instance.markAllOutgoingMessagesAsRead(senderDeviceId);
+        await LocalChatStorage.instance.markAllOutgoingMessagesAsRead(
+          senderDeviceId,
+        );
         _incomingMessageController.add({
           'deviceId': senderDeviceId,
           'type': 'READ_ACK',
@@ -120,7 +127,8 @@ class P2pChatService {
           final tempDir = await getTemporaryDirectory();
           final ext = mediaType == 'video' ? 'mp4' : 'jpg';
           final file = File(
-              '${tempDir.path}/p2p_media_${DateTime.now().millisecondsSinceEpoch}.$ext');
+            '${tempDir.path}/p2p_media_${DateTime.now().millisecondsSinceEpoch}.$ext',
+          );
           await file.writeAsBytes(bytes);
           savedFilePath = file.path;
         }
@@ -128,7 +136,9 @@ class P2pChatService {
         message = ChatMessage(
           id: messageId,
           senderId: senderDeviceId,
-          content: decryptedCaption.isNotEmpty ? decryptedCaption : '[Attachment]',
+          content: decryptedCaption.isNotEmpty
+              ? decryptedCaption
+              : '[Attachment]',
           timestamp: timestamp,
           type: mediaType,
           mediaUrl: savedFilePath,
@@ -156,7 +166,9 @@ class P2pChatService {
         sendReadAck(peerIp: datagram.address.address);
       }
 
-      AppLogger.info('[P2P CHAT] Received message from $senderDisplayName ($senderDeviceId)');
+      AppLogger.info(
+        '[P2P CHAT] Received message from $senderDisplayName ($senderDeviceId)',
+      );
     } catch (e) {
       AppLogger.error('[P2P CHAT] Error parsing incoming packet: $e');
     }
@@ -271,7 +283,9 @@ class P2pChatService {
     final chatMsg = ChatMessage(
       id: messageId,
       senderId: 'user',
-      content: (caption != null && caption.isNotEmpty) ? caption : '[Attachment]',
+      content: (caption != null && caption.isNotEmpty)
+          ? caption
+          : '[Attachment]',
       timestamp: timestamp,
       type: mediaType,
       mediaUrl: filePath,

@@ -13,6 +13,7 @@ import 'package:securecalc/src/features/private_folder/presentation/pages/privat
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/models/server_models.dart';
 import '../../domain/services/local_chat_storage.dart';
+import '../../domain/services/attachment_cache_service.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
 import '../../domain/services/chat_invite_service.dart';
@@ -53,6 +54,8 @@ class _ConversationListPageState extends State<ConversationListPage> {
     super.initState();
     _scrollController.addListener(_onScroll);
     _searchController.addListener(_onSearchChanged);
+    _searchFocusNode.addListener(_onSearchFocusChanged);
+    _warmAttachmentCache();
     _refreshServerChats();
   }
 
@@ -60,6 +63,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
   void dispose() {
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
+    _searchFocusNode.removeListener(_onSearchFocusChanged);
     _searchFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -67,6 +71,15 @@ class _ConversationListPageState extends State<ConversationListPage> {
 
   void _onSearchChanged() {
     setState(() {});
+  }
+
+  void _onSearchFocusChanged() {
+    setState(() {});
+  }
+
+  Future<void> _warmAttachmentCache() async {
+    await AttachmentCacheService.instance.warmUp();
+    if (mounted) setState(() {});
   }
 
   void _onScroll() {
@@ -826,6 +839,10 @@ class _ConversationListPageState extends State<ConversationListPage> {
                           Expanded(
                             child: TextField(
                               controller: searchUserCtrl,
+                              textCapitalization: TextCapitalization.sentences,
+                              textInputAction: TextInputAction.search,
+                              keyboardType: TextInputType.text,
+                              onSubmitted: (_) => FocusScope.of(context).unfocus(),
                               onChanged: (val) {
                                 searchTimer?.cancel();
                                 searchTimer = Timer(
@@ -874,7 +891,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                                     ),
                                   ),
                                   subtitle: Text(
-                                    u.isOnline ? 'Online' : 'Offline',
+                                    u.isOnline ? 'Online' : 'Last seen recently',
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: u.isOnline
@@ -998,6 +1015,9 @@ class _ConversationListPageState extends State<ConversationListPage> {
             final archivedTotal = conversations
                 .where((c) => c.isArchived)
                 .length;
+            final archivedUnreadTotal = conversations
+                .where((c) => c.isArchived)
+                .fold<int>(0, (sum, c) => sum + c.unreadCount);
 
             final query = _searchController.text.trim().toLowerCase();
             final filtered =
@@ -1034,10 +1054,12 @@ class _ConversationListPageState extends State<ConversationListPage> {
             final showFilterChips =
                 _showFilterChips ||
                 _filter != ConversationFilter.all ||
+                _searchFocusNode.hasFocus ||
                 _searchController.text.isNotEmpty;
 
             return CustomScrollView(
               controller: _scrollController,
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               physics: const BouncingScrollPhysics(
                 parent: AlwaysScrollableScrollPhysics(),
               ),
@@ -1054,6 +1076,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                     filter: _filter,
                     showFilterChips: showFilterChips,
                     searchController: _searchController,
+                    searchFocusNode: _searchFocusNode,
                     onFilterSelected: (f) => setState(() => _filter = f),
                     onMoreTap: () => _showMoreOptionsMenu(context),
                     onNewChatTap: () => _showNewChatActionsSheet(),
@@ -1143,6 +1166,28 @@ class _ConversationListPageState extends State<ConversationListPage> {
                                         ),
                                       ),
                                       const Spacer(),
+                                      if (archivedUnreadTotal > 0) ...[
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 7,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: AppTheme.primaryColor,
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                          ),
+                                          child: Text(
+                                            '$archivedUnreadTotal',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
                                       if (archivedTotal > 0)
                                         Text(
                                           '$archivedTotal',
@@ -1196,6 +1241,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                             isTyping: conv.isTyping,
                             showDivider: convIndex < filtered.length - 1,
                             onTap: () {
+                              FocusScope.of(context).unfocus();
                               Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (context) => VaultEdgePanelWrapper(
@@ -1230,6 +1276,7 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
   final ConversationFilter filter;
   final bool showFilterChips;
   final TextEditingController searchController;
+  final FocusNode searchFocusNode;
   final Function(ConversationFilter) onFilterSelected;
   final VoidCallback onMoreTap;
   final VoidCallback onNewChatTap;
@@ -1243,16 +1290,17 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.filter,
     required this.showFilterChips,
     required this.searchController,
+    required this.searchFocusNode,
     required this.onFilterSelected,
     required this.onMoreTap,
     required this.onNewChatTap,
   });
 
   @override
-  double get minExtent => 52.0 + topPadding;
+  double get minExtent => 56.0 + topPadding;
 
   @override
-  double get maxExtent => (showFilterChips ? 186.0 : 138.0) + topPadding;
+  double get maxExtent => (showFilterChips ? 208.0 : 160.0) + topPadding;
 
   @override
   Widget build(
@@ -1263,8 +1311,8 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
     final maxScroll = maxExtent - minExtent;
     final progress = (shrinkOffset / maxScroll).clamp(0.0, 1.0);
 
-    final largeTitleOpacity = (1.0 - (shrinkOffset / 40.0)).clamp(0.0, 1.0);
-    final smallTitleOpacity = ((shrinkOffset - 30.0) / 25.0).clamp(0.0, 1.0);
+    final largeTitleOpacity = (1.0 - (shrinkOffset / 48.0)).clamp(0.0, 1.0);
+    final smallTitleOpacity = ((shrinkOffset - 34.0) / 26.0).clamp(0.0, 1.0);
 
     return ClipRect(
       child: BackdropFilter(
@@ -1289,32 +1337,27 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
                   top: 0,
                   left: 0,
                   right: 0,
-                  height: 52,
+                  height: 56,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 14.0),
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // Left: More Circular Glass Button (...)
+                        // Left: More actions button
                         GestureDetector(
                           onTap: onMoreTap,
                           child: Container(
-                            width: 38,
-                            height: 38,
+                            width: 40,
+                            height: 40,
                             decoration: BoxDecoration(
                               color: isDark
                                   ? const Color(0xFF2C2C2E)
-                                        .withValues(alpha: 0.75)
-                                  : Colors.white.withValues(alpha: 0.85),
+                                  : const Color(0xFFE9E9EF),
                               shape: BoxShape.circle,
-                              border: Border.all(
-                                color: AppTheme.glassBorder(isDark),
-                                width: 0.8,
-                              ),
                             ),
                             child: Icon(
                               CupertinoIcons.ellipsis,
-                              size: 20,
+                              size: 21,
                               color: AppTheme.primaryText(isDark),
                             ),
                           ),
@@ -1334,19 +1377,19 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
                           ),
                         ),
 
-                        // Right: Green Circular Compose Button (+)
+                        // Right: Compose button
                         GestureDetector(
                           onTap: onNewChatTap,
                           child: Container(
-                            width: 38,
-                            height: 38,
+                            width: 40,
+                            height: 40,
                             decoration: const BoxDecoration(
-                              color: Color(0xFF25D366),
+                              color: AppTheme.primaryColor,
                               shape: BoxShape.circle,
                             ),
                             child: const Icon(
                               CupertinoIcons.add,
-                              size: 22,
+                              size: 23,
                               color: Colors.white,
                             ),
                           ),
@@ -1358,7 +1401,7 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
 
                 // Collapsing Section: Large Title "Chats", Search Bar & Filter Chips
                 Positioned(
-                  top: 52,
+                  top: 56,
                   left: 0,
                   right: 0,
                   bottom: 0,
@@ -1371,7 +1414,7 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
                           physics: const NeverScrollableScrollPhysics(),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 14.0,
+                              horizontal: 16.0,
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1381,25 +1424,25 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
                                 Text(
                                   'Chats',
                                   style: TextStyle(
-                                    fontSize: 32,
+                                    fontSize: 34,
                                     fontWeight: FontWeight.bold,
-                                    letterSpacing: -0.8,
+                                    letterSpacing: -0.9,
                                     color: AppTheme.primaryText(isDark),
                                   ),
                                 ),
-                                const SizedBox(height: 8),
+                                const SizedBox(height: 10),
 
-                                // Search Bar ("Ask Meta AI or Search")
+                                // Search bar
                                 Container(
-                                  height: 38,
+                                  height: 40,
                                   padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
+                                    horizontal: 13,
                                   ),
                                   decoration: BoxDecoration(
                                     color: isDark
-                                        ? const Color(0xFF1C1C1E)
-                                        : const Color(0xFFF0F0F2),
-                                    borderRadius: BorderRadius.circular(19),
+                                        ? const Color(0xFF2C2C2E)
+                                        : const Color(0xFFE9E9EF),
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Row(
                                     children: [
@@ -1408,16 +1451,21 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
                                         size: 18,
                                         color: AppTheme.secondaryText(isDark),
                                       ),
-                                      const SizedBox(width: 8),
+                                      const SizedBox(width: 9),
                                       Expanded(
                                         child: TextField(
                                           controller: searchController,
+                                          focusNode: searchFocusNode,
+                                          textCapitalization: TextCapitalization.sentences,
+                                          textInputAction: TextInputAction.search,
+                                          keyboardType: TextInputType.text,
+                                          onSubmitted: (_) => searchFocusNode.unfocus(),
                                           style: TextStyle(
                                             fontSize: 15,
                                             color: AppTheme.primaryText(isDark),
                                           ),
                                           decoration: InputDecoration(
-                                            hintText: 'Ask Meta AI or Search',
+                                            hintText: 'Search conversations',
                                             hintStyle: TextStyle(
                                               fontSize: 15,
                                               color: AppTheme.secondaryText(
@@ -1436,7 +1484,7 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
 
                                 // Horizontal Filter Chips
                                 if (showFilterChips) ...[
-                                  const SizedBox(height: 8),
+                                  const SizedBox(height: 10),
                                   SingleChildScrollView(
                                     scrollDirection: Axis.horizontal,
                                     physics: const BouncingScrollPhysics(),
@@ -1504,7 +1552,7 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
                                     ),
                                   ),
                                 ],
-                                const SizedBox(height: 8),
+                                const SizedBox(height: 12),
                               ],
                             ),
                           ),

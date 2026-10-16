@@ -1,6 +1,8 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+
 import '../models/server_models.dart';
 import 'server_api_service.dart';
 
@@ -13,23 +15,37 @@ class SocketChatService {
   IO.Socket? _socket;
 
   // Stream controllers for incoming server events
-  final _messageStreamController = StreamController<ServerMessageModel>.broadcast();
-  final _messageEditedStreamController = StreamController<Map<String, dynamic>>.broadcast();
-  final _messageDeletedStreamController = StreamController<Map<String, dynamic>>.broadcast();
-  final _messageReactionStreamController = StreamController<Map<String, dynamic>>.broadcast();
-  final _readStreamController = StreamController<Map<String, dynamic>>.broadcast();
-  final _deliveredStreamController = StreamController<Map<String, dynamic>>.broadcast();
-  final _typingStreamController = StreamController<Map<String, dynamic>>.broadcast();
-  final _presenceStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _messageStreamController =
+      StreamController<ServerMessageModel>.broadcast();
+  final _messageEditedStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _messageDeletedStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _messageReactionStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _readStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _deliveredStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _typingStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _presenceStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
-  Stream<ServerMessageModel> get onNewMessage => _messageStreamController.stream;
-  Stream<Map<String, dynamic>> get onMessageEdited => _messageEditedStreamController.stream;
-  Stream<Map<String, dynamic>> get onMessageDeleted => _messageDeletedStreamController.stream;
-  Stream<Map<String, dynamic>> get onMessageReaction => _messageReactionStreamController.stream;
+  Stream<ServerMessageModel> get onNewMessage =>
+      _messageStreamController.stream;
+  Stream<Map<String, dynamic>> get onMessageEdited =>
+      _messageEditedStreamController.stream;
+  Stream<Map<String, dynamic>> get onMessageDeleted =>
+      _messageDeletedStreamController.stream;
+  Stream<Map<String, dynamic>> get onMessageReaction =>
+      _messageReactionStreamController.stream;
   Stream<Map<String, dynamic>> get onRead => _readStreamController.stream;
-  Stream<Map<String, dynamic>> get onDelivered => _deliveredStreamController.stream;
+  Stream<Map<String, dynamic>> get onDelivered =>
+      _deliveredStreamController.stream;
   Stream<Map<String, dynamic>> get onTyping => _typingStreamController.stream;
-  Stream<Map<String, dynamic>> get onPresence => _presenceStreamController.stream;
+  Stream<Map<String, dynamic>> get onPresence =>
+      _presenceStreamController.stream;
 
   bool get isConnected => _socket?.connected == true;
 
@@ -48,7 +64,9 @@ class SocketChatService {
         debugPrint('[SOCKET] Already connected with active user token.');
         return;
       }
-      debugPrint('[SOCKET] Token changed or socket inactive. Reconnecting socket for active user...');
+      debugPrint(
+        '[SOCKET] Token changed or socket inactive. Reconnecting socket for active user...',
+      );
       disconnect();
     }
 
@@ -114,9 +132,7 @@ class SocketChatService {
             debugPrint('[SOCKET] Incoming message payload has no message id.');
             return;
           }
-          _messageStreamController.add(
-            ServerMessageModel.fromJson(payload),
-          );
+          _messageStreamController.add(ServerMessageModel.fromJson(payload));
         } catch (error) {
           debugPrint('[SOCKET] Could not parse incoming message: $error');
         }
@@ -262,10 +278,7 @@ class SocketChatService {
   }
 
   /// edit_message: message_id, message
-  void editMessage({
-    required int messageId,
-    required String message,
-  }) {
+  void editMessage({required int messageId, required String message}) {
     if (!isConnected) return;
 
     final payload = <String, dynamic>{
@@ -281,24 +294,16 @@ class SocketChatService {
   }
 
   /// delete_message: message_id
-  void deleteMessage({
-    required int messageId,
-  }) {
+  void deleteMessage({required int messageId}) {
     if (!isConnected) return;
 
-    final payload = <String, dynamic>{
-      'message_id': messageId,
-      'id': messageId,
-    };
+    final payload = <String, dynamic>{'message_id': messageId, 'id': messageId};
     debugPrint('[SOCKET] Emitting delete_message: $payload');
     _socket!.emit('delete_message', payload);
   }
 
   /// react_message: message_id, chat_react
-  void reactMessage({
-    required int messageId,
-    required String chatReact,
-  }) {
+  void reactMessage({required int messageId, required String chatReact}) {
     if (!isConnected) return;
 
     final payload = <String, dynamic>{
@@ -311,9 +316,7 @@ class SocketChatService {
   }
 
   /// mark_read: chat_head_id
-  void markRead({
-    required int chatHeadId,
-  }) {
+  void markRead({required int chatHeadId}) {
     if (!isConnected) return;
 
     final payload = <String, dynamic>{
@@ -325,10 +328,7 @@ class SocketChatService {
   }
 
   /// typing: chat_head_id, is_typing
-  void sendTyping({
-    required int chatHeadId,
-    required bool isTyping,
-  }) {
+  void sendTyping({required int chatHeadId, required bool isTyping}) {
     if (!isConnected) return;
 
     final payload = <String, dynamic>{

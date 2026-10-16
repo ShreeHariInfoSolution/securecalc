@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../../../../core/widgets/ios_avatar.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/services/local_chat_storage.dart';
@@ -38,11 +39,12 @@ class ChatDetailHeader extends StatelessWidget {
       valueListenable: LocalChatStorage.instance.conversationsNotifier,
       builder: (context, conversations, _) {
         final liveConv = conversations.cast<ChatConversation?>().firstWhere(
-              (c) => c?.id == conversation.id,
-              orElse: () => null,
-            );
+          (c) => c?.id == conversation.id,
+          orElse: () => null,
+        );
 
-        final displayChatName = (liveConv != null &&
+        final displayChatName =
+            (liveConv != null &&
                 liveConv.name.isNotEmpty &&
                 !liveConv.name.startsWith('User #') &&
                 !liveConv.name.startsWith('Chat #'))
@@ -51,10 +53,8 @@ class ChatDetailHeader extends StatelessWidget {
 
         final displayChatAvatar =
             (liveConv != null && liveConv.avatarUrl.isNotEmpty)
-                ? liveConv.avatarUrl
-                : (chatAvatar.isNotEmpty
-                    ? chatAvatar
-                    : conversation.avatarUrl);
+            ? liveConv.avatarUrl
+            : (chatAvatar.isNotEmpty ? chatAvatar : conversation.avatarUrl);
 
         final unreadTotal = conversations.fold<int>(
           0,
@@ -213,7 +213,7 @@ class ChatDetailHeader extends StatelessWidget {
                                           statusText = 'Online';
                                           statusColor = const Color(0xFF34C759);
                                         } else {
-                                          statusText = 'Offline';
+                                          statusText = 'Last seen recently';
                                           statusColor = const Color(0xFF8E8E93);
                                         }
 
@@ -368,11 +368,7 @@ class GlassButton extends StatelessWidget {
       child: SizedBox(
         width: width,
         height: height,
-        child: GlassSurface(
-          radius: radius,
-          isDark: isDark,
-          child: child,
-        ),
+        child: GlassSurface(radius: radius, isDark: isDark, child: child),
       ),
     );
   }

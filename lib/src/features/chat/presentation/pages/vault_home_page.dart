@@ -15,10 +15,7 @@ import 'vault_dashboard_page.dart';
 class VaultHomePage extends StatefulWidget {
   final bool isDuressMode;
 
-  const VaultHomePage({
-    super.key,
-    this.isDuressMode = false,
-  });
+  const VaultHomePage({super.key, this.isDuressMode = false});
 
   @override
   State<VaultHomePage> createState() => _VaultHomePageState();
@@ -78,9 +75,7 @@ class _VaultHomePageState extends State<VaultHomePage> {
     if (_isLoggingIn) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(
-          child: CircularProgressIndicator(color: Colors.white),
-        ),
+        body: Center(child: CircularProgressIndicator(color: Colors.white)),
       );
     }
 
@@ -128,9 +123,7 @@ class _VaultHomePageState extends State<VaultHomePage> {
             },
           ),
           */
-          child: ConversationListPage(
-            isDuressMode: widget.isDuressMode,
-          ),
+          child: ConversationListPage(isDuressMode: widget.isDuressMode),
         ),
       ),
     );

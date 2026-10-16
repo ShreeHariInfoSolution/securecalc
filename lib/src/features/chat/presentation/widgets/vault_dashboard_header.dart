@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+
 import '../../../../core/config/app_preferences.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/ios_avatar.dart';

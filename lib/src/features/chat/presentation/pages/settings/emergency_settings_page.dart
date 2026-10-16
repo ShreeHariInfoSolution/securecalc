@@ -12,8 +12,9 @@ class EmergencySettingsPage extends StatelessWidget {
       context: context,
       builder: (context) {
         return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           title: const Row(
             children: [
               Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
@@ -50,7 +51,9 @@ class EmergencySettingsPage extends StatelessWidget {
               child: const Text(
                 'Wipe All Data',
                 style: TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.bold),
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -81,7 +84,9 @@ class EmergencySettingsPage extends StatelessWidget {
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.3 : 0.03,
+                            ),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
@@ -92,48 +97,66 @@ class EmergencySettingsPage extends StatelessWidget {
                         borderRadius: BorderRadius.circular(16),
                         clipBehavior: Clip.antiAlias,
                         child: Column(
-                        children: [
-                          ListTile(
-                            leading: const Icon(Icons.cleaning_services_rounded,
-                                color: Colors.blue),
-                            title: const Text('Clear Local Cache',
+                          children: [
+                            ListTile(
+                              leading: const Icon(
+                                Icons.cleaning_services_rounded,
+                                color: Colors.blue,
+                              ),
+                              title: const Text(
+                                'Clear Local Cache',
                                 style: TextStyle(
-                                    fontSize: 14, fontWeight: FontWeight.w600)),
-                            subtitle: const Text(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              subtitle: const Text(
                                 'Frees space without deleting messages',
-                                style: TextStyle(fontSize: 12)),
-                            onTap: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text('Local media cache cleared.')),
-                              );
-                            },
-                          ),
-                          Divider(
-                            height: 1,
-                            color: isDark
-                                ? const Color(0xFF2C2C2E)
-                                : const Color(0xFFE5E5EA),
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.vpn_key_rounded,
-                                color: Colors.orange),
-                            title: const Text('Export Encrypted Backup Key',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                              onTap: () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Local media cache cleared.'),
+                                  ),
+                                );
+                              },
+                            ),
+                            Divider(
+                              height: 1,
+                              color: isDark
+                                  ? const Color(0xFF2C2C2E)
+                                  : const Color(0xFFE5E5EA),
+                            ),
+                            ListTile(
+                              leading: const Icon(
+                                Icons.vpn_key_rounded,
+                                color: Colors.orange,
+                              ),
+                              title: const Text(
+                                'Export Encrypted Backup Key',
                                 style: TextStyle(
-                                    fontSize: 14, fontWeight: FontWeight.w600)),
-                            subtitle: const Text('Backup encryption seed safely',
-                                style: TextStyle(fontSize: 12)),
-                            onTap: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              subtitle: const Text(
+                                'Backup encryption seed safely',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                              onTap: () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
                                     content: Text(
-                                        'Key copied to secret clipboard.')),
-                              );
-                            },
-                          ),
-                        ],
+                                      'Key copied to secret clipboard.',
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
                     ),
                     const SizedBox(height: 24),
                     OutlinedButton.icon(

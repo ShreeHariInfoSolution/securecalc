@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/ui/vault_motion.dart';
 import '../../../../core/ui/vault_surface.dart';
@@ -73,7 +74,7 @@ class _VaultActionCardState extends State<VaultActionCard>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     return RepaintBoundary(
       child: GestureDetector(
         onTapDown: _handleTapDown,
@@ -105,8 +106,9 @@ class _VaultActionCardState extends State<VaultActionCard>
                             borderRadius: BorderRadius.circular(16),
                             boxShadow: [
                               BoxShadow(
-                                color: widget.iconGradient.first
-                                    .withValues(alpha: 0.3),
+                                color: widget.iconGradient.first.withValues(
+                                  alpha: 0.3,
+                                ),
                                 blurRadius: 8,
                                 offset: const Offset(0, 3),
                               ),
@@ -132,7 +134,9 @@ class _VaultActionCardState extends State<VaultActionCard>
                                       style: TextStyle(
                                         fontSize: 19,
                                         fontWeight: FontWeight.bold,
-                                        color: isDark ? Colors.white : Colors.black,
+                                        color: isDark
+                                            ? Colors.white
+                                            : Colors.black,
                                         letterSpacing: -0.3,
                                       ),
                                       overflow: TextOverflow.ellipsis,
@@ -142,9 +146,13 @@ class _VaultActionCardState extends State<VaultActionCard>
                                   // Pill Badge
                                   Container(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 4),
+                                      horizontal: 10,
+                                      vertical: 4,
+                                    ),
                                     decoration: VaultSurface.badgeDecoration(
-                                        context, widget.badgeColor),
+                                      context,
+                                      widget.badgeColor,
+                                    ),
                                     child: Text(
                                       widget.badgeText,
                                       style: TextStyle(

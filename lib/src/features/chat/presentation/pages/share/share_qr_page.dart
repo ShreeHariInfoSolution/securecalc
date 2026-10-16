@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+
 import '../../../../../core/theme/app_theme.dart';
 
 class ShareQrPage extends StatefulWidget {
@@ -24,16 +25,21 @@ class ShareQrPage extends StatefulWidget {
 class _ShareQrPageState extends State<ShareQrPage> {
   void _showMessage(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : null),
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : null,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     return Scaffold(
-      backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
+      backgroundColor: isDark
+          ? AppTheme.darkBackground
+          : AppTheme.lightBackground,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -41,7 +47,10 @@ class _ShareQrPageState extends State<ShareQrPage> {
           icon: const Icon(CupertinoIcons.back),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Text(widget.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        title: Text(
+          widget.title,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
         centerTitle: true,
       ),
       body: SafeArea(
@@ -105,11 +114,14 @@ class _ShareQrPageState extends State<ShareQrPage> {
                         ),
                       ),
                       onPressed: () {
-                        final String fallbackLink = widget.shareLink.replaceFirst(
-                          'securecalc://', 
-                          'https://realragnardev-dotcom.github.io/deep/?'
-                        ).replaceFirst('chat?', '').replaceFirst('join?', '');
-                        
+                        final String fallbackLink = widget.shareLink
+                            .replaceFirst(
+                              'securecalc://',
+                              'https://realragnardev-dotcom.github.io/deep/?',
+                            )
+                            .replaceFirst('chat?', '')
+                            .replaceFirst('join?', '');
+
                         Share.share(
                           'Join me on Calculator! Securely chat with me using this link: $fallbackLink',
                         );
@@ -124,7 +136,9 @@ class _ShareQrPageState extends State<ShareQrPage> {
                       icon: const Icon(CupertinoIcons.doc_on_clipboard),
                       label: const Text('Copy Profile Code'),
                       onPressed: () async {
-                        await Clipboard.setData(ClipboardData(text: widget.shareLink));
+                        await Clipboard.setData(
+                          ClipboardData(text: widget.shareLink),
+                        );
                         if (mounted) _showMessage('Profile code copied.');
                       },
                     ),

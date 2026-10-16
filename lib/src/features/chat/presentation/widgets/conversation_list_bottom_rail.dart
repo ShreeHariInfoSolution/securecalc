@@ -1,6 +1,8 @@
 import 'dart:ui';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+
 import '../../../../core/theme/app_theme.dart';
 
 class ConversationListBottomRail extends StatelessWidget {
@@ -23,7 +25,12 @@ class ConversationListBottomRail extends StatelessWidget {
     final bottomPadding = MediaQuery.paddingOf(context).bottom;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, 0, 16, bottomPadding > 0 ? bottomPadding + 6 : 14),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        0,
+        16,
+        bottomPadding > 0 ? bottomPadding + 6 : 14,
+      ),
       child: Row(
         children: [
           // Frosted Glass Search Pill
@@ -46,7 +53,9 @@ class ConversationListBottomRail extends StatelessWidget {
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                        color: Colors.black.withValues(
+                          alpha: isDark ? 0.35 : 0.08,
+                        ),
                         blurRadius: 12,
                         offset: const Offset(0, 4),
                       ),
@@ -65,6 +74,10 @@ class ConversationListBottomRail extends StatelessWidget {
                           controller: searchController,
                           focusNode: searchFocusNode,
                           onChanged: onChanged,
+                          textCapitalization: TextCapitalization.sentences,
+                          textInputAction: TextInputAction.search,
+                          keyboardType: TextInputType.text,
+                          onSubmitted: (_) => searchFocusNode.unfocus(),
                           style: TextStyle(
                             fontSize: 16,
                             color: AppTheme.primaryText(isDark),
@@ -127,7 +140,9 @@ class ConversationListBottomRail extends StatelessWidget {
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.35 : 0.08,
+                      ),
                       blurRadius: 12,
                       offset: const Offset(0, 4),
                     ),

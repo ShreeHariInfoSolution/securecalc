@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -166,9 +167,13 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                     children: [
                       CircleAvatar(
                         radius: 26,
-                        backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.15),
-                        child: const Icon(Icons.photo_library_rounded,
-                            color: AppTheme.primaryColor),
+                        backgroundColor: AppTheme.primaryColor.withValues(
+                          alpha: 0.15,
+                        ),
+                        child: const Icon(
+                          Icons.photo_library_rounded,
+                          color: AppTheme.primaryColor,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       const Text('Gallery', style: TextStyle(fontSize: 12)),
@@ -186,8 +191,10 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                       CircleAvatar(
                         radius: 26,
                         backgroundColor: Color(0x1F007AFF),
-                        child: Icon(Icons.camera_alt_rounded,
-                            color: Color(0xFF007AFF)),
+                        child: Icon(
+                          Icons.camera_alt_rounded,
+                          color: Color(0xFF007AFF),
+                        ),
                       ),
                       SizedBox(height: 8),
                       Text('Camera', style: TextStyle(fontSize: 12)),
@@ -207,7 +214,9 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           title: const Row(
             children: [
               Icon(Icons.delete_forever_rounded, color: Colors.red, size: 28),
@@ -255,7 +264,10 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
               },
               child: const Text(
                 'Delete Account',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -305,9 +317,11 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
       CalculatorLogic.duressPasscode = newDuress;
     });
     AppPreferences.setDuressPasscode(newDuress);
-    _showToast(newDuress.isEmpty
-        ? 'Duress passcode cleared.'
-        : 'Duress decoy passcode set to "$newDuress="');
+    _showToast(
+      newDuress.isEmpty
+          ? 'Duress passcode cleared.'
+          : 'Duress decoy passcode set to "$newDuress="',
+    );
   }
 
   @override
@@ -323,13 +337,16 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    final hasProfilePic = _profileImagePath != null &&
+    final hasProfilePic =
+        _profileImagePath != null &&
         _profileImagePath!.isNotEmpty &&
         File(_profileImagePath!).existsSync();
 
     return ShakePanicWrapper(
       child: Scaffold(
-        backgroundColor: isDark ? const Color(0xFF000000) : const Color(0xFFF2F2F7),
+        backgroundColor: isDark
+            ? const Color(0xFF000000)
+            : const Color(0xFFF2F2F7),
         body: SafeArea(
           child: Column(
             children: [
@@ -339,7 +356,10 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
               // iOS Grouped Settings List
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 12.0,
+                  ),
                   children: [
                     // Section 1: Profile
                     _buildSectionHeader('PROFILE'),
@@ -352,14 +372,19 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                               clipBehavior: Clip.none,
                               children: [
                                 ValueListenableBuilder<String?>(
-                                  valueListenable: AppPreferences.profileImagePathNotifier,
+                                  valueListenable:
+                                      AppPreferences.profileImagePathNotifier,
                                   builder: (context, currentPath, _) {
                                     return ValueListenableBuilder<String>(
-                                      valueListenable: AppPreferences.displayNameNotifier,
+                                      valueListenable:
+                                          AppPreferences.displayNameNotifier,
                                       builder: (context, currentName, _) {
                                         return IosAvatar(
-                                          name: currentName.isNotEmpty ? currentName : _displayNameController.text,
-                                          imagePath: currentPath ?? _profileImagePath,
+                                          name: currentName.isNotEmpty
+                                              ? currentName
+                                              : _displayNameController.text,
+                                          imagePath:
+                                              currentPath ?? _profileImagePath,
                                           size: 84,
                                           showOnline: false,
                                         );
@@ -406,7 +431,9 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                             ),
                             decoration: InputDecoration(
                               labelText: 'Display Name',
-                              labelStyle: const TextStyle(color: AppTheme.subtitleGrey),
+                              labelStyle: const TextStyle(
+                                color: AppTheme.subtitleGrey,
+                              ),
                               prefixIcon: const Icon(
                                 Icons.person_outline_rounded,
                                 color: AppTheme.primaryColor,
@@ -420,7 +447,9 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                 borderRadius: BorderRadius.circular(12),
                                 borderSide: BorderSide.none,
                               ),
-                              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                              contentPadding: const EdgeInsets.symmetric(
+                                vertical: 12,
+                              ),
                             ),
                           ),
                           const SizedBox(height: 12),
@@ -479,7 +508,9 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                             ),
                             decoration: InputDecoration(
                               labelText: 'Secret Passcode',
-                              labelStyle: const TextStyle(color: AppTheme.subtitleGrey),
+                              labelStyle: const TextStyle(
+                                color: AppTheme.subtitleGrey,
+                              ),
                               filled: true,
                               fillColor: isDark
                                   ? const Color(0xFF2C2C2E)
@@ -489,7 +520,9 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                 borderSide: BorderSide.none,
                               ),
                               contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 12),
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
                               suffixIcon: IconButton(
                                 icon: Icon(
                                   _obscurePasscode
@@ -499,8 +532,9 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                   size: 20,
                                 ),
                                 onPressed: () {
-                                  setState(() =>
-                                      _obscurePasscode = !_obscurePasscode);
+                                  setState(
+                                    () => _obscurePasscode = !_obscurePasscode,
+                                  );
                                 },
                               ),
                             ),
@@ -561,7 +595,9 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                             ),
                             decoration: InputDecoration(
                               labelText: 'Duress Passcode (Default: 4321)',
-                              labelStyle: const TextStyle(color: AppTheme.subtitleGrey),
+                              labelStyle: const TextStyle(
+                                color: AppTheme.subtitleGrey,
+                              ),
                               filled: true,
                               fillColor: isDark
                                   ? const Color(0xFF2C2C2E)
@@ -571,7 +607,9 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                 borderSide: BorderSide.none,
                               ),
                               contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 12),
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
                               suffixIcon: IconButton(
                                 icon: Icon(
                                   _obscureDuressPasscode
@@ -581,8 +619,10 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                   size: 20,
                                 ),
                                 onPressed: () {
-                                  setState(() =>
-                                      _obscureDuressPasscode = !_obscureDuressPasscode);
+                                  setState(
+                                    () => _obscureDuressPasscode =
+                                        !_obscureDuressPasscode,
+                                  );
                                 },
                               ),
                             ),
@@ -705,10 +745,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
         color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
         borderRadius: BorderRadius.circular(14),
         clipBehavior: Clip.antiAlias,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: child,
-        ),
+        child: Padding(padding: const EdgeInsets.all(16.0), child: child),
       ),
     );
   }

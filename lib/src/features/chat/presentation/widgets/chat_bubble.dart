@@ -4,6 +4,7 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
@@ -31,6 +32,8 @@ class ChatBubble extends StatefulWidget {
   final bool isEdited;
   final bool isDeleted;
   final bool isSaved;
+  final bool isDecrypting;
+  final bool showDeliveryStatus;
   final String? type;
   final String? mediaUrl;
   final String? fileName;
@@ -55,6 +58,8 @@ class ChatBubble extends StatefulWidget {
     this.isEdited = false,
     this.isDeleted = false,
     this.isSaved = false,
+    this.isDecrypting = false,
+    this.showDeliveryStatus = false,
     this.type = 'text',
     this.mediaUrl,
     this.fileName,
@@ -82,6 +87,7 @@ class _ChatBubbleState extends State<ChatBubble> {
   bool _isPlayingAudio = false;
   bool _isMediaRevealed = false;
   bool _downloadFailed = false;
+  bool _isExpanded = false;
 
   @override
   void initState() {
@@ -114,20 +120,35 @@ class _ChatBubbleState extends State<ChatBubble> {
 
   bool _isAbsoluteFilePath(String path) =>
       RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(path) ||
-          RegExp(r'^/(?:data|storage|private|var|tmp|Users)/').hasMatch(path);
+      RegExp(r'^/(?:data|storage|private|var|tmp|Users)/').hasMatch(path);
 
   bool _isValidImageBytes(Uint8List bytes) {
     if (bytes.length < 4) return false;
     // PNG: 89 50 4E 47
-    if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) return true;
+    if (bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47)
+      return true;
     // JPEG: FF D8 FF
     if (bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) return true;
     // GIF: 47 49 46 38 ('GIF8')
-    if (bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38) return true;
+    if (bytes[0] == 0x47 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x38)
+      return true;
     // WebP: 'RIFF' at 0..3 and 'WEBP' at 8..11
     if (bytes.length >= 12 &&
-        bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
-        bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) return true;
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50)
+      return true;
     // BMP: 42 4D ('BM')
     if (bytes[0] == 0x42 && bytes[1] == 0x4D) return true;
     return false;
@@ -144,12 +165,13 @@ class _ChatBubbleState extends State<ChatBubble> {
     );
     await attachmentDirectory.create(recursive: true);
 
-    final mediaKey = (widget.mediaUrl ?? 'att_${widget.timestamp.millisecondsSinceEpoch}')
-        .split('/')
-        .last
-        .split('\\')
-        .last
-        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final mediaKey =
+        (widget.mediaUrl ?? 'att_${widget.timestamp.millisecondsSinceEpoch}')
+            .split('/')
+            .last
+            .split('\\')
+            .last
+            .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
     final safeName = _attachmentName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
 
     return '${attachmentDirectory.path}${Platform.pathSeparator}${mediaKey}_$safeName';
@@ -158,7 +180,9 @@ class _ChatBubbleState extends State<ChatBubble> {
   Future<void> _restoreDownloadedAttachment() async {
     try {
       final mediaPath = widget.mediaUrl;
-      final cachedPath = await AttachmentCacheService.instance.resolveLocalPath(mediaPath);
+      final cachedPath = await AttachmentCacheService.instance.resolveLocalPath(
+        mediaPath,
+      );
       if (cachedPath != null && File(cachedPath).existsSync()) {
         if (mounted) {
           setState(() {
@@ -252,11 +276,14 @@ class _ChatBubbleState extends State<ChatBubble> {
     return name == null || name.isEmpty ? 'Attachment' : name;
   }
 
-  String get _effectiveFileType => inferAttachmentType(
-    fileType: widget.type,
-    fileName: widget.fileName,
-    filePath: widget.mediaUrl,
-  ) ?? widget.type?.toLowerCase() ?? '';
+  String get _effectiveFileType =>
+      inferAttachmentType(
+        fileType: widget.type,
+        fileName: widget.fileName,
+        filePath: widget.mediaUrl,
+      ) ??
+      widget.type?.toLowerCase() ??
+      '';
 
   bool get _isImage {
     final type = _effectiveFileType;
@@ -264,8 +291,24 @@ class _ChatBubbleState extends State<ChatBubble> {
     final source = widget.fileName?.isNotEmpty == true
         ? widget.fileName!
         : widget.mediaUrl ?? '';
-    final ext = source.split('?').first.split('#').first.split('.').last.toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'].contains(ext);
+    final ext = source
+        .split('?')
+        .first
+        .split('#')
+        .first
+        .split('.')
+        .last
+        .toLowerCase();
+    return [
+      'jpg',
+      'jpeg',
+      'png',
+      'gif',
+      'webp',
+      'heic',
+      'heif',
+      'bmp',
+    ].contains(ext);
   }
 
   bool get _isVideo {
@@ -274,7 +317,14 @@ class _ChatBubbleState extends State<ChatBubble> {
     final source = widget.fileName?.isNotEmpty == true
         ? widget.fileName!
         : widget.mediaUrl ?? '';
-    final ext = source.split('?').first.split('#').first.split('.').last.toLowerCase();
+    final ext = source
+        .split('?')
+        .first
+        .split('#')
+        .first
+        .split('.')
+        .last
+        .toLowerCase();
     return ['mp4', 'mov', 'webm', 'mkv', 'avi', '3gp'].contains(ext);
   }
 
@@ -284,7 +334,14 @@ class _ChatBubbleState extends State<ChatBubble> {
     final source = widget.fileName?.isNotEmpty == true
         ? widget.fileName!
         : widget.mediaUrl ?? '';
-    final ext = source.split('?').first.split('#').first.split('.').last.toLowerCase();
+    final ext = source
+        .split('?')
+        .first
+        .split('#')
+        .first
+        .split('.')
+        .last
+        .toLowerCase();
     return ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'opus'].contains(ext);
   }
 
@@ -314,10 +371,9 @@ class _ChatBubbleState extends State<ChatBubble> {
           ? <String, String>{}
           : {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'};
 
-      final response = await http.get(
-        Uri.parse(remoteUrl),
-        headers: headers,
-      ).timeout(const Duration(seconds: 30));
+      final response = await http
+          .get(Uri.parse(remoteUrl), headers: headers)
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('Download failed (${response.statusCode}).');
@@ -331,7 +387,10 @@ class _ChatBubbleState extends State<ChatBubble> {
 
       Uint8List fileBytes = rawBytes;
       if (secretKey != null) {
-        fileBytes = E2eCryptoService.instance.decryptFileBytes(rawBytes, secretKey);
+        fileBytes = E2eCryptoService.instance.decryptFileBytes(
+          rawBytes,
+          secretKey,
+        );
       }
 
       if (_isImage) {
@@ -451,8 +510,8 @@ class _ChatBubbleState extends State<ChatBubble> {
               color: isDark
                   ? Colors.white.withValues(alpha: 0.15)
                   : (widget.isMe
-                  ? Colors.white.withValues(alpha: 0.25)
-                  : Colors.grey.withValues(alpha: 0.18)),
+                        ? Colors.white.withValues(alpha: 0.25)
+                        : Colors.grey.withValues(alpha: 0.18)),
               borderRadius: BorderRadius.circular(6),
             ),
             child: Row(
@@ -524,8 +583,14 @@ class _ChatBubbleState extends State<ChatBubble> {
     if (type.startsWith('image/') ||
         type == 'image' ||
         (url != null &&
-            ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic']
-                .contains(url.split('.').last.split('?').first.toLowerCase()))) {
+            [
+              'jpg',
+              'jpeg',
+              'png',
+              'gif',
+              'webp',
+              'heic',
+            ].contains(url.split('.').last.split('?').first.toLowerCase()))) {
       if (url != null && url.isNotEmpty) {
         return FutureBuilder<String?>(
           future: AttachmentCacheService.instance.resolveLocalPath(url),
@@ -617,14 +682,15 @@ class _ChatBubbleState extends State<ChatBubble> {
   }
 
   Widget _buildBubbleContent(
-      BuildContext context,
-      bool isDark,
-      Color textColor,
-      String? mediaUrl,
-      ) {
+    BuildContext context,
+    bool isDark,
+    Color textColor,
+    String? mediaUrl,
+  ) {
     final hasMedia = mediaUrl != null && mediaUrl.isNotEmpty;
     final hasReply = widget.replyText != null;
-    final hasText = widget.message.isNotEmpty && widget.message != '[Attachment]';
+    final hasText =
+        widget.message.isNotEmpty && widget.message != '[Attachment]';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -645,8 +711,8 @@ class _ChatBubbleState extends State<ChatBubble> {
                 color: widget.isMe
                     ? Colors.black.withValues(alpha: 0.14)
                     : (isDark
-                    ? Colors.white.withValues(alpha: 0.08)
-                    : Colors.black.withValues(alpha: 0.05)),
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.black.withValues(alpha: 0.05)),
                 borderRadius: BorderRadius.circular(9),
                 border: Border(
                   left: BorderSide(
@@ -701,10 +767,7 @@ class _ChatBubbleState extends State<ChatBubble> {
           Stack(
             alignment: Alignment.bottomRight,
             children: [
-              _buildAttachment(
-                isDark,
-                mediaUrl,
-              ),
+              _buildAttachment(isDark, mediaUrl),
               if (_isImage)
                 Positioned(
                   bottom: 6,
@@ -725,7 +788,9 @@ class _ChatBubbleState extends State<ChatBubble> {
           ),
           if (!_isImage && hasText) const SizedBox(height: 6),
         ],
-        if (hasText) ...[
+        if (widget.isDecrypting && !hasMedia) ...[
+          const _DecryptionShimmer(),
+        ] else if (hasText) ...[
           if (_isImage && hasMedia)
             const SizedBox.shrink()
           else if (hasMedia && !_isImage)
@@ -751,28 +816,7 @@ class _ChatBubbleState extends State<ChatBubble> {
               ],
             )
           else
-            RichText(
-              text: TextSpan(
-                text: widget.message,
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 17.0,
-                  height: 1.17,
-                  fontWeight: FontWeight.w400,
-                  fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
-                ),
-                children: [
-                  const TextSpan(text: '    '),
-                  WidgetSpan(
-                    alignment: PlaceholderAlignment.middle,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 2.0),
-                      child: _buildTimestampWidget(isDark),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _buildExpandableTextMessage(context, isDark, textColor),
         ] else if (!hasMedia && widget.message.isEmpty) ...[
           _buildTimestampWidget(isDark),
         ] else if (hasMedia && !_isImage) ...[
@@ -788,10 +832,169 @@ class _ChatBubbleState extends State<ChatBubble> {
     );
   }
 
-  Widget _buildAttachment(
-      bool isDark,
-      String? mediaUrl,
-      ) {
+  Widget _buildExpandableTextMessage(
+    BuildContext context,
+    bool isDark,
+    Color textColor,
+  ) {
+    final text = widget.message;
+    final lines = text.split('\n');
+    final isLongParagraph = text.length > 180 || lines.length > 4;
+
+    if (!isLongParagraph) {
+      return RichText(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            color: textColor,
+            fontSize: 17.0,
+            height: 1.17,
+            fontWeight: FontWeight.w400,
+            fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
+          ),
+          children: [
+            const TextSpan(text: '    '),
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2.0),
+                child: _buildTimestampWidget(isDark),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!_isExpanded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 17.0,
+              height: 1.17,
+              fontWeight: FontWeight.w400,
+              fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              GestureDetector(
+                onTap: () => setState(() => _isExpanded = true),
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 2.0,
+                    horizontal: 2.0,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'More',
+                        style: TextStyle(
+                          color: widget.isMe
+                              ? Colors.white.withValues(alpha: 0.95)
+                              : AppTheme.primaryColor,
+                          fontSize: 14.0,
+                          fontWeight: FontWeight.bold,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      Icon(
+                        CupertinoIcons.chevron_down,
+                        size: 13,
+                        color: widget.isMe
+                            ? Colors.white.withValues(alpha: 0.95)
+                            : AppTheme.primaryColor,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              _buildTimestampWidget(isDark),
+            ],
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        RichText(
+          text: TextSpan(
+            text: text,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 17.0,
+              height: 1.17,
+              fontWeight: FontWeight.w400,
+              fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
+            ),
+            children: [
+              const TextSpan(text: '    '),
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2.0),
+                  child: _buildTimestampWidget(isDark),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        GestureDetector(
+          onTap: () => setState(() => _isExpanded = false),
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              vertical: 2.0,
+              horizontal: 2.0,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Show less',
+                  style: TextStyle(
+                    color: widget.isMe
+                        ? Colors.white.withValues(alpha: 0.90)
+                        : AppTheme.primaryColor,
+                    fontSize: 13.0,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(
+                  CupertinoIcons.chevron_up,
+                  size: 12,
+                  color: widget.isMe
+                      ? Colors.white.withValues(alpha: 0.90)
+                      : AppTheme.primaryColor,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAttachment(bool isDark, String? mediaUrl) {
     if (mediaUrl == null || mediaUrl.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -851,7 +1054,9 @@ class _ChatBubbleState extends State<ChatBubble> {
                             minWidth: 160,
                             minHeight: 140,
                           ),
-                          color: isDark ? const Color(0xFF1F2A30) : const Color(0xFFCFD8DC),
+                          color: isDark
+                              ? const Color(0xFF1F2A30)
+                              : const Color(0xFFCFD8DC),
                           child: const Center(
                             child: Icon(
                               Icons.broken_image_rounded,
@@ -897,7 +1102,9 @@ class _ChatBubbleState extends State<ChatBubble> {
                               minWidth: 160,
                               minHeight: 140,
                             ),
-                            color: isDark ? const Color(0xFF1F2A30) : const Color(0xFFCFD8DC),
+                            color: isDark
+                                ? const Color(0xFF1F2A30)
+                                : const Color(0xFFCFD8DC),
                             child: const Center(
                               child: Icon(
                                 Icons.broken_image_rounded,
@@ -921,14 +1128,8 @@ class _ChatBubbleState extends State<ChatBubble> {
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: isDark
-                            ? const [
-                          Color(0xFF1F2A30),
-                          Color(0xFF2C3840),
-                        ]
-                            : const [
-                          Color(0xFFCFD8DC),
-                          Color(0xFFB0BEC5),
-                        ],
+                            ? const [Color(0xFF1F2A30), Color(0xFF2C3840)]
+                            : const [Color(0xFFCFD8DC), Color(0xFFB0BEC5)],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
@@ -984,7 +1185,9 @@ class _ChatBubbleState extends State<ChatBubble> {
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  _downloadFailed ? 'Download again' : 'Download',
+                                  _downloadFailed
+                                      ? 'Download again'
+                                      : 'Download',
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 12,
@@ -1020,8 +1223,8 @@ class _ChatBubbleState extends State<ChatBubble> {
     final statusText = hasLocal
         ? kind
         : (_downloadFailed
-        ? '$kind • Download failed'
-        : '$kind • Not downloaded');
+              ? '$kind • Download failed'
+              : '$kind • Not downloaded');
 
     return GestureDetector(
       onTap: hasLocal
@@ -1094,33 +1297,39 @@ class _ChatBubbleState extends State<ChatBubble> {
                 tooltip: _isPlayingAudio ? 'Pause' : 'Play',
               )
             else if (!hasLocal)
-                TextButton.icon(
-                  style: TextButton.styleFrom(
-                    backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.15),
-                    foregroundColor: AppTheme.primaryColor,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    visualDensity: VisualDensity.compact,
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                  backgroundColor: AppTheme.primaryColor.withValues(
+                    alpha: 0.15,
                   ),
-                  onPressed: _isAudio
-                      ? _toggleAudioPlayback
-                      : (_isImage || _isVideo
-                      ? _revealImage
-                      : _openAttachment),
-                  icon: const Icon(Icons.download_rounded, size: 16),
-                  label: Text(
-                    _downloadFailed ? 'Download again' : 'Download',
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  foregroundColor: AppTheme.primaryColor,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
                   ),
-                )
-              else
-                _attachmentActionButton(
-                  icon: Icons.open_in_new_rounded,
-                  onPressed: _openAttachment,
-                  tooltip: 'Open',
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  visualDensity: VisualDensity.compact,
                 ),
+                onPressed: _isAudio
+                    ? _toggleAudioPlayback
+                    : (_isImage || _isVideo ? _revealImage : _openAttachment),
+                icon: const Icon(Icons.download_rounded, size: 16),
+                label: Text(
+                  _downloadFailed ? 'Download again' : 'Download',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              )
+            else
+              _attachmentActionButton(
+                icon: Icons.open_in_new_rounded,
+                onPressed: _openAttachment,
+                tooltip: 'Open',
+              ),
           ],
         ),
       ),
@@ -1214,15 +1423,17 @@ class _ChatBubbleState extends State<ChatBubble> {
     }
 
     final sentColor = AppPreferences.getChatBubbleColor(chatId: widget.chatId);
-    final bubbleColor = widget.isHighlighted
-        ? sentColor.withValues(alpha: 0.45)
-        : (widget.isMe
-        ? sentColor
-        : AppTheme.receivedBubble(isDark));
+    final highlightBorderColor = isDark
+        ? const Color(0xFFFFD60A)
+        : const Color(0xFFFF9500);
 
-    final textColor = widget.isMe
-        ? Colors.white
-        : (isDark ? Colors.white : Colors.black);
+    final bubbleColor = widget.isHighlighted
+        ? (isDark ? const Color(0xFF7C5500) : const Color(0xFFFFF3C4))
+        : (widget.isMe ? sentColor : AppTheme.receivedBubble(isDark));
+
+    final textColor = widget.isHighlighted
+        ? (isDark ? Colors.white : Colors.black)
+        : (widget.isMe ? Colors.white : (isDark ? Colors.white : Colors.black));
 
     final mediaUrl = widget.mediaUrl;
 
@@ -1256,15 +1467,32 @@ class _ChatBubbleState extends State<ChatBubble> {
                   alignment: widget.isMe
                       ? Alignment.centerRight
                       : Alignment.centerLeft,
-                  child: CustomPaint(
-                    painter: IMessageBubblePainter(
-                      color: bubbleColor,
-                      isOutgoing: widget.isMe,
-                    ),
-                    child: Container(
-                      constraints: BoxConstraints(
-                        maxWidth: MediaQuery.of(context).size.width * 0.76,
+                  child: Container(
+                    decoration: widget.isHighlighted
+                        ? BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: highlightBorderColor,
+                              width: 2.2,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: highlightBorderColor.withValues(alpha: 0.55),
+                                blurRadius: 14,
+                                spreadRadius: 2,
+                              ),
+                            ],
+                          )
+                        : null,
+                    child: CustomPaint(
+                      painter: IMessageBubblePainter(
+                        color: bubbleColor,
+                        isOutgoing: widget.isMe,
                       ),
+                      child: Container(
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(context).size.width * 0.76,
+                        ),
                       margin: EdgeInsets.only(
                         left: widget.isMe ? 0 : 6,
                         right: widget.isMe ? 6 : 0,
@@ -1282,6 +1510,7 @@ class _ChatBubbleState extends State<ChatBubble> {
                     ),
                   ),
                 ),
+              ),
                 if (widget.reactions?.isNotEmpty == true)
                   Positioned(
                     bottom: -16,
@@ -1308,21 +1537,21 @@ class _ChatBubbleState extends State<ChatBubble> {
                         children: widget.reactions!
                             .map(
                               (reaction) => Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 2,
-                            ),
-                            child: reaction == 'star'
-                                ? const Icon(
-                              Icons.star_rounded,
-                              color: Colors.amber,
-                              size: 15,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 2,
+                                ),
+                                child: reaction == 'star'
+                                    ? const Icon(
+                                        Icons.star_rounded,
+                                        color: Colors.amber,
+                                        size: 15,
+                                      )
+                                    : Text(
+                                        reaction,
+                                        style: const TextStyle(fontSize: 14),
+                                      ),
+                              ),
                             )
-                                : Text(
-                              reaction,
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                          ),
-                        )
                             .toList(),
                       ),
                     ),
@@ -1330,13 +1559,15 @@ class _ChatBubbleState extends State<ChatBubble> {
               ],
             ),
           ),
-          if (widget.isMe && (widget.isRead || widget.isDelivered))
+          if (widget.isMe &&
+              widget.showDeliveryStatus &&
+              (widget.isRead || widget.isDelivered))
             Padding(
               padding: const EdgeInsets.only(top: 2, right: 6),
               child: Align(
                 alignment: Alignment.centerRight,
                 child: Text(
-                  widget.isRead ? 'Read' : 'Delivered',
+                  widget.isRead ? 'Seen' : 'Delivered',
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
@@ -1393,8 +1624,8 @@ class GroupedPhotoGrid extends StatelessWidget {
         color: isMe
             ? sentColor
             : (Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFF2C2C2E)
-            : Colors.white),
+                  ? const Color(0xFF2C2C2E)
+                  : Colors.white),
         borderRadius: BorderRadius.only(
           topLeft: const Radius.circular(18),
           topRight: const Radius.circular(18),
@@ -1429,7 +1660,9 @@ class GroupedPhotoGrid extends StatelessWidget {
                   if (isSaved) ...[
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 1),
+                        horizontal: 4,
+                        vertical: 1,
+                      ),
                       margin: const EdgeInsets.only(right: 3),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.25),
@@ -1438,8 +1671,11 @@ class GroupedPhotoGrid extends StatelessWidget {
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.bookmark_rounded,
-                              size: 8, color: Colors.white),
+                          Icon(
+                            Icons.bookmark_rounded,
+                            size: 8,
+                            color: Colors.white,
+                          ),
                           SizedBox(width: 2),
                           Text(
                             'Saved',
@@ -1735,7 +1971,25 @@ class _GridTileItemState extends State<_GridTileItem> {
       }
     }
 
-    final cached = await AttachmentCacheService.instance.resolveLocalPath(rawUrl);
+    // The chat page warms this index before rendering, so returning to a chat
+    // can show already-downloaded groups without another async lookup.
+    final cachedSync = AttachmentCacheService.instance.resolveLocalPathSync(
+      rawUrl,
+    );
+    if (cachedSync != null && File(cachedSync).existsSync()) {
+      if (mounted && generation == _loadGeneration) {
+        setState(() {
+          _resolvedPath = cachedSync;
+          _isLoading = false;
+          _downloadFailed = false;
+        });
+      }
+      return;
+    }
+
+    final cached = await AttachmentCacheService.instance.resolveLocalPath(
+      rawUrl,
+    );
     if (cached != null && File(cached).existsSync()) {
       if (mounted && generation == _loadGeneration) {
         setState(() {
@@ -1776,33 +2030,48 @@ class _GridTileItemState extends State<_GridTileItem> {
 
     try {
       String? localPath;
-      if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://') && File(rawUrl).existsSync()) {
+      if (!rawUrl.startsWith('http://') &&
+          !rawUrl.startsWith('https://') &&
+          File(rawUrl).existsSync()) {
         localPath = rawUrl;
       } else {
         final networkUrl = resolveAvatarUrl(rawUrl);
         if (networkUrl != null) {
           final headers = ServerApiService.instance.authToken != null
-              ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
+              ? {
+                  'Authorization':
+                      'Bearer ${ServerApiService.instance.authToken}',
+                }
               : <String, String>{};
-          final response = await http.get(Uri.parse(networkUrl), headers: headers);
+          final response = await http.get(
+            Uri.parse(networkUrl),
+            headers: headers,
+          );
           if (response.statusCode >= 200 && response.statusCode < 300) {
             final rawBytes = response.bodyBytes;
             final secretKey = widget.photoMessage.replyToId != null
                 ? 'chat_key_${widget.photoMessage.replyToId}'
                 : null;
             final fileBytes = secretKey != null
-                ? E2eCryptoService.instance.decryptFileBytes(rawBytes, secretKey)
+                ? E2eCryptoService.instance.decryptFileBytes(
+                    rawBytes,
+                    secretKey,
+                  )
                 : rawBytes;
 
             final dir = await getApplicationDocumentsDirectory();
-            final attDir = Directory('${dir.path}${Platform.pathSeparator}chat_attachments');
+            final attDir = Directory(
+              '${dir.path}${Platform.pathSeparator}chat_attachments',
+            );
             if (!attDir.existsSync()) {
               await attDir.create(recursive: true);
             }
             final safeName = widget.photoMessage.fileName?.isNotEmpty == true
                 ? widget.photoMessage.fileName!
                 : 'img_${widget.photoMessage.id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-            final file = File('${attDir.path}${Platform.pathSeparator}$safeName');
+            final file = File(
+              '${attDir.path}${Platform.pathSeparator}$safeName',
+            );
             await file.writeAsBytes(fileBytes, flush: true);
             localPath = file.path;
             AttachmentCacheService.instance.updateCache(rawUrl, localPath);
@@ -1852,7 +2121,9 @@ class _GridTileItemState extends State<_GridTileItem> {
     try {
       String? localPath = _resolvedPath;
       if (localPath == null || localPath.startsWith('http')) {
-        localPath = await AttachmentCacheService.instance.resolveLocalPath(rawUrl);
+        localPath = await AttachmentCacheService.instance.resolveLocalPath(
+          rawUrl,
+        );
       }
       if (localPath != null && File(localPath).existsSync()) {
         await SharePlus.instance.share(ShareParams(files: [XFile(localPath)]));
@@ -1860,7 +2131,9 @@ class _GridTileItemState extends State<_GridTileItem> {
         AppToast.show('Downloading photo to share...');
         await _downloadAndCacheTilePhoto();
         if (_resolvedPath != null && File(_resolvedPath!).existsSync()) {
-          await SharePlus.instance.share(ShareParams(files: [XFile(_resolvedPath!)]));
+          await SharePlus.instance.share(
+            ShareParams(files: [XFile(_resolvedPath!)]),
+          );
         }
       }
     } catch (e) {
@@ -1891,11 +2164,17 @@ class _GridTileItemState extends State<_GridTileItem> {
                 const SizedBox(
                   width: 24,
                   height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               else
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.7),
                     borderRadius: BorderRadius.circular(16),
@@ -1904,7 +2183,11 @@ class _GridTileItemState extends State<_GridTileItem> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.download_rounded, color: Colors.white, size: 14),
+                      const Icon(
+                        Icons.download_rounded,
+                        color: Colors.white,
+                        size: 14,
+                      ),
                       const SizedBox(width: 4),
                       Text(
                         _downloadFailed ? 'Retry' : 'Download',
@@ -1998,7 +2281,10 @@ class _GridTileItemState extends State<_GridTileItem> {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white70,
+          ),
         ),
       ),
     );
@@ -2006,10 +2292,7 @@ class _GridTileItemState extends State<_GridTileItem> {
 }
 
 class IMessageBubblePainter extends CustomPainter {
-  const IMessageBubblePainter({
-    required this.color,
-    required this.isOutgoing,
-  });
+  const IMessageBubblePainter({required this.color, required this.isOutgoing});
 
   final Color color;
   final bool isOutgoing;
@@ -2085,4 +2368,54 @@ class DateLabel extends StatelessWidget {
   }
 }
 
+class _DecryptionShimmer extends StatefulWidget {
+  const _DecryptionShimmer();
 
+  @override
+  State<_DecryptionShimmer> createState() => _DecryptionShimmerState();
+}
+
+class _DecryptionShimmerState extends State<_DecryptionShimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final baseColor = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white.withValues(alpha: 0.16)
+        : Colors.black.withValues(alpha: 0.11);
+    return SizedBox(
+      width: 132,
+      height: 18,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) => DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment(-1.8 + (_controller.value * 3.6), 0),
+                end: Alignment(-0.8 + (_controller.value * 3.6), 0),
+                colors: [
+                  baseColor,
+                  baseColor.withValues(alpha: 0.42),
+                  baseColor,
+                ],
+                stops: const [0.18, 0.5, 0.82],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

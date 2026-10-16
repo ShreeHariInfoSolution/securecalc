@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
 
@@ -14,7 +15,9 @@ class E2eCryptoService {
 
   /// Generates a simple mock SPKI public key string for initial key backup.
   String generatePublicKey() {
-    final bytes = utf8.encode('public_key_${DateTime.now().millisecondsSinceEpoch}');
+    final bytes = utf8.encode(
+      'public_key_${DateTime.now().millisecondsSinceEpoch}',
+    );
     return base64Encode(sha256.convert(bytes).bytes);
   }
 
@@ -27,10 +30,14 @@ class E2eCryptoService {
   String encryptText(String plaintext, String secretKey) {
     if (plaintext.isEmpty) return '';
     try {
-      final derivedKeyBytes = sha256.convert(utf8.encode('synq_chat_enc:$secretKey')).bytes;
+      final derivedKeyBytes = sha256
+          .convert(utf8.encode('synq_chat_enc:$secretKey'))
+          .bytes;
       final encKey = enc.Key(Uint8List.fromList(derivedKeyBytes));
       final iv = enc.IV.fromSecureRandom(16);
-      final encrypter = enc.Encrypter(enc.AES(encKey, mode: enc.AESMode.cbc, padding: 'PKCS7'));
+      final encrypter = enc.Encrypter(
+        enc.AES(encKey, mode: enc.AESMode.cbc, padding: 'PKCS7'),
+      );
 
       final encrypted = encrypter.encrypt(plaintext, iv: iv);
       final combinedBytes = [...iv.bytes, ...encrypted.bytes];
@@ -60,10 +67,14 @@ class E2eCryptoService {
       final ivBytes = combinedBytes.sublist(0, 16);
       final cipherBytes = combinedBytes.sublist(16);
 
-      final derivedKeyBytes = sha256.convert(utf8.encode('synq_chat_enc:$secretKey')).bytes;
+      final derivedKeyBytes = sha256
+          .convert(utf8.encode('synq_chat_enc:$secretKey'))
+          .bytes;
       final encKey = enc.Key(Uint8List.fromList(derivedKeyBytes));
       final iv = enc.IV(Uint8List.fromList(ivBytes));
-      final encrypter = enc.Encrypter(enc.AES(encKey, mode: enc.AESMode.cbc, padding: 'PKCS7'));
+      final encrypter = enc.Encrypter(
+        enc.AES(encKey, mode: enc.AESMode.cbc, padding: 'PKCS7'),
+      );
 
       final encrypted = enc.Encrypted(Uint8List.fromList(cipherBytes));
       return encrypter.decrypt(encrypted, iv: iv);
@@ -76,10 +87,14 @@ class E2eCryptoService {
   /// Output format: [16 bytes IV] + [Ciphertext]
   Uint8List encryptFileBytes(Uint8List plainBytes, String secretKey) {
     try {
-      final derivedKeyBytes = sha256.convert(utf8.encode('synq_chat_file_enc:$secretKey')).bytes;
+      final derivedKeyBytes = sha256
+          .convert(utf8.encode('synq_chat_file_enc:$secretKey'))
+          .bytes;
       final encKey = enc.Key(Uint8List.fromList(derivedKeyBytes));
       final iv = enc.IV.fromSecureRandom(16);
-      final encrypter = enc.Encrypter(enc.AES(encKey, mode: enc.AESMode.cbc, padding: 'PKCS7'));
+      final encrypter = enc.Encrypter(
+        enc.AES(encKey, mode: enc.AESMode.cbc, padding: 'PKCS7'),
+      );
 
       final encrypted = encrypter.encryptBytes(plainBytes, iv: iv);
       final combined = Uint8List(16 + encrypted.bytes.length);
@@ -99,10 +114,14 @@ class E2eCryptoService {
       final ivBytes = encryptedBytes.sublist(0, 16);
       final cipherBytes = encryptedBytes.sublist(16);
 
-      final derivedKeyBytes = sha256.convert(utf8.encode('synq_chat_file_enc:$secretKey')).bytes;
+      final derivedKeyBytes = sha256
+          .convert(utf8.encode('synq_chat_file_enc:$secretKey'))
+          .bytes;
       final encKey = enc.Key(Uint8List.fromList(derivedKeyBytes));
       final iv = enc.IV(Uint8List.fromList(ivBytes));
-      final encrypter = enc.Encrypter(enc.AES(encKey, mode: enc.AESMode.cbc, padding: 'PKCS7'));
+      final encrypter = enc.Encrypter(
+        enc.AES(encKey, mode: enc.AESMode.cbc, padding: 'PKCS7'),
+      );
 
       final encrypted = enc.Encrypted(Uint8List.fromList(cipherBytes));
       final decrypted = encrypter.decryptBytes(encrypted, iv: iv);

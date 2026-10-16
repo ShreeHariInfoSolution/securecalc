@@ -340,6 +340,7 @@ class _VaultEdgePanelWrapperState extends State<VaultEdgePanelWrapper>
                               color: const Color(0xFFFF3B30),
                               tooltip: 'Lock Calculator',
                               onTap: () {
+                                FocusManager.instance.primaryFocus?.unfocus();
                                 _closePanel();
                                 Navigator.of(context, rootNavigator: true)
                                     .pushAndRemoveUntil(

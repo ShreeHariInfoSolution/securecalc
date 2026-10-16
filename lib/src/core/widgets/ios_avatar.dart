@@ -230,6 +230,7 @@ class _CachedNetworkAvatarState extends State<_CachedNetworkAvatar> {
   void didUpdateWidget(covariant _CachedNetworkAvatar oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url) {
+      _localPath = null;
       _resolveAvatar();
     }
   }
@@ -239,14 +240,22 @@ class _CachedNetworkAvatarState extends State<_CachedNetworkAvatar> {
       widget.url,
     );
     if (cached != null) {
-      if (mounted) setState(() => _localPath = cached);
+      if (mounted) {
+        setState(() {
+          _localPath = cached;
+        });
+      }
       return;
     }
     final resolved = await AttachmentCacheService.instance.resolveLocalPath(
       widget.url,
     );
     if (resolved != null) {
-      if (mounted) setState(() => _localPath = resolved);
+      if (mounted) {
+        setState(() {
+          _localPath = resolved;
+        });
+      }
       return;
     }
 
@@ -275,7 +284,9 @@ class _CachedNetworkAvatarState extends State<_CachedNetworkAvatar> {
         await file.writeAsBytes(bytes, flush: true);
         AttachmentCacheService.instance.updateCache(widget.url, file.path);
         if (mounted) {
-          setState(() => _localPath = file.path);
+          setState(() {
+            _localPath = file.path;
+          });
         }
       }
     } catch (_) {}
@@ -295,23 +306,9 @@ class _CachedNetworkAvatarState extends State<_CachedNetworkAvatar> {
       );
     }
 
-    final headers = ServerApiService.instance.authToken != null
-        ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
-        : null;
-
-    return ClipOval(
-      child: Image.network(
-        widget.url,
-        headers: headers,
-        width: widget.size,
-        height: widget.size,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) => widget.fallback,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return widget.fallback;
-        },
-      ),
-    );
+    // Avoid briefly starting a second network image on every list rebuild.
+    // The resolver above writes the avatar to local storage once, then this
+    // widget uses that local file on subsequent app launches.
+    return widget.fallback;
   }
 }

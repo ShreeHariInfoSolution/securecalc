@@ -1,11 +1,15 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/theme/font_size_controller.dart';
 import 'package:securecalc/src/core/theme/theme_controller.dart';
+import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
+
+import '../../../domain/services/push_service.dart';
 
 class AppearanceSettingsPage extends StatelessWidget {
   const AppearanceSettingsPage({super.key});
@@ -17,7 +21,9 @@ class AppearanceSettingsPage extends StatelessWidget {
 
     return ShakePanicWrapper(
       child: Scaffold(
-        backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
+        backgroundColor: isDark
+            ? AppTheme.darkBackground
+            : AppTheme.lightBackground,
         body: SafeArea(
           child: Column(
             children: [
@@ -28,7 +34,9 @@ class AppearanceSettingsPage extends StatelessWidget {
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 16.0, vertical: 8.0),
+                    horizontal: 16.0,
+                    vertical: 8.0,
+                  ),
                   children: [
                     _buildSectionHeader('THEME MODE (3 PHONES)', isDark),
                     const SizedBox(height: 8),
@@ -42,7 +50,9 @@ class AppearanceSettingsPage extends StatelessWidget {
                             borderRadius: BorderRadius.circular(16),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
+                                color: Colors.black.withValues(
+                                  alpha: isDark ? 0.3 : 0.03,
+                                ),
                                 blurRadius: 8,
                                 offset: const Offset(0, 2),
                               ),
@@ -89,7 +99,9 @@ class AppearanceSettingsPage extends StatelessWidget {
                             borderRadius: BorderRadius.circular(16),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
+                                color: Colors.black.withValues(
+                                  alpha: isDark ? 0.3 : 0.03,
+                                ),
                                 blurRadius: 8,
                                 offset: const Offset(0, 2),
                               ),
@@ -126,11 +138,14 @@ class AppearanceSettingsPage extends StatelessWidget {
                                   showSelectedIcon: true,
                                   style: SegmentedButton.styleFrom(
                                     selectedBackgroundColor: Colors.white,
-                                    selectedForegroundColor: AppTheme.primaryColor,
+                                    selectedForegroundColor:
+                                        AppTheme.primaryColor,
                                     side: BorderSide(
                                       color: isDark
                                           ? Colors.white.withValues(alpha: 0.12)
-                                          : Colors.black.withValues(alpha: 0.08),
+                                          : Colors.black.withValues(
+                                              alpha: 0.08,
+                                            ),
                                     ),
                                   ),
                                   segments: const [
@@ -151,8 +166,9 @@ class AppearanceSettingsPage extends StatelessWidget {
                                   onSelectionChanged: (newSelection) {
                                     HapticFeedback.selectionClick();
                                     final newScale = newSelection.first;
-                                    FontSizeController.instance
-                                        .setScale(newScale);
+                                    FontSizeController.instance.setScale(
+                                      newScale,
+                                    );
                                     AppPreferences.setFontScale(newScale);
                                   },
                                 ),
@@ -165,6 +181,43 @@ class AppearanceSettingsPage extends StatelessWidget {
 
                     const SizedBox(height: 20),
 
+                    // Notification Sound Section
+                    _buildNotificationSoundSection(context, isDark),
+
+                    const SizedBox(height: 10),
+
+                    // Test Notification Button
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          side: const BorderSide(color: AppTheme.primaryColor),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        icon: const Icon(
+                          Icons.send_rounded,
+                          color: AppTheme.primaryColor,
+                          size: 18,
+                        ),
+                        label: const Text(
+                          'Test Notification & Sound',
+                          style: TextStyle(
+                            color: AppTheme.primaryColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        onPressed: () async {
+                          await PushService.instance.showTestNotification();
+                          AppToast.show('Test notification triggered!');
+                        },
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
                     // Disguise Guarantee Card matching Screenshot 3
                     Container(
                       padding: const EdgeInsets.all(16.0),
@@ -173,7 +226,9 @@ class AppearanceSettingsPage extends StatelessWidget {
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.3 : 0.03,
+                            ),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
@@ -185,7 +240,9 @@ class AppearanceSettingsPage extends StatelessWidget {
                             width: 32,
                             height: 32,
                             decoration: BoxDecoration(
-                              color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                              color: AppTheme.primaryColor.withValues(
+                                alpha: 0.12,
+                              ),
                               shape: BoxShape.circle,
                             ),
                             child: const Center(
@@ -241,7 +298,10 @@ class AppearanceSettingsPage extends StatelessWidget {
   }
 
   Widget _build3PhoneRow(
-      BuildContext context, ThemeMode currentMode, bool isDark) {
+    BuildContext context,
+    ThemeMode currentMode,
+    bool isDark,
+  ) {
     return Row(
       children: [
         _buildPhoneMockupCard(
@@ -321,7 +381,7 @@ class AppearanceSettingsPage extends StatelessWidget {
                       color: AppTheme.primaryColor.withValues(alpha: 0.25),
                       blurRadius: 8,
                       offset: const Offset(0, 3),
-                    )
+                    ),
                   ]
                 : null,
           ),
@@ -379,7 +439,10 @@ class AppearanceSettingsPage extends StatelessWidget {
               ),
               Text(
                 subtitle,
-                style: const TextStyle(fontSize: 10, color: AppTheme.subtitleGrey),
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: AppTheme.subtitleGrey,
+                ),
               ),
               const SizedBox(height: 6),
               Icon(
@@ -396,5 +459,259 @@ class AppearanceSettingsPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _buildNotificationSoundSection(BuildContext context, bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionHeader('NOTIFICATION TONE & SOUNDS', isDark),
+        const SizedBox(height: 8),
+        ValueListenableBuilder<String>(
+          valueListenable: AppPreferences.notificationSoundNotifier,
+          builder: (context, currentSound, _) {
+            final soundName = AppPreferences.getNotificationSoundLabel(
+              currentSound,
+            );
+            return Container(
+              decoration: BoxDecoration(
+                color: isDark ? AppTheme.darkSurface : Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ListTile(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                leading: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.notifications_active_rounded,
+                    color: AppTheme.primaryColor,
+                    size: 20,
+                  ),
+                ),
+                title: const Text(
+                  'Message Notification Sound',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(
+                  soundName,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.subtitleGrey,
+                  ),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppTheme.subtitleGrey,
+                ),
+                onTap: () =>
+                    _showNotificationSoundPicker(context, currentSound, isDark),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  void _showNotificationSoundPicker(
+    BuildContext context,
+    String currentSound,
+    bool isDark,
+  ) {
+    final AudioPlayer player = AudioPlayer();
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        String selected = currentSound;
+        String? playingSound;
+
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppTheme.subtitleGrey.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Notification Sound',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Select a custom tone for incoming chat notifications',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.subtitleGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    ...AppPreferences.notificationSounds.entries.map((entry) {
+                      final soundKey = entry.key;
+                      final soundLabel = entry.value['name'] ?? 'Tone';
+                      final fileName = entry.value['file'] ?? '$soundKey.wav';
+                      final isSelected = selected == soundKey;
+                      final isPlaying = playingSound == soundKey;
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? AppTheme.primaryColor.withValues(alpha: 0.1)
+                              : (isDark
+                                    ? const Color(0xFF2C2C2E)
+                                    : const Color(0xFFF2F2F7)),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: isSelected
+                                ? AppTheme.primaryColor
+                                : Colors.transparent,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: ListTile(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          leading: IconButton(
+                            icon: Icon(
+                              isPlaying
+                                  ? Icons.stop_circle_rounded
+                                  : Icons.play_circle_fill_rounded,
+                              color: AppTheme.primaryColor,
+                              size: 28,
+                            ),
+                            onPressed: () async {
+                              try {
+                                if (isPlaying) {
+                                  await player.stop();
+                                  setSheetState(() => playingSound = null);
+                                } else {
+                                  await player.stop();
+                                  setSheetState(() => playingSound = soundKey);
+                                  await player.play(
+                                    AssetSource('sounds/$fileName'),
+                                  );
+                                  player.onPlayerComplete.listen((_) {
+                                    setSheetState(() => playingSound = null);
+                                  });
+                                }
+                              } catch (e) {
+                                debugPrint(
+                                  '[AudioPlayer] Error playing sound: $e',
+                                );
+                                setSheetState(() => playingSound = null);
+                              }
+                            },
+                          ),
+                          title: Text(
+                            soundLabel,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
+                              color: isSelected
+                                  ? AppTheme.primaryColor
+                                  : (isDark ? Colors.white : Colors.black87),
+                            ),
+                          ),
+                          trailing: isSelected
+                              ? const Icon(
+                                  Icons.check_circle_rounded,
+                                  color: AppTheme.primaryColor,
+                                )
+                              : null,
+                          onTap: () async {
+                            setSheetState(() => selected = soundKey);
+                            try {
+                              await player.stop();
+                              setSheetState(() => playingSound = soundKey);
+                              await player.play(
+                                AssetSource('sounds/$fileName'),
+                              );
+                              player.onPlayerComplete.listen((_) {
+                                setSheetState(() => playingSound = null);
+                              });
+                            } catch (_) {}
+                          },
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primaryColor,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed: () async {
+                          await player.stop();
+                          await player.dispose();
+                          await AppPreferences.setNotificationSound(selected);
+                          if (sheetContext.mounted) {
+                            Navigator.pop(sheetContext);
+                            AppToast.show(
+                              'Notification sound set to ${AppPreferences.getNotificationSoundLabel(selected)}',
+                            );
+                          }
+                        },
+                        child: const Text(
+                          'Save Notification Sound',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).then((_) {
+      player.stop();
+      player.dispose();
+    });
   }
 }

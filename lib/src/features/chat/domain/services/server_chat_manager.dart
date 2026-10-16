@@ -115,7 +115,9 @@ class ServerChatManager {
         );
       }
     } catch (e) {
-      debugPrint('[SERVER CHAT] Resolve peer profile failed for user $userId: $e');
+      debugPrint(
+        '[SERVER CHAT] Resolve peer profile failed for user $userId: $e',
+      );
     } finally {
       _resolvingPeerIds.remove(userId);
     }
@@ -156,12 +158,10 @@ class ServerChatManager {
     // This includes any real-time WebSocket messages that arrived during the REST API call!
     final liveConversations =
         LocalChatStorage.instance.conversationsNotifier.value.isNotEmpty
-            ? LocalChatStorage.instance.conversationsNotifier.value
-            : await LocalChatStorage.instance.loadConversations();
+        ? LocalChatStorage.instance.conversationsNotifier.value
+        : await LocalChatStorage.instance.loadConversations();
 
-    final liveById = {
-      for (final conv in liveConversations) conv.id: conv,
-    };
+    final liveById = {for (final conv in liveConversations) conv.id: conv};
 
     final newConversations = <ChatConversation>[];
 
@@ -192,7 +192,8 @@ class ServerChatManager {
 
       // Determine peer display name: PRESERVE valid non-generic name from local if API gives generic
       String peerDisplayName = peer?.name ?? '';
-      final isApiPeerGeneric = peerDisplayName.trim().isEmpty ||
+      final isApiPeerGeneric =
+          peerDisplayName.trim().isEmpty ||
           peerDisplayName == 'User' ||
           peerDisplayName.startsWith('User #');
 
@@ -230,29 +231,31 @@ class ServerChatManager {
 
       final name = sc.isGroup
           ? ((sc.groupName != null && sc.groupName!.isNotEmpty)
-              ? sc.groupName!
-              : (liveLocal?.name.isNotEmpty == true && !liveLocal!.name.startsWith('Chat #')
-                  ? liveLocal.name
-                  : 'Group chat'))
+                ? sc.groupName!
+                : (liveLocal?.name.isNotEmpty == true &&
+                          !liveLocal!.name.startsWith('Chat #')
+                      ? liveLocal.name
+                      : 'Group chat'))
           : (peer != null
-              ? peerDisplayName
-              : (liveLocal?.name.isNotEmpty == true
-                  ? liveLocal!.name
-                  : (sc.groupName ?? 'Chat #${sc.id}')));
+                ? peerDisplayName
+                : (liveLocal?.name.isNotEmpty == true
+                      ? liveLocal!.name
+                      : (sc.groupName ?? 'Chat #${sc.id}')));
 
       final avatar = sc.isGroup
           ? (sc.groupAvatar?.isNotEmpty == true
-              ? sc.groupAvatar!
-              : (liveLocal?.avatarUrl ?? ''))
+                ? sc.groupAvatar!
+                : (liveLocal?.avatarUrl ?? ''))
           : (peer?.avatar?.isNotEmpty == true
-              ? peer!.avatar!
-              : (liveLocal?.avatarUrl.isNotEmpty == true
-                  ? liveLocal!.avatarUrl
-                  : (sc.groupAvatar ?? '')));
+                ? peer!.avatar!
+                : (liveLocal?.avatarUrl.isNotEmpty == true
+                      ? liveLocal!.avatarUrl
+                      : (sc.groupAvatar ?? '')));
 
       // Compare message timestamps to determine whether WebSocket / Local state is newer than API snapshot
-      final newestCachedMessage =
-          cachedMessages.isEmpty ? null : cachedMessages.last;
+      final newestCachedMessage = cachedMessages.isEmpty
+          ? null
+          : cachedMessages.last;
       final serverLastMessageTime = DateTime.tryParse(
         sc.lastMessageCreatedAt ?? sc.updatedAt ?? '',
       )?.toLocal();
@@ -260,14 +263,17 @@ class ServerChatManager {
       final localActivityTime =
           newestCachedMessage?.timestamp ?? liveLocal?.lastActivityAt;
 
-      final bool isLocalStateNewer = localActivityTime != null &&
+      final bool isLocalStateNewer =
+          localActivityTime != null &&
           (serverLastMessageTime == null ||
               localActivityTime.isAfter(serverLastMessageTime) ||
               localActivityTime.isAtSameMomentAs(serverLastMessageTime));
 
       // Determine last message text (Prioritize real-time WebSocket message text)
       String lastMsgText;
-      if (isLocalStateNewer && liveLocal != null && liveLocal.lastMessage.isNotEmpty) {
+      if (isLocalStateNewer &&
+          liveLocal != null &&
+          liveLocal.lastMessage.isNotEmpty) {
         lastMsgText = liveLocal.lastMessage;
       } else {
         var apiText = sc.lastMessage ?? sc.lastMessageCiphertext ?? '';
@@ -294,9 +300,11 @@ class ServerChatManager {
 
       final String finalLastMessageTimeStr = isLocalStateNewer
           ? (newestCachedMessage != null
-              ? _formatChatTime(newestCachedMessage.timestamp.toIso8601String())
-              : (liveLocal?.lastMessageTime ??
-                  _formatChatTime(sc.lastMessageCreatedAt ?? sc.updatedAt)))
+                ? _formatChatTime(
+                    newestCachedMessage.timestamp.toIso8601String(),
+                  )
+                : (liveLocal?.lastMessageTime ??
+                      _formatChatTime(sc.lastMessageCreatedAt ?? sc.updatedAt)))
           : _formatChatTime(sc.lastMessageCreatedAt ?? sc.updatedAt);
 
       // Determine unread count (prioritize WebSocket updates)
@@ -334,6 +342,7 @@ class ServerChatManager {
         memberNames: {for (final member in sc.members) member.id: member.name},
         isPinned: isPinned,
         isMuted: isMuted,
+        backgroundUrl: sc.backgroundUrl,
         messages: cachedMessages,
       );
 
@@ -481,7 +490,12 @@ class ServerChatManager {
           mediaUrl: sm.filePath ?? cachedMessage?.mediaUrl,
           fileName: sm.fileName ?? cachedMessage?.fileName,
           isRead: isMe ? (sm.isRead || cachedMessage?.isRead == true) : true,
-          isDelivered: isMe ? (sm.isDelivered || sm.isRead || cachedMessage?.isDelivered == true || cachedMessage?.isRead == true) : true,
+          isDelivered: isMe
+              ? (sm.isDelivered ||
+                    sm.isRead ||
+                    cachedMessage?.isDelivered == true ||
+                    cachedMessage?.isRead == true)
+              : true,
           isEdited: sm.isEdited,
           isDeleted: sm.isDeleted,
           isSaved: sm.isSaved,
@@ -510,22 +524,22 @@ class ServerChatManager {
             chatDisappearType: chatDisappearType,
             keepReadSessionMessages: keepReadSessionMessages,
           ))
-            message.id: message
+            message.id: message,
       };
       for (final message in messages) {
         mergedById[message.id] = message;
       }
-      final mergedAll = mergedById.values
-          .where(
-            (m) =>
-                !isMessageExpired(
+      final mergedAll =
+          mergedById.values
+              .where(
+                (m) => !isMessageExpired(
                   m,
                   chatDisappearType: chatDisappearType,
                   keepReadSessionMessages: keepReadSessionMessages,
                 ),
-          )
-          .toList()
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+              )
+              .toList()
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
       await LocalChatStorage.instance.cacheMessages(
         chatId,
         mergedAll,
@@ -716,21 +730,36 @@ class ServerChatManager {
       data = Map<String, dynamic>.from(data['message'] as Map);
     }
 
-    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])?.toString();
-    final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
-    final rawText = data['message']?.toString() ?? data['ciphertext']?.toString();
+    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])
+        ?.toString();
+    final chatId =
+        (data['chat_head_id'] ??
+                data['chat_id'] ??
+                data['chatHeadId'] ??
+                data['chatId'] ??
+                event['chat_head_id'] ??
+                event['chat_id'])
+            ?.toString();
+    final rawValue = data['ciphertext'] ?? data['content'] ?? data['message'];
+    final rawText = rawValue is String ? rawValue : null;
     if (messageId == null || chatId == null || rawText == null) return;
 
     final decryptedText = E2eCryptoService.instance.decryptText(
       rawText,
       'chat_key_$chatId',
     );
+    // A failed encrypted decode returns the original ciphertext. Keeping the
+    // previous local plaintext is safer than persisting ciphertext to disk.
+    if (rawText.startsWith('ENC:v1:') && decryptedText == rawText) return;
 
     final messages = await LocalChatStorage.instance.loadMessages(chatId);
     final index = messages.indexWhere((message) => message.id == messageId);
     if (index < 0) return;
 
-    final updated = messages[index].copyWith(content: decryptedText, isEdited: true);
+    final updated = messages[index].copyWith(
+      content: decryptedText,
+      isEdited: true,
+    );
     await LocalChatStorage.instance.saveMessage(
       deviceId: chatId,
       peerName: 'Chat #$chatId',
@@ -747,8 +776,14 @@ class ServerChatManager {
     if (data['message'] is Map) {
       data = Map<String, dynamic>.from(data['message'] as Map);
     }
-    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])?.toString();
-    final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
+    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])
+        ?.toString();
+    final chatId =
+        (data['chat_head_id'] ??
+                data['chat_id'] ??
+                data['chatHeadId'] ??
+                data['chatId'])
+            ?.toString();
     if (messageId == null || chatId == null) return;
 
     final messages = await LocalChatStorage.instance.loadMessages(chatId);
@@ -773,8 +808,14 @@ class ServerChatManager {
     if (data['message'] is Map) {
       data = Map<String, dynamic>.from(data['message'] as Map);
     }
-    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])?.toString();
-    final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
+    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])
+        ?.toString();
+    final chatId =
+        (data['chat_head_id'] ??
+                data['chat_id'] ??
+                data['chatHeadId'] ??
+                data['chatId'])
+            ?.toString();
     final reaction = normalizeChatReaction(
       data['chat_react'] ?? data['reaction'],
     );
@@ -795,10 +836,20 @@ class ServerChatManager {
     final data = event['data'] is Map
         ? Map<String, dynamic>.from(event['data'] as Map)
         : event;
-    final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
+    final chatId =
+        (data['chat_head_id'] ??
+                data['chat_id'] ??
+                data['chatHeadId'] ??
+                data['chatId'])
+            ?.toString();
     if (chatId == null) return;
     final senderId = int.tryParse(
-      (data['user_id'] ?? data['userId'] ?? data['sender_id'] ?? data['senderId'])?.toString() ?? '',
+      (data['user_id'] ??
+                  data['userId'] ??
+                  data['sender_id'] ??
+                  data['senderId'])
+              ?.toString() ??
+          '',
     );
     if (senderId != null &&
         senderId == ServerApiService.instance.currentUserId) {
@@ -849,7 +900,9 @@ class ServerChatManager {
     final userId = int.tryParse(
       (data['user_id'] ?? data['userId'] ?? data['id'])?.toString() ?? '',
     );
-    final chatHeadId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'])?.toString();
+    final chatHeadId =
+        (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'])
+            ?.toString();
 
     final rawOnline = data['is_online'] ?? data['online'] ?? data['status'];
     if (rawOnline == null) return;
@@ -926,13 +979,17 @@ class ServerChatManager {
           replyToId: sm.replyToId,
         );
 
-        final conversations = LocalChatStorage.instance.conversationsNotifier.value;
+        final conversations =
+            LocalChatStorage.instance.conversationsNotifier.value;
         final existing = conversations.cast<ChatConversation?>().firstWhere(
           (c) => c?.id == incomingChatId,
           orElse: () => null,
         );
 
-        final peerName = existing != null && !existing.name.startsWith('User #') && !existing.name.startsWith('Chat #')
+        final peerName =
+            existing != null &&
+                !existing.name.startsWith('User #') &&
+                !existing.name.startsWith('Chat #')
             ? existing.name
             : 'User #${sm.senderId}';
 
@@ -950,7 +1007,9 @@ class ServerChatManager {
         }
 
         // If thread is brand new or has placeholder name, resolve chat details in background
-        if (existing == null || existing.name.startsWith('User #') || existing.name.startsWith('Chat #')) {
+        if (existing == null ||
+            existing.name.startsWith('User #') ||
+            existing.name.startsWith('Chat #')) {
           unawaited(_resolveChatDetailsAndSync(sm.chatHeadId));
         }
       }),
@@ -987,10 +1046,26 @@ class ServerChatManager {
       SocketChatService.instance.onRead.listen((data) async {
         if (generation != _socketGeneration) return;
         debugPrint('[SERVER CHAT] Socket messages read event: $data');
-        final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
-        if (chatId != null) {
-          await LocalChatStorage.instance.markAllOutgoingMessagesAsRead(chatId);
-        }
+        final chatId =
+            (data['chat_head_id'] ??
+                    data['chat_id'] ??
+                    data['chatHeadId'] ??
+                    data['chatId'])
+                ?.toString();
+        final readerId = int.tryParse(
+          (data['user_id'] ?? data['userId'] ?? '').toString(),
+        );
+        final currentUserId = ServerApiService.instance.currentUserId;
+        if (chatId == null || currentUserId == null) return;
+        if (readerId != null && readerId == currentUserId) return;
+
+        final lastReadAt = DateTime.tryParse(
+          (data['last_read_at'] ?? data['lastReadAt'] ?? '').toString(),
+        );
+        await LocalChatStorage.instance.markAllOutgoingMessagesAsRead(
+          chatId,
+          readThrough: lastReadAt,
+        );
       }),
     );
 
@@ -999,9 +1074,16 @@ class ServerChatManager {
       SocketChatService.instance.onDelivered.listen((data) async {
         if (generation != _socketGeneration) return;
         debugPrint('[SERVER CHAT] Socket messages delivered event: $data');
-        final chatId = (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'] ?? data['chatId'])?.toString();
+        final chatId =
+            (data['chat_head_id'] ??
+                    data['chat_id'] ??
+                    data['chatHeadId'] ??
+                    data['chatId'])
+                ?.toString();
         if (chatId != null) {
-          await LocalChatStorage.instance.markAllOutgoingMessagesAsDelivered(chatId);
+          await LocalChatStorage.instance.markAllOutgoingMessagesAsDelivered(
+            chatId,
+          );
         }
       }),
     );

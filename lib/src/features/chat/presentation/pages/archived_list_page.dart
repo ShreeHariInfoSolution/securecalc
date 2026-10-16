@@ -12,10 +12,7 @@ import 'chat_detail_page.dart';
 class ArchivedListPage extends StatelessWidget {
   final bool isDuressMode;
 
-  const ArchivedListPage({
-    super.key,
-    this.isDuressMode = false,
-  });
+  const ArchivedListPage({super.key, this.isDuressMode = false});
 
   void _showPeekPreview(BuildContext context, ChatConversation conv) {
     showGeneralDialog(
@@ -42,13 +39,13 @@ class ArchivedListPage extends StatelessWidget {
         );
       },
       transitionBuilder: (context, anim1, anim2, child) {
-        final curve = CurvedAnimation(parent: anim1, curve: Curves.easeOutCubic);
+        final curve = CurvedAnimation(
+          parent: anim1,
+          curve: Curves.easeOutCubic,
+        );
         return Transform.scale(
           scale: 0.88 + (0.12 * curve.value),
-          child: FadeTransition(
-            opacity: curve,
-            child: child,
-          ),
+          child: FadeTransition(opacity: curve, child: child),
         );
       },
     );
@@ -64,10 +61,7 @@ class ArchivedListPage extends StatelessWidget {
         backgroundColor: AppTheme.glassSurface(isDark),
         elevation: 0,
         leading: IconButton(
-          icon: Icon(
-            CupertinoIcons.chevron_left,
-            color: AppTheme.primaryColor,
-          ),
+          icon: Icon(CupertinoIcons.chevron_left, color: AppTheme.primaryColor),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(

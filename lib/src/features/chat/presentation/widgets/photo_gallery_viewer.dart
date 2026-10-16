@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
+
 import '../../domain/entities/chat_message.dart';
 import '../../domain/services/attachment_cache_service.dart';
 import '../../domain/services/server_api_service.dart';
@@ -30,10 +32,7 @@ class PhotoGalleryViewer extends StatefulWidget {
         opaque: false,
         barrierColor: Colors.black.withValues(alpha: 0.94),
         pageBuilder: (context, animation, secondaryAnimation) =>
-            PhotoGalleryViewer(
-          photos: photos,
-          initialIndex: initialIndex,
-        ),
+            PhotoGalleryViewer(photos: photos, initialIndex: initialIndex),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(opacity: animation, child: child);
         },
@@ -59,7 +58,9 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer> {
   }
 
   void _onVerticalDragEnd(DragEndDetails details) {
-    if (_dragOffset.abs() > 90 || (details.primaryVelocity != null && details.primaryVelocity!.abs() > 300)) {
+    if (_dragOffset.abs() > 90 ||
+        (details.primaryVelocity != null &&
+            details.primaryVelocity!.abs() > 300)) {
       HapticFeedback.lightImpact();
       Navigator.of(context).pop();
     } else {
@@ -90,7 +91,9 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer> {
       if (File(rawUrl).existsSync()) return rawUrl;
     }
 
-    final cached = await AttachmentCacheService.instance.resolveLocalPath(rawUrl);
+    final cached = await AttachmentCacheService.instance.resolveLocalPath(
+      rawUrl,
+    );
     if (cached != null && File(cached).existsSync()) return cached;
 
     try {
@@ -137,7 +140,9 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not prepare photo for sharing.')),
+            const SnackBar(
+              content: Text('Could not prepare photo for sharing.'),
+            ),
           );
         }
       }
@@ -160,7 +165,10 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer> {
   Widget build(BuildContext context) {
     if (widget.photos.isEmpty) return const SizedBox();
 
-    final double bgOpacity = (1.0 - (_dragOffset.abs() / 350.0)).clamp(0.2, 1.0);
+    final double bgOpacity = (1.0 - (_dragOffset.abs() / 350.0)).clamp(
+      0.2,
+      1.0,
+    );
 
     return Scaffold(
       backgroundColor: Colors.black.withValues(alpha: bgOpacity),
@@ -197,7 +205,10 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer> {
                     left: 0,
                     right: 0,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                       decoration: const BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
@@ -239,7 +250,9 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer> {
                                 ),
                               ),
                               Text(
-                                _formatTimestamp(widget.photos[_currentIndex].timestamp),
+                                _formatTimestamp(
+                                  widget.photos[_currentIndex].timestamp,
+                                ),
                                 style: const TextStyle(
                                   color: Colors.white70,
                                   fontSize: 11,
@@ -263,8 +276,9 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer> {
                                       padding: EdgeInsets.all(9.0),
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
-                                        valueColor:
-                                            AlwaysStoppedAnimation(Colors.white),
+                                        valueColor: AlwaysStoppedAnimation(
+                                          Colors.white,
+                                        ),
                                       ),
                                     )
                                   : const Icon(
@@ -329,7 +343,9 @@ class _GalleryPhotoItemState extends State<_GalleryPhotoItem> {
       }
     }
 
-    final cached = await AttachmentCacheService.instance.resolveLocalPath(rawUrl);
+    final cached = await AttachmentCacheService.instance.resolveLocalPath(
+      rawUrl,
+    );
     if (cached != null && File(cached).existsSync()) {
       if (mounted) {
         setState(() {
@@ -375,7 +391,10 @@ class _GalleryPhotoItemState extends State<_GalleryPhotoItem> {
         File(path),
         fit: BoxFit.contain,
         errorBuilder: (context, error, stackTrace) => const Center(
-          child: Text('Failed to load image', style: TextStyle(color: Colors.white70)),
+          child: Text(
+            'Failed to load image',
+            style: TextStyle(color: Colors.white70),
+          ),
         ),
       );
     } else {
@@ -388,10 +407,15 @@ class _GalleryPhotoItemState extends State<_GalleryPhotoItem> {
         fit: BoxFit.contain,
         loadingBuilder: (context, child, loadingProgress) {
           if (loadingProgress == null) return child;
-          return const Center(child: CircularProgressIndicator(color: Colors.white));
+          return const Center(
+            child: CircularProgressIndicator(color: Colors.white),
+          );
         },
         errorBuilder: (context, error, stackTrace) => const Center(
-          child: Text('Failed to load image', style: TextStyle(color: Colors.white70)),
+          child: Text(
+            'Failed to load image',
+            style: TextStyle(color: Colors.white70),
+          ),
         ),
       );
     }

@@ -17,6 +17,7 @@ class ChatConversation {
   final bool isPinned;
   final bool isMuted;
   final bool isArchived;
+  final String? backgroundUrl;
   final List<ChatMessage> messages;
 
   const ChatConversation({
@@ -36,6 +37,7 @@ class ChatConversation {
     this.isPinned = false,
     this.isMuted = false,
     this.isArchived = false,
+    this.backgroundUrl,
     required this.messages,
   });
 
@@ -56,6 +58,7 @@ class ChatConversation {
     bool? isPinned,
     bool? isMuted,
     bool? isArchived,
+    String? backgroundUrl,
     List<ChatMessage>? messages,
   }) {
     return ChatConversation(
@@ -75,6 +78,7 @@ class ChatConversation {
       isPinned: isPinned ?? this.isPinned,
       isMuted: isMuted ?? this.isMuted,
       isArchived: isArchived ?? this.isArchived,
+      backgroundUrl: backgroundUrl ?? this.backgroundUrl,
       messages: messages ?? this.messages,
     );
   }

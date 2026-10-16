@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
+
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
@@ -29,8 +31,14 @@ class ChatReplyBanner extends StatelessWidget {
     if (type.startsWith('image/') ||
         type == 'image' ||
         (url != null &&
-            ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic']
-                .contains(url.split('.').last.split('?').first.toLowerCase()))) {
+            [
+              'jpg',
+              'jpeg',
+              'png',
+              'gif',
+              'webp',
+              'heic',
+            ].contains(url.split('.').last.split('?').first.toLowerCase()))) {
       if (url != null && url.isNotEmpty) {
         return FutureBuilder<String?>(
           future: AttachmentCacheService.instance.resolveLocalPath(url),
@@ -119,19 +127,22 @@ class ChatReplyBanner extends StatelessWidget {
         color: AppTheme.primaryColor.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Icon(
-        icon,
-        size: 20,
-        color: AppTheme.primaryColor,
-      ),
+      child: Icon(icon, size: 20, color: AppTheme.primaryColor),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final hasMedia = replyingMessage.mediaUrl?.isNotEmpty == true ||
-        replyingMessage.type != 'text';
+    final msgType = replyingMessage.type.toLowerCase();
+    final hasMedia = (replyingMessage.mediaUrl != null &&
+            replyingMessage.mediaUrl!.trim().isNotEmpty) ||
+        (msgType != 'text' && msgType.isNotEmpty && !msgType.contains('text'));
+
+    final displayContent = replyingMessage.content.trim().isNotEmpty &&
+            replyingMessage.content != '[Attachment]'
+        ? replyingMessage.content
+        : replyingMessage.previewText;
 
     return Container(
       width: double.infinity,
@@ -157,7 +168,10 @@ class ChatReplyBanner extends StatelessWidget {
                   replyingMessage.senderId == 'user'
                       ? 'Replying to You'
                       : conversation.isGroup
-                          ? groupMemberNames[int.tryParse(replyingMessage.senderId)] ?? 'Replying to member'
+                          ? groupMemberNames[int.tryParse(
+                                  replyingMessage.senderId,
+                                )] ??
+                              'Replying to member'
                           : 'Replying to $chatName',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -172,11 +186,11 @@ class ChatReplyBanner extends StatelessWidget {
                   children: [
                     if (hasMedia) ...[
                       Icon(
-                        replyingMessage.type.startsWith('image')
+                        msgType.startsWith('image')
                             ? Icons.photo_camera_rounded
-                            : replyingMessage.type.startsWith('video')
+                            : msgType.startsWith('video')
                                 ? Icons.videocam_rounded
-                                : replyingMessage.type.startsWith('audio')
+                                : msgType.startsWith('audio')
                                     ? Icons.mic_rounded
                                     : Icons.attach_file_rounded,
                         size: 13,
@@ -186,7 +200,7 @@ class ChatReplyBanner extends StatelessWidget {
                     ],
                     Expanded(
                       child: Text(
-                        replyingMessage.previewText,
+                        displayContent,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(

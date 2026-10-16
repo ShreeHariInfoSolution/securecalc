@@ -101,7 +101,6 @@ class _CalculatorButtonState extends State<CalculatorButton> {
 
     return GestureDetector(
       onTapDown: (_) {
-        HapticFeedback.lightImpact();
         setState(() => _isPressed = true);
       },
       onTapUp: (_) => setState(() => _isPressed = false),

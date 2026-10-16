@@ -152,6 +152,7 @@ class LocalChatStorage {
               isMuted: isMuted,
               isArchived: isArchived,
               disappearType: (map['disappearType'] as int?) ?? 0,
+              backgroundUrl: map['backgroundUrl'] as String?,
               messages: messages,
             ),
           );
@@ -200,6 +201,7 @@ class LocalChatStorage {
             'isTyping': c.isTyping,
             'peerUserId': c.peerUserId,
             'isGroup': c.isGroup,
+            'backgroundUrl': c.backgroundUrl,
             'memberNames': c.memberNames.map(
               (key, value) => MapEntry('$key', value),
             ),
@@ -252,7 +254,8 @@ class LocalChatStorage {
           mediaUrl: m['mediaUrl'] as String?,
           fileName: m['fileName'] as String?,
           isRead: (m['isRead'] as bool?) ?? false,
-          isDelivered: (m['isDelivered'] as bool?) ?? ((m['isRead'] as bool?) ?? false),
+          isDelivered:
+              (m['isDelivered'] as bool?) ?? ((m['isRead'] as bool?) ?? false),
           isEdited: (m['isEdited'] as bool?) ?? false,
           isDeleted: (m['isDeleted'] as bool?) ?? false,
           isSaved: (m['isSaved'] as bool?) ?? false,
@@ -290,12 +293,11 @@ class LocalChatStorage {
     if (epoch != _accountEpoch) return;
     final jsonList = messages
         .where(
-          (message) =>
-              !isMessageExpired(
-                message,
-                chatDisappearType: chatDisappearType,
-                keepReadSessionMessages: keepReadSessionMessages,
-              ),
+          (message) => !isMessageExpired(
+            message,
+            chatDisappearType: chatDisappearType,
+            keepReadSessionMessages: keepReadSessionMessages,
+          ),
         )
         .map(
           (message) => {
@@ -380,11 +382,13 @@ class LocalChatStorage {
     // 1. Save Message
     final messages = await loadMessages(deviceId);
     if (epoch != _accountEpoch) return;
-    final existingIdx = messages.indexWhere((m) =>
-        m.id == message.id ||
-        (m.senderId == message.senderId &&
-            m.content == message.content &&
-            m.timestamp.difference(message.timestamp).inSeconds.abs() <= 5));
+    final existingIdx = messages.indexWhere(
+      (m) =>
+          m.id == message.id ||
+          (m.senderId == message.senderId &&
+              m.content == message.content &&
+              m.timestamp.difference(message.timestamp).inSeconds.abs() <= 5),
+    );
     final isNewMessage = existingIdx < 0;
     if (existingIdx >= 0) {
       messages[existingIdx] = message;
@@ -517,7 +521,10 @@ class LocalChatStorage {
     }
   }
 
-  Future<void> markAllOutgoingMessagesAsRead(String deviceId) async {
+  Future<void> markAllOutgoingMessagesAsRead(
+    String deviceId, {
+    DateTime? readThrough,
+  }) async {
     final epoch = _accountEpoch;
     final messageKey = _messageKey(deviceId);
     _prefs ??= await SharedPreferences.getInstance();
@@ -527,7 +534,11 @@ class LocalChatStorage {
     var updated = false;
 
     for (var i = 0; i < messages.length; i++) {
-      if (messages[i].senderId == 'user' && (!messages[i].isRead || !messages[i].isDelivered)) {
+      final wasReadByPeer =
+          readThrough == null || !messages[i].timestamp.isAfter(readThrough);
+      if (messages[i].senderId == 'user' &&
+          wasReadByPeer &&
+          (!messages[i].isRead || !messages[i].isDelivered)) {
         messages[i] = messages[i].copyWith(isRead: true, isDelivered: true);
         updated = true;
       }
@@ -629,7 +640,9 @@ class LocalChatStorage {
     final index = conversations.indexWhere((c) => c.id == chatId);
     if (index >= 0) {
       final existing = conversations[index];
-      conversations[index] = existing.copyWith(isArchived: !existing.isArchived);
+      conversations[index] = existing.copyWith(
+        isArchived: !existing.isArchived,
+      );
       _persistConversations(conversations);
     }
   }
@@ -638,7 +651,9 @@ class LocalChatStorage {
     final epoch = _accountEpoch;
     final conversations = await _currentConversations();
     if (epoch != _accountEpoch) return;
-    final updated = conversations.map((c) => c.copyWith(unreadCount: 0)).toList();
+    final updated = conversations
+        .map((c) => c.copyWith(unreadCount: 0))
+        .toList();
     _persistConversations(updated);
   }
 

@@ -1,6 +1,8 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:app_links/app_links.dart';
+
 import '../server_api_service.dart';
 import '../server_chat_manager.dart';
 import '../chat_invite_service.dart';
@@ -14,7 +16,7 @@ class DeepLinkHandler {
 
   final _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
-  
+
   Uri? _pendingUri;
   bool _isVaultReady = false;
   BuildContext? _vaultContext;
@@ -22,7 +24,7 @@ class DeepLinkHandler {
   /// Call this early in main.dart to ensure we don't miss warm-start intents
   void startListening() {
     _handleInitialLink();
-    
+
     _linkSubscription?.cancel();
     _linkSubscription = _appLinks.uriLinkStream.listen((uri) {
       if (_isVaultReady && _vaultContext != null && _vaultContext!.mounted) {
@@ -52,7 +54,7 @@ class DeepLinkHandler {
   void init(BuildContext context) {
     _isVaultReady = true;
     _vaultContext = context;
-    
+
     if (_pendingUri != null) {
       _processLink(context, _pendingUri!);
       _pendingUri = null;
@@ -67,13 +69,15 @@ class DeepLinkHandler {
   Future<void> _processLink(BuildContext context, Uri uri) async {
     // Support both custom scheme and standard HTTPS fallback
     if (uri.scheme != 'securecalc' && uri.scheme != 'https') return;
-    if (uri.scheme == 'https' && uri.host != 'realragnardev-dotcom.github.io') return;
+    if (uri.scheme == 'https' && uri.host != 'realragnardev-dotcom.github.io')
+      return;
 
     // In https mode, the action is passed in query parameters via the redirect page
     // In securecalc:// mode, the action is the host (e.g. securecalc://chat)
     final isHttps = uri.scheme == 'https';
 
-    if ((isHttps && uri.queryParameters.containsKey('target_id')) || (!isHttps && uri.host == 'chat')) {
+    if ((isHttps && uri.queryParameters.containsKey('target_id')) ||
+        (!isHttps && uri.host == 'chat')) {
       final targetIdStr = uri.queryParameters['target_id'];
       if (targetIdStr != null) {
         final targetId = int.tryParse(targetIdStr);
@@ -81,7 +85,8 @@ class DeepLinkHandler {
           if (context.mounted) _joinDirectChat(context, targetId);
         }
       }
-    } else if ((isHttps && uri.queryParameters.containsKey('group_id')) || (!isHttps && uri.host == 'join')) {
+    } else if ((isHttps && uri.queryParameters.containsKey('group_id')) ||
+        (!isHttps && uri.host == 'join')) {
       final groupIdStr = uri.queryParameters['group_id'];
       if (groupIdStr != null) {
         final groupId = int.tryParse(groupIdStr);
@@ -101,15 +106,13 @@ class DeepLinkHandler {
       );
 
       final conversation = await DirectChatStarter.instance.start(targetId);
-      
+
       if (!context.mounted) return;
       Navigator.pop(context); // close loader
 
       Navigator.of(context).push(
         VaultPageRoute(
-          builder: (_) => ChatDetailPage(
-            conversation: conversation,
-          ),
+          builder: (_) => ChatDetailPage(conversation: conversation),
         ),
       );
     } catch (e) {
@@ -133,7 +136,7 @@ class DeepLinkHandler {
           userIds: [currentUserId],
         );
       }
-      
+
       final chat = await ServerApiService.instance.getChatDetails(groupId);
       await ServerChatManager.instance.syncChats();
 

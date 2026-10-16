@@ -36,6 +36,10 @@ dependencies:
   mobile_scanner: ^7.4.2
   app_links: ^7.2.2
   url_launcher: ^6.3.3
+  firebase_core: ^3.10.1
+  firebase_messaging: ^15.2.1
+  flutter_local_notifications: ^18.0.1
+  app_badge_plus: ^1.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -58,3 +62,4 @@ flutter:
   assets:
     - assets/
     - assets/icons/
+    - assets/sounds/

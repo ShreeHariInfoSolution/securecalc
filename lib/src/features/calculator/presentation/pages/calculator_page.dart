@@ -19,6 +19,15 @@ class _CalculatorPageState extends State<CalculatorPage> {
   final CalculatorLogic _logic = CalculatorLogic();
   bool _isNavigating = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // Turn off soft keyboard whenever entering the calculator
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    });
+  }
+
   void _handleButton(String symbol) {
     if (_isNavigating) return;
 
@@ -35,7 +44,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   void _handleSwipeDelete() {
     if (_isNavigating) return;
-    HapticFeedback.lightImpact();
     _logic.backspace();
     setState(() {});
   }
@@ -65,6 +73,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (FocusManager.instance.primaryFocus?.hasFocus == true) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(

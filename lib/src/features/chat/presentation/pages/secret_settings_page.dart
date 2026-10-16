@@ -5,6 +5,7 @@ import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/features/calculator/presentation/pages/calculator_page.dart';
+
 import '../../domain/services/server_chat_manager.dart';
 import 'settings/appearance_settings_page.dart';
 import 'settings/disguise_settings_page.dart';
@@ -29,7 +30,9 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
 
     return ShakePanicWrapper(
       child: Scaffold(
-        backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
+        backgroundColor: isDark
+            ? AppTheme.darkBackground
+            : AppTheme.lightBackground,
         body: SafeArea(
           child: Column(
             children: [
@@ -43,7 +46,9 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 16.0, vertical: 8.0),
+                    horizontal: 16.0,
+                    vertical: 8.0,
+                  ),
                   children: [
                     // Profile Header Section (Screenshot 1)
                     _buildProfileHeader(isDark),
@@ -62,7 +67,9 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.3 : 0.03,
+                            ),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
@@ -178,7 +185,9 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.3 : 0.03,
+                            ),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
@@ -189,40 +198,52 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                         borderRadius: BorderRadius.circular(16),
                         clipBehavior: Clip.antiAlias,
                         child: ListTile(
-                          leading: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 22),
-                        title: const Text(
-                          'Log Out of Server Session',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
+                          leading: const Icon(
+                            Icons.logout_rounded,
                             color: Colors.redAccent,
+                            size: 22,
                           ),
-                        ),
-                        trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.subtitleGrey, size: 20),
-                        onTap: () async {
-                          await ServerChatManager.instance.logout();
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Logged out. All account data cleared from this device.',
+                          title: const Text(
+                            'Log Out of Server Session',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.redAccent,
+                            ),
+                          ),
+                          trailing: const Icon(
+                            Icons.chevron_right_rounded,
+                            color: AppTheme.subtitleGrey,
+                            size: 20,
+                          ),
+                          onTap: () async {
+                            await ServerChatManager.instance.logout();
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Logged out. All account data cleared from this device.',
+                                  ),
                                 ),
-                              ),
-                            );
-                            Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                              PageRouteBuilder(
-                                transitionDuration: Duration.zero,
-                                reverseTransitionDuration: Duration.zero,
-                                pageBuilder: (context, animation, secondaryAnimation) {
-                                  return const CalculatorPage();
-                                },
-                              ),
-                              (route) => false,
-                            );
-                          }
-                        },
+                              );
+                              Navigator.of(
+                                context,
+                                rootNavigator: true,
+                              ).pushAndRemoveUntil(
+                                PageRouteBuilder(
+                                  transitionDuration: Duration.zero,
+                                  reverseTransitionDuration: Duration.zero,
+                                  pageBuilder:
+                                      (context, animation, secondaryAnimation) {
+                                        return const CalculatorPage();
+                                      },
+                                ),
+                                (route) => false,
+                              );
+                            }
+                          },
+                        ),
                       ),
-                    ),
                     ),
                     const SizedBox(height: 32),
                   ],
@@ -240,7 +261,9 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           title: const Row(
             children: [
               Icon(Icons.privacy_tip_outlined, color: AppTheme.primaryColor),
@@ -263,7 +286,11 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                   '2. User Data & Storage:\nVault content is stored securely on device. Account credentials are managed via secure token authentication.\n\n'
                   '3. App Disguise & Security:\nThe calculator interface functions as a disguise. Entering your passcode ("1234=") unlocks the vault. Panic gestures (shake device) instantly lock the vault.\n\n'
                   '4. Permissions Disclosure:\n- Camera: Capturing media inside vault.\n- Microphone: Recording voice notes.\n- Media & Files: Attaching photos/files via system photo picker.',
-                  style: TextStyle(fontSize: 12, height: 1.4, color: AppTheme.subtitleGrey),
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: AppTheme.subtitleGrey,
+                  ),
                 ),
               ],
             ),
@@ -271,7 +298,10 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Close', style: TextStyle(fontWeight: FontWeight.bold)),
+              child: const Text(
+                'Close',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
           ],
         );
@@ -290,13 +320,18 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
               children: [
                 // Pill status badge matching Screenshot 1: 🟢 Online • Wi-Fi Direct
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 7,
+                  ),
                   decoration: BoxDecoration(
                     color: isDark ? AppTheme.darkSurface : Colors.white,
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.04),
+                        color: Colors.black.withValues(
+                          alpha: isDark ? 0.25 : 0.04,
+                        ),
                         blurRadius: 6,
                         offset: const Offset(0, 1),
                       ),
@@ -401,10 +436,7 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
               children: [
                 Text(
                   'Finish vault email setup',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                 ),
                 SizedBox(height: 4),
                 Text(
@@ -424,8 +456,11 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                 _bannerDismissed = true;
               });
             },
-            child: const Icon(Icons.close_rounded,
-                size: 18, color: AppTheme.subtitleGrey),
+            child: const Icon(
+              Icons.close_rounded,
+              size: 18,
+              color: AppTheme.subtitleGrey,
+            ),
           ),
         ],
       ),
@@ -459,9 +494,8 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
         color: AppTheme.subtitleGrey,
       ),
       onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (context) => targetPage),
-        );
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (context) => targetPage));
       },
     );
   }

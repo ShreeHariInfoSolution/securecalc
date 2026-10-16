@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/ios_avatar.dart';
 import '../../../../core/widgets/typing_dots.dart';
@@ -30,13 +31,12 @@ class ChatTypingIndicator extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: isDark ? AppTheme.darkBubbleOther : AppTheme.lightBubbleOther,
+              color: isDark
+                  ? AppTheme.darkBubbleOther
+                  : AppTheme.lightBubbleOther,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: const TypingDots(
-              color: AppTheme.subtitleGrey,
-              dotSize: 5,
-            ),
+            child: const TypingDots(color: AppTheme.subtitleGrey, dotSize: 5),
           ),
         ],
       ),

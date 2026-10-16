@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -8,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+
 import '../../../../core/config/app_preferences.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/entities/chat_message.dart';
@@ -35,7 +37,8 @@ class ChatComposer extends StatefulWidget {
     required String fileName,
     required String fileType,
     String? caption,
-  }) onSendAttachment;
+  })
+  onSendAttachment;
   final VoidCallback? onDisappearingTap;
 
   const ChatComposer({
@@ -63,7 +66,7 @@ class ChatComposer extends StatefulWidget {
 class _ChatComposerState extends State<ChatComposer> {
   final ImagePicker _picker = ImagePicker();
   final AudioRecorder _audioRecorder = AudioRecorder();
-  
+
   bool _isRecordingVoice = false;
   Duration _recordingDuration = Duration.zero;
   Timer? _recordingTimer;
@@ -81,12 +84,13 @@ class _ChatComposerState extends State<ChatComposer> {
 
   void _onInputChanged(String val) {
     setState(() {}); // update UI for send icon
-    
+
     if (_typingDebounce?.isActive ?? false) _typingDebounce!.cancel();
     final text = val.trim();
     if (text.isNotEmpty) {
       final now = DateTime.now();
-      if (_lastTypingEmitted == null || now.difference(_lastTypingEmitted!) > const Duration(seconds: 2)) {
+      if (_lastTypingEmitted == null ||
+          now.difference(_lastTypingEmitted!) > const Duration(seconds: 2)) {
         _lastTypingEmitted = now;
         widget.onTypingChanged(true);
       }
@@ -149,7 +153,10 @@ class _ChatComposerState extends State<ChatComposer> {
       if (source == ImageSource.camera) {
         final hasPermission = await _checkCameraPermission();
         if (!hasPermission) return;
-        final picked = await _picker.pickImage(source: source, imageQuality: 90);
+        final picked = await _picker.pickImage(
+          source: source,
+          imageQuality: 90,
+        );
         if (picked == null) return;
         pickedFiles.add(File(picked.path));
       } else {
@@ -185,9 +192,9 @@ class _ChatComposerState extends State<ChatComposer> {
     } catch (error) {
       debugPrint('[IMAGE PICK ERROR] $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unable to pick image: $error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Unable to pick image: $error')));
       }
     } finally {
       AppPreferences.isPickerActive = false;
@@ -207,9 +214,9 @@ class _ChatComposerState extends State<ChatComposer> {
     } catch (error) {
       debugPrint('[VIDEO PICK ERROR] $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unable to pick video: $error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Unable to pick video: $error')));
       }
     } finally {
       AppPreferences.isPickerActive = false;
@@ -226,8 +233,10 @@ class _ChatComposerState extends State<ChatComposer> {
         if (path == null || path.isEmpty) {
           final temporaryDirectory = await getTemporaryDirectory();
           final safeName = picked.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-          path = '${temporaryDirectory.path}/${DateTime.now().millisecondsSinceEpoch}_$safeName';
-          await File(path).writeAsBytes(await picked.readAsBytes(), flush: true);
+          path =
+              '${temporaryDirectory.path}/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+          await File(path)
+              .writeAsBytes(await picked.readAsBytes(), flush: true);
         }
         await widget.onSendAttachment(
           file: File(path),
@@ -258,7 +267,8 @@ class _ChatComposerState extends State<ChatComposer> {
         throw Exception('Microphone permission is required.');
       }
       final directory = await getTemporaryDirectory();
-      final path = '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final path =
+          '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
       await _audioRecorder.start(
         const RecordConfig(encoder: AudioEncoder.aacLc),
         path: path,
@@ -383,7 +393,9 @@ class _ChatComposerState extends State<ChatComposer> {
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.12),
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.4 : 0.12,
+                            ),
                             blurRadius: 16,
                             offset: const Offset(0, 4),
                           ),
@@ -447,18 +459,19 @@ class _ChatComposerState extends State<ChatComposer> {
                             },
                             isDark: isDark,
                           ),
-                          _buildGlassAttachmentRow(
-                            dialogContext,
-                            icon: CupertinoIcons.timer,
-                            iconColor: const Color(0xFF5856D6),
-                            label: 'Disappearing',
-                            onTap: () {
-                              Navigator.pop(dialogContext);
-                              widget.onDisappearingTap?.call();
-                            },
-                            isDark: isDark,
-                            showDivider: false,
-                          ),
+                          if (widget.conversation.disappearType != 0)
+                            _buildGlassAttachmentRow(
+                              dialogContext,
+                              icon: CupertinoIcons.timer,
+                              iconColor: const Color(0xFF5856D6),
+                              label: 'Disappearing',
+                              onTap: () {
+                                Navigator.pop(dialogContext);
+                                widget.onDisappearingTap?.call();
+                              },
+                              isDark: isDark,
+                              showDivider: false,
+                            ),
                         ],
                       ),
                     ),
@@ -497,9 +510,7 @@ class _ChatComposerState extends State<ChatComposer> {
                     color: iconColor.withValues(alpha: 0.15),
                     shape: BoxShape.circle,
                   ),
-                  child: Center(
-                    child: Icon(icon, color: iconColor, size: 18),
-                  ),
+                  child: Center(child: Icon(icon, color: iconColor, size: 18)),
                 ),
                 const SizedBox(width: 14),
                 Text(
@@ -579,12 +590,19 @@ class _ChatComposerState extends State<ChatComposer> {
         AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
-          padding: EdgeInsets.fromLTRB(10, 7, 10, bottomPadding > 0 ? bottomPadding + 4 : 8),
+          padding: EdgeInsets.fromLTRB(
+            10,
+            7,
+            10,
+            bottomPadding > 0 ? bottomPadding + 4 : 8,
+          ),
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
             border: Border(
               top: BorderSide(
-                color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA),
+                color: isDark
+                    ? const Color(0xFF2C2C2E)
+                    : const Color(0xFFE5E5EA),
                 width: 0.8,
               ),
             ),
@@ -632,7 +650,9 @@ class _ChatComposerState extends State<ChatComposer> {
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
-                                    _formatRecordingDuration(_recordingDuration),
+                                    _formatRecordingDuration(
+                                      _recordingDuration,
+                                    ),
                                     style: TextStyle(
                                       color: AppTheme.primaryText(isDark),
                                       fontWeight: FontWeight.w600,
@@ -654,7 +674,10 @@ class _ChatComposerState extends State<ChatComposer> {
                                   IconButton(
                                     visualDensity: VisualDensity.compact,
                                     padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                                    constraints: const BoxConstraints(
+                                      minWidth: 24,
+                                      minHeight: 24,
+                                    ),
                                     onPressed: _cancelVoiceRecording,
                                     icon: Icon(
                                       CupertinoIcons.xmark,
@@ -671,18 +694,30 @@ class _ChatComposerState extends State<ChatComposer> {
                                 controller: widget.inputController,
                                 focusNode: widget.inputFocusNode,
                                 onChanged: _onInputChanged,
+                                onTapOutside: (_) =>
+                                    widget.inputFocusNode.unfocus(),
                                 minLines: 1,
                                 maxLines: 5,
+                                keyboardType: TextInputType.multiline,
+                                textCapitalization:
+                                    TextCapitalization.sentences,
+                                textInputAction: TextInputAction.send,
+                                autocorrect: true,
+                                enableSuggestions: true,
                                 style: TextStyle(
                                   fontSize: 15,
                                   color: AppTheme.primaryText(isDark),
                                   letterSpacing: -0.2,
                                 ),
                                 decoration: InputDecoration(
-                                  hintText: widget.editingMessage == null ? 'iMessage' : 'Edit message',
+                                  hintText: widget.editingMessage == null
+                                      ? 'iMessage'
+                                      : 'Edit message',
                                   border: InputBorder.none,
                                   isDense: true,
-                                  contentPadding: const EdgeInsets.symmetric(vertical: 6),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    vertical: 6,
+                                  ),
                                   hintStyle: const TextStyle(
                                     color: Color(0xFF8E8E93),
                                     fontSize: 15,
@@ -696,9 +731,12 @@ class _ChatComposerState extends State<ChatComposer> {
                             GestureDetector(
                               onTap: widget.isSending
                                   ? null
-                                  : (widget.editingMessage != null || widget.inputController.text.trim().isNotEmpty
-                                      ? widget.onSendText
-                                      : _toggleVoiceRecording),
+                                  : (widget.editingMessage != null ||
+                                            widget.inputController.text
+                                                .trim()
+                                                .isNotEmpty
+                                        ? widget.onSendText
+                                        : _toggleVoiceRecording),
                               child: widget.isSending
                                   ? const SizedBox(
                                       width: 20,
@@ -708,25 +746,29 @@ class _ChatComposerState extends State<ChatComposer> {
                                         color: Color(0xFF007AFF),
                                       ),
                                     )
-                                  : (widget.editingMessage != null || widget.inputController.text.trim().isNotEmpty
-                                      ? Container(
-                                          width: 28,
-                                          height: 28,
-                                          decoration: const BoxDecoration(
-                                            color: Color(0xFF007AFF),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Center(
-                                            child: Icon(
-                                              widget.editingMessage != null
-                                                  ? CupertinoIcons.checkmark
-                                                  : CupertinoIcons.arrow_up,
-                                              size: 16,
-                                              color: Colors.white,
+                                  : (widget.editingMessage != null ||
+                                            widget.inputController.text
+                                                .trim()
+                                                .isNotEmpty
+                                        ? Container(
+                                            width: 28,
+                                            height: 28,
+                                            decoration: const BoxDecoration(
+                                              color: Color(0xFF007AFF),
+                                              shape: BoxShape.circle,
                                             ),
-                                          ),
-                                        )
-                                      : const VoiceBars())),
+                                            child: Center(
+                                              child: Icon(
+                                                widget.editingMessage != null
+                                                    ? CupertinoIcons.checkmark
+                                                    : CupertinoIcons.arrow_up,
+                                                size: 16,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          )
+                                        : const VoiceBars()),
+                            ),
                           ],
                         ],
                       ),

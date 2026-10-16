@@ -1,18 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../../../../core/theme/app_theme.dart';
 
-/// Wrapper widget that enables smooth horizontal swipe-to-reply with translation
-/// animation and tactile haptic feedback.
+/// Wrapper widget that enables smooth horizontal swipe-to-reply (drag right)
+/// and swipe-for-info (drag left on sent messages) with tactile haptic feedback.
 class SwipeToReply extends StatefulWidget {
   final Widget child;
   final VoidCallback onReply;
+  final VoidCallback? onInfo;
+  final bool isMe;
   final bool enabled;
 
   const SwipeToReply({
     super.key,
     required this.child,
     required this.onReply,
+    this.onInfo,
+    this.isMe = false,
     this.enabled = true,
   });
 
@@ -57,6 +62,11 @@ class _SwipeToReplyState extends State<SwipeToReply>
     final delta = details.delta.dx;
     double newOffset = _dragOffset + delta;
 
+    // Only allow left drag (negative) if message is mine and onInfo is provided
+    if (newOffset < 0 && (!widget.isMe || widget.onInfo == null)) {
+      newOffset = 0.0;
+    }
+
     if (newOffset.abs() > _maxDrag) {
       newOffset = newOffset.sign * _maxDrag;
     }
@@ -75,16 +85,16 @@ class _SwipeToReplyState extends State<SwipeToReply>
 
   void _onDragEnd(DragEndDetails details) {
     if (!widget.enabled) return;
-    if (_dragOffset.abs() >= _threshold) {
+    if (_dragOffset >= _threshold) {
       HapticFeedback.lightImpact();
       widget.onReply();
+    } else if (_dragOffset <= -_threshold && widget.isMe && widget.onInfo != null) {
+      HapticFeedback.lightImpact();
+      widget.onInfo!();
     }
     _hasTriggeredHaptic = false;
 
-    _animOffset = Tween<double>(
-      begin: _dragOffset,
-      end: 0.0,
-    ).animate(
+    _animOffset = Tween<double>(begin: _dragOffset, end: 0.0).animate(
       CurvedAnimation(parent: _animController, curve: Curves.elasticOut),
     );
     _animController.forward(from: 0.0);
@@ -116,8 +126,8 @@ class _SwipeToReplyState extends State<SwipeToReply>
                       color: AppTheme.primaryColor.withValues(alpha: 0.22),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
-                      Icons.reply_rounded,
+                    child: Icon(
+                      isRightDrag ? Icons.reply_rounded : Icons.info_outline_rounded,
                       color: AppTheme.primaryColor,
                       size: 20,
                     ),

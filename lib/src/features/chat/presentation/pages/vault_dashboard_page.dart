@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/ui/vault_motion.dart';
 import '../../../../core/ui/vault_page_route.dart';
@@ -11,6 +12,7 @@ import '../../domain/services/local_chat_storage.dart';
 import '../widgets/vault_action_card.dart';
 import '../widgets/vault_dashboard_header.dart';
 import '../widgets/vault_security_status_card.dart';
+
 import 'package:upgrader/upgrader.dart';
 
 class _CustomUpgraderMessages extends UpgraderMessages {
@@ -19,14 +21,13 @@ class _CustomUpgraderMessages extends UpgraderMessages {
 
   @override
   String get body => 'New feature and bug fixes you can update anytime.';
-  
+
   @override
   String get prompt => 'Would you like to update now?';
 
   @override
   String get buttonTitleUpdate => 'Update Now';
 }
-
 
 class VaultDashboardPage extends StatefulWidget {
   final VoidCallback onOpenChat;
@@ -63,15 +64,13 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
         curve: VaultMotion.entryCurve,
       ),
     );
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0.0, 0.05),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _entranceController,
-        curve: VaultMotion.entryCurve,
-      ),
-    );
+    _slideAnimation =
+        Tween<Offset>(begin: const Offset(0.0, 0.05), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _entranceController,
+            curve: VaultMotion.entryCurve,
+          ),
+        );
     _entranceController.forward();
   }
 
@@ -84,9 +83,7 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
   void _openPrivateFolder(BuildContext context) {
     Navigator.push(
       context,
-      VaultPageRoute(
-        builder: (_) => const PrivateFolderPage(),
-      ),
+      VaultPageRoute(builder: (_) => const PrivateFolderPage()),
     );
   }
 
@@ -97,8 +94,9 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
 
     return ShakePanicWrapper(
       child: Scaffold(
-        backgroundColor:
-            isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
+        backgroundColor: isDark
+            ? AppTheme.darkBackground
+            : AppTheme.lightBackground,
         body: SafeArea(
           child: FadeTransition(
             opacity: _fadeAnimation,
@@ -109,7 +107,9 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
                 slivers: [
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 12),
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
                     sliver: SliverList(
                       delegate: SliverChildListDelegate([
                         VaultDashboardHeader(
@@ -146,7 +146,9 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
                             final unreadTotal = widget.isDuressMode
                                 ? 0
                                 : conversations.fold<int>(
-                                    0, (sum, c) => sum + c.unreadCount);
+                                    0,
+                                    (sum, c) => sum + c.unreadCount,
+                                  );
                             final totalChats = widget.isDuressMode
                                 ? 0
                                 : conversations.length;
@@ -155,7 +157,7 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
                               icon: CupertinoIcons.chat_bubble_2_fill,
                               iconGradient: const [
                                 Color(0xFF007AFF),
-                                Color(0xFF00C6FF)
+                                Color(0xFF00C6FF),
                               ],
                               title: 'Chat',
                               subtitle: 'End-to-End Encrypted Messaging',
@@ -174,7 +176,7 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
                           icon: CupertinoIcons.folder_fill_badge_person_crop,
                           iconGradient: const [
                             Color(0xFFAF52DE),
-                            Color(0xFF5856D6)
+                            Color(0xFF5856D6),
                           ],
                           title: 'Private Folder',
                           subtitle: 'Encrypted Media Vault & Documents',
@@ -207,8 +209,10 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ),
-                            icon: const Icon(CupertinoIcons.lock_fill,
-                                size: 20),
+                            icon: const Icon(
+                              CupertinoIcons.lock_fill,
+                              size: 20,
+                            ),
                             label: const Text(
                               'Lock Vault Immediately',
                               style: TextStyle(
@@ -217,8 +221,10 @@ class _VaultDashboardPageState extends State<VaultDashboardPage>
                               ),
                             ),
                             onPressed: () {
-                              Navigator.of(context, rootNavigator: true)
-                                  .pushAndRemoveUntil(
+                              Navigator.of(
+                                context,
+                                rootNavigator: true,
+                              ).pushAndRemoveUntil(
                                 PageRouteBuilder(
                                   transitionDuration: Duration.zero,
                                   reverseTransitionDuration: Duration.zero,

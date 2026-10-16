@@ -1,5 +1,5 @@
-
 import 'dart:convert';
+
 import '../services/e2e_crypto_service.dart';
 import '../services/server_api_service.dart';
 
@@ -35,7 +35,14 @@ String? inferAttachmentType({
     return cleanType;
   }
   final source = fileName?.isNotEmpty == true ? fileName! : filePath ?? '';
-  final extension = source.split('?').first.split('#').first.split('.').last.toLowerCase();
+  final extension = source
+      .split('?')
+      .first
+      .split('#')
+      .first
+      .split('.')
+      .last
+      .toLowerCase();
   return switch (extension) {
     'jpg' || 'jpeg' => 'image/jpeg',
     'png' => 'image/png',
@@ -53,9 +60,11 @@ String? inferAttachmentType({
     'ogg' || 'opus' => 'audio/ogg',
     'pdf' => 'application/pdf',
     'doc' => 'application/msword',
-    'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'docx' =>
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'xls' => 'application/vnd.ms-excel',
-    'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'xlsx' =>
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'ppt' => 'application/vnd.ms-powerpoint',
     'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     'txt' => 'text/plain',
@@ -99,19 +108,26 @@ class UserModel {
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
     final rawId = json['id'] ?? json['user_id'] ?? json['userId'];
-    final id = rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? 0);
+    final id = rawId is int
+        ? rawId
+        : (int.tryParse(rawId?.toString() ?? '') ?? 0);
 
-    final rawName = json['name']?.toString() ??
+    final rawName =
+        json['name']?.toString() ??
         json['username']?.toString() ??
         json['full_name']?.toString() ??
         json['fullName']?.toString() ??
         json['display_name']?.toString() ??
         json['displayName']?.toString();
 
-    final phone = (json['phone'] ?? json['phone_number'] ?? json['phoneNumber'])?.toString();
+    final phone = (json['phone'] ?? json['phone_number'] ?? json['phoneNumber'])
+        ?.toString();
     final email = json['email']?.toString();
 
-    String name = (rawName != null && rawName.trim().isNotEmpty && rawName.trim().toLowerCase() != 'null')
+    String name =
+        (rawName != null &&
+            rawName.trim().isNotEmpty &&
+            rawName.trim().toLowerCase() != 'null')
         ? rawName.trim()
         : '';
 
@@ -133,12 +149,21 @@ class UserModel {
       phone: phone,
       email: email,
       publicKey: (json['public_key'] ?? json['publicKey'])?.toString(),
-      avatar: (json['avatar'] ?? json['avatar_url'] ?? json['avatarUrl'] ?? json['profile_pic'] ?? json['profilePic'])?.toString(),
+      avatar:
+          (json['avatar'] ??
+                  json['avatar_url'] ??
+                  json['avatarUrl'] ??
+                  json['profile_pic'] ??
+                  json['profilePic'])
+              ?.toString(),
       role: json['role']?.toString(),
-      encryptedPrivateKey: (json['encrypted_private_key'] ?? json['encryptedPrivateKey'])?.toString(),
+      encryptedPrivateKey:
+          (json['encrypted_private_key'] ?? json['encryptedPrivateKey'])
+              ?.toString(),
       keySalt: (json['key_salt'] ?? json['keySalt'])?.toString(),
       keyIv: (json['key_iv'] ?? json['keyIv'])?.toString(),
-      isOnline: json['is_online'] == true ||
+      isOnline:
+          json['is_online'] == true ||
           json['is_online'] == 1 ||
           json['is_online'] == 'true' ||
           json['is_online'] == '1' ||
@@ -235,7 +260,10 @@ class ServerChatListPageModel {
     } else if (json['data'] is Map) {
       final dataMap = json['data'] as Map;
       total = readInt(dataMap['total'], total);
-      totalPages = readInt(dataMap['total_pages'] ?? dataMap['totalPages'], totalPages);
+      totalPages = readInt(
+        dataMap['total_pages'] ?? dataMap['totalPages'],
+        totalPages,
+      );
       viewerId = readInt(dataMap['viewer_id'] ?? dataMap['viewerId'], viewerId);
       if (dataMap['chats'] is List) {
         list = dataMap['chats'] as List;
@@ -260,12 +288,17 @@ class ServerChatListPageModel {
       totalPages = page + 1;
     }
 
-    final rawHasMore = json['has_more'] ??
+    final rawHasMore =
+        json['has_more'] ??
         json['hasMore'] ??
-        (json['data'] is Map ? (json['data']['has_more'] ?? json['data']['hasMore']) : null);
+        (json['data'] is Map
+            ? (json['data']['has_more'] ?? json['data']['hasMore'])
+            : null);
     final bool? hasMoreVal = rawHasMore is bool
         ? rawHasMore
-        : (rawHasMore?.toString() == 'true' ? true : (rawHasMore?.toString() == 'false' ? false : null));
+        : (rawHasMore?.toString() == 'true'
+              ? true
+              : (rawHasMore?.toString() == 'false' ? false : null));
 
     final result = ServerChatListPageModel(
       page: page,
@@ -316,7 +349,10 @@ class ServerChatMediaItemModel {
           : int.tryParse(json['id']?.toString() ?? '') ?? 0,
       senderId: (json['sender_id'] is int)
           ? json['sender_id'] as int
-          : int.tryParse((json['sender_id'] ?? json['senderId'])?.toString() ?? '') ?? 0,
+          : int.tryParse(
+                  (json['sender_id'] ?? json['senderId'])?.toString() ?? '',
+                ) ??
+                0,
       filePath: (json['file_path'] ?? json['filePath'])?.toString() ?? '',
       url: json['url']?.toString() ?? '',
       fileName: (json['file_name'] ?? json['fileName'])?.toString() ?? '',
@@ -350,6 +386,7 @@ class ServerChatModel {
   final int? totalMembers;
   final int mediaTotal;
   final List<ServerChatMediaItemModel> media;
+  final String? backgroundUrl;
 
   ServerChatModel({
     required this.id,
@@ -372,11 +409,13 @@ class ServerChatModel {
     this.totalMembers,
     this.mediaTotal = 0,
     this.media = const [],
+    this.backgroundUrl,
   });
 
   factory ServerChatModel.fromJson(Map<String, dynamic> json) {
     List<UserModel> membersList = [];
-    final rawMembers = json['members'] ??
+    final rawMembers =
+        json['members'] ??
         json['participants'] ??
         json['users'] ??
         json['members_list'] ??
@@ -384,11 +423,13 @@ class ServerChatModel {
 
     if (rawMembers != null && rawMembers is List) {
       membersList = rawMembers
-          .map((m) => UserModel.fromJson(
-                m is Map<String, dynamic>
-                    ? m
-                    : (m is Map ? Map<String, dynamic>.from(m) : {}),
-              ))
+          .map(
+            (m) => UserModel.fromJson(
+              m is Map<String, dynamic>
+                  ? m
+                  : (m is Map ? Map<String, dynamic>.from(m) : {}),
+            ),
+          )
           .toList();
     }
 
@@ -419,10 +460,14 @@ class ServerChatModel {
         final existingIdx = membersList.indexWhere((m) => m.id == extraUser.id);
         if (existingIdx >= 0) {
           final existing = membersList[existingIdx];
-          final updatedAvatar = (existing.avatar != null && existing.avatar!.isNotEmpty)
+          final updatedAvatar =
+              (existing.avatar != null && existing.avatar!.isNotEmpty)
               ? existing.avatar
               : extraUser.avatar;
-          final updatedName = (existing.name.isNotEmpty && !existing.name.startsWith('User #') && existing.name != 'User')
+          final updatedName =
+              (existing.name.isNotEmpty &&
+                  !existing.name.startsWith('User #') &&
+                  existing.name != 'User')
               ? existing.name
               : extraUser.name;
           membersList[existingIdx] = UserModel(
@@ -433,7 +478,8 @@ class ServerChatModel {
             publicKey: existing.publicKey ?? extraUser.publicKey,
             avatar: updatedAvatar,
             role: existing.role ?? extraUser.role,
-            encryptedPrivateKey: existing.encryptedPrivateKey ?? extraUser.encryptedPrivateKey,
+            encryptedPrivateKey:
+                existing.encryptedPrivateKey ?? extraUser.encryptedPrivateKey,
             keySalt: existing.keySalt ?? extraUser.keySalt,
             keyIv: existing.keyIv ?? extraUser.keyIv,
             isOnline: existing.isOnline || extraUser.isOnline,
@@ -445,7 +491,8 @@ class ServerChatModel {
       }
     }
 
-    final rawLastMessage = json['last_message'] ??
+    final rawLastMessage =
+        json['last_message'] ??
         json['lastMessage'] ??
         json['latest_message'] ??
         json['latestMessage'] ??
@@ -456,13 +503,15 @@ class ServerChatModel {
         ? Map<String, dynamic>.from(rawLastMessage)
         : <String, dynamic>{};
 
-    final rawId = json['id'] ??
+    final rawId =
+        json['id'] ??
         json['chat_head_id'] ??
         json['chatHeadId'] ??
         json['chat_id'] ??
         json['chatId'];
 
-    final rawUnread = json['unread'] ??
+    final rawUnread =
+        json['unread'] ??
         json['unread_count'] ??
         json['unreadCount'] ??
         json['unread_messages_count'] ??
@@ -472,12 +521,14 @@ class ServerChatModel {
         ? rawUnread
         : int.tryParse(rawUnread?.toString() ?? '0') ?? 0;
 
-    final rawGroup = json['is_group'] ??
+    final rawGroup =
+        json['is_group'] ??
         json['isGroup'] ??
         json['is_group_chat'] ??
         json['isGroupChat'];
 
-    final isGroupVal = rawGroup == true ||
+    final isGroupVal =
+        rawGroup == true ||
         rawGroup == 1 ||
         rawGroup == 'true' ||
         rawGroup == '1' ||
@@ -492,11 +543,13 @@ class ServerChatModel {
     List<ServerChatMediaItemModel> mediaList = [];
     if (rawMedia is List) {
       mediaList = rawMedia
-          .map((item) => ServerChatMediaItemModel.fromJson(
-                item is Map<String, dynamic>
-                    ? item
-                    : (item is Map ? Map<String, dynamic>.from(item) : {}),
-              ))
+          .map(
+            (item) => ServerChatMediaItemModel.fromJson(
+              item is Map<String, dynamic>
+                  ? item
+                  : (item is Map ? Map<String, dynamic>.from(item) : {}),
+            ),
+          )
           .toList();
     }
 
@@ -507,29 +560,53 @@ class ServerChatModel {
 
     return ServerChatModel(
       id: rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? 0),
-      groupName: (json['group_name'] ?? json['groupName'] ?? json['name'] ?? json['title'])?.toString(),
-      groupAvatar: (json['group_avatar'] ?? json['groupAvatar'] ?? json['avatar'] ?? json['icon'])?.toString(),
+      groupName:
+          (json['group_name'] ??
+                  json['groupName'] ??
+                  json['name'] ??
+                  json['title'])
+              ?.toString(),
+      groupAvatar:
+          (json['group_avatar'] ??
+                  json['groupAvatar'] ??
+                  json['avatar'] ??
+                  json['icon'])
+              ?.toString(),
       isGroup: isGroupVal,
-      lastMessageCiphertext: lastMessageJson['ciphertext']?.toString() ??
+      lastMessageCiphertext:
+          lastMessageJson['ciphertext']?.toString() ??
           lastMessageJson['encrypted_message']?.toString() ??
           json['last_message_ciphertext']?.toString() ??
           json['lastMessageCiphertext']?.toString() ??
           json['ciphertext']?.toString(),
-      lastMessage: lastMessageJson['message']?.toString() ??
+      lastMessage:
+          lastMessageJson['message']?.toString() ??
           lastMessageJson['text']?.toString() ??
           lastMessageJson['content']?.toString() ??
           (rawLastMessage is String ? rawLastMessage : null),
-      lastMessageFilePath: lastMessageJson['file_path']?.toString() ??
+      lastMessageFilePath:
+          lastMessageJson['file_path']?.toString() ??
           lastMessageJson['filePath']?.toString() ??
           lastMessageJson['file_url']?.toString() ??
           lastMessageJson['fileUrl']?.toString(),
-      lastMessageFileName: lastMessageJson['file_name']?.toString() ??
+      lastMessageFileName:
+          lastMessageJson['file_name']?.toString() ??
           lastMessageJson['fileName']?.toString() ??
           lastMessageJson['name']?.toString(),
       lastMessageId: int.tryParse(lastMessageJson['id']?.toString() ?? ''),
       lastMessageSenderId: int.tryParse(
-          (lastMessageJson['sender_id'] ?? lastMessageJson['senderId'] ?? lastMessageJson['user_id'])?.toString() ?? ''),
-      lastMessageCreatedAt: (lastMessageJson['created_at'] ?? lastMessageJson['createdAt'] ?? json['last_message_created_at'] ?? json['lastMessageCreatedAt'])?.toString(),
+        (lastMessageJson['sender_id'] ??
+                    lastMessageJson['senderId'] ??
+                    lastMessageJson['user_id'])
+                ?.toString() ??
+            '',
+      ),
+      lastMessageCreatedAt:
+          (lastMessageJson['created_at'] ??
+                  lastMessageJson['createdAt'] ??
+                  json['last_message_created_at'] ??
+                  json['lastMessageCreatedAt'])
+              ?.toString(),
       unreadCount: unreadVal,
       disappearType: disappearVal,
       members: membersList,
@@ -537,12 +614,18 @@ class ServerChatModel {
       createdAt: (json['created_at'] ?? json['createdAt'])?.toString(),
       createdBy: json['created_by'] is int
           ? json['created_by'] as int
-          : int.tryParse((json['created_by'] ?? json['createdBy'])?.toString() ?? ''),
+          : int.tryParse(
+              (json['created_by'] ?? json['createdBy'])?.toString() ?? '',
+            ),
       totalMembers: json['total_members'] is int
           ? json['total_members'] as int
-          : int.tryParse((json['total_members'] ?? json['totalMembers'])?.toString() ?? ''),
+          : int.tryParse(
+              (json['total_members'] ?? json['totalMembers'])?.toString() ?? '',
+            ),
       mediaTotal: mediaTotalVal,
       media: mediaList,
+      backgroundUrl: (json['background_url'] ?? json['backgroundUrl'])
+          ?.toString(),
     );
   }
 }
@@ -606,25 +689,65 @@ class ServerMessageModel {
         ? rawDisappear
         : (int.tryParse(rawDisappear?.toString() ?? '0') ?? 0);
 
-    final rawRead = json['is_read'] ?? json['isRead'] ?? json['read'] ?? json['read_at'];
-    final isReadVal = rawRead == true || rawRead == 1 || (rawRead is String && rawRead.isNotEmpty);
+    final rawRead = json['is_read'] ??
+        json['isRead'] ??
+        json['read'] ??
+        json['read_at'] ??
+        json['is_seen'] ??
+        json['isSeen'] ??
+        json['seen'] ??
+        json['seen_at'] ??
+        json['read_by'] ??
+        json['read_status'];
 
-    final rawDelivered = json['is_delivered'] ?? json['isDelivered'] ?? json['delivered'] ?? json['delivered_at'] ?? json['status'];
+    final rawStatus = json['status']?.toString().toLowerCase();
+
+    final isReadVal = rawRead == true ||
+        rawRead == 1 ||
+        rawRead == '1' ||
+        rawRead == 'true' ||
+        (rawRead is String &&
+            rawRead.isNotEmpty &&
+            rawRead != '0' &&
+            rawRead != 'false' &&
+            rawRead != 'null') ||
+        rawStatus == 'read' ||
+        rawStatus == 'seen';
+
+    final rawDelivered = json['is_delivered'] ??
+        json['isDelivered'] ??
+        json['delivered'] ??
+        json['delivered_at'];
+
     final isDeliveredVal = isReadVal ||
         rawDelivered == true ||
         rawDelivered == 1 ||
-        (rawDelivered is String && (rawDelivered == 'delivered' || rawDelivered == 'read' || rawDelivered.isNotEmpty));
+        rawDelivered == '1' ||
+        rawDelivered == 'true' ||
+        (rawDelivered is String &&
+            rawDelivered.isNotEmpty &&
+            rawDelivered != '0' &&
+            rawDelivered != 'false' &&
+            rawDelivered != 'null') ||
+        rawStatus == 'delivered' ||
+        rawStatus == 'sent' ||
+        rawStatus == 'read' ||
+        rawStatus == 'seen' ||
+        (rawId is int ? rawId > 0 : (int.tryParse(rawId?.toString() ?? '') ?? 0) > 0);
 
     return ServerMessageModel(
       id: rawId is int ? rawId : int.tryParse(rawId?.toString() ?? '') ?? 0,
       chatHeadId: json['chat_head_id'] is int
           ? json['chat_head_id']
           : int.tryParse(
-                (json['chat_head_id'] ?? json['chat_id'] ?? json['chatHeadId'] ?? json['chatId'])
-                        ?.toString() ??
-                    '0',
-              ) ??
-              0,
+                  (json['chat_head_id'] ??
+                              json['chat_id'] ??
+                              json['chatHeadId'] ??
+                              json['chatId'])
+                          ?.toString() ??
+                      '0',
+                ) ??
+                0,
       senderId: rawSenderId is int
           ? rawSenderId
           : int.tryParse(rawSenderId?.toString() ?? '0') ?? 0,
@@ -647,7 +770,8 @@ class ServerMessageModel {
       isSaved: json['is_saved'] == true || json['is_saved'] == 1,
       disappearType: disappearVal,
       expiresAt: (json['expires_at'] ?? json['expiresAt'])?.toString(),
-      createdAt: (json['created_at'] ?? json['createdAt'])?.toString() ??
+      createdAt:
+          (json['created_at'] ?? json['createdAt'])?.toString() ??
           DateTime.now().toIso8601String(),
       updatedAt: (json['updated_at'] ?? json['updatedAt'])?.toString(),
     );
@@ -656,7 +780,10 @@ class ServerMessageModel {
   /// Returns decrypted message content given the secret key.
   String decryptedContent(String secretKey) {
     final raw = message?.isNotEmpty == true ? message! : ciphertext;
-    return E2eCryptoService.instance.decryptText(raw, secretKey);
+    final decrypted = E2eCryptoService.instance.decryptText(raw, secretKey);
+    // Do not leak an encrypted payload into the presentation layer when a
+    // malformed or stale payload cannot be decoded.
+    return raw.startsWith('ENC:v1:') && decrypted == raw ? '' : decrypted;
   }
 }
 
@@ -665,16 +792,19 @@ class AuthResponseModel {
   final String token;
   final UserModel user;
 
-  AuthResponseModel({
-    required this.token,
-    required this.user,
-  });
+  AuthResponseModel({required this.token, required this.user});
 
   factory AuthResponseModel.fromJson(Map<String, dynamic> json) {
     final data = json['data'] is Map<String, dynamic> ? json['data'] : json;
     return AuthResponseModel(
       token: data['token']?.toString() ?? '',
-      user: UserModel.fromJson(data['user'] is Map<String, dynamic> ? data['user'] : (data['user'] != null ? Map<String, dynamic>.from(data['user']) : <String, dynamic>{})),
+      user: UserModel.fromJson(
+        data['user'] is Map<String, dynamic>
+            ? data['user']
+            : (data['user'] != null
+                  ? Map<String, dynamic>.from(data['user'])
+                  : <String, dynamic>{}),
+      ),
     );
   }
 }
@@ -706,17 +836,28 @@ class UploadItemModel {
       id: json['id'] is int
           ? json['id'] as int
           : int.tryParse(json['id']?.toString() ?? '0') ?? 0,
-      filePath: (json['file_path'] ?? json['filePath'] ?? json['path'])?.toString() ?? '',
+      filePath:
+          (json['file_path'] ?? json['filePath'] ?? json['path'])?.toString() ??
+          '',
       folder: json['folder']?.toString() ?? '',
-      fileName: (json['file_name'] ?? json['fileName'] ?? json['name'])?.toString() ?? 'File',
-      fileType: (json['file_type'] ?? json['fileType'] ?? json['type'])?.toString() ?? 'application/octet-stream',
+      fileName:
+          (json['file_name'] ?? json['fileName'] ?? json['name'])?.toString() ??
+          'File',
+      fileType:
+          (json['file_type'] ?? json['fileType'] ?? json['type'])?.toString() ??
+          'application/octet-stream',
       fileSize: json['file_size'] is int
           ? json['file_size'] as int
           : json['fileSize'] is int
-              ? json['fileSize'] as int
-              : json['size'] is int
-                  ? json['size'] as int
-                  : int.tryParse((json['file_size'] ?? json['fileSize'] ?? json['size'])?.toString() ?? '0') ?? 0,
+          ? json['fileSize'] as int
+          : json['size'] is int
+          ? json['size'] as int
+          : int.tryParse(
+                  (json['file_size'] ?? json['fileSize'] ?? json['size'])
+                          ?.toString() ??
+                      '0',
+                ) ??
+                0,
       createdAt: (json['created_at'] ?? json['createdAt'])?.toString() ?? '',
       url: (json['url'] ?? json['path'] ?? json['file_path'])?.toString() ?? '',
     );
@@ -765,7 +906,20 @@ class UploadItemModel {
     if (createdAt.isEmpty) return '';
     try {
       final dt = DateTime.parse(createdAt).toLocal();
-      final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      final months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
       return '${months[dt.month - 1]} ${dt.day}, ${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     } catch (_) {
       return createdAt;
@@ -778,7 +932,16 @@ class UploadItemModel {
     final lowerType = fileType.toLowerCase();
     if (lowerType.startsWith('image/')) return true;
     final ext = fileName.split('.').last.toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp', 'svg'].contains(ext);
+    return [
+      'jpg',
+      'jpeg',
+      'png',
+      'gif',
+      'webp',
+      'heic',
+      'bmp',
+      'svg',
+    ].contains(ext);
   }
 
   bool get isVideo {
@@ -787,21 +950,50 @@ class UploadItemModel {
     final lowerType = fileType.toLowerCase();
     if (lowerType.startsWith('video/')) return true;
     final ext = fileName.split('.').last.toLowerCase();
-    return ['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', '3gp', 'flv'].contains(ext);
+    return [
+      'mp4',
+      'mov',
+      'm4v',
+      'avi',
+      'mkv',
+      'webm',
+      '3gp',
+      'flv',
+    ].contains(ext);
   }
 
   bool get isAudio {
     final f = folder.toLowerCase();
-    if (f == 'audio' || f == 'audios' || f == 'music' || f == 'sound' || f == 'voice') return true;
+    if (f == 'audio' ||
+        f == 'audios' ||
+        f == 'music' ||
+        f == 'sound' ||
+        f == 'voice')
+      return true;
     final lowerType = fileType.toLowerCase();
     if (lowerType.startsWith('audio/')) return true;
     final ext = fileName.split('.').last.toLowerCase();
-    return ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'flac', 'opus', 'amr', 'wma'].contains(ext);
+    return [
+      'mp3',
+      'm4a',
+      'aac',
+      'wav',
+      'ogg',
+      'flac',
+      'opus',
+      'amr',
+      'wma',
+    ].contains(ext);
   }
 
   bool get isDoc {
     final f = folder.toLowerCase();
-    if (f == 'doc' || f == 'document' || f == 'documents' || f == 'file' || f == 'files') return true;
+    if (f == 'doc' ||
+        f == 'document' ||
+        f == 'documents' ||
+        f == 'file' ||
+        f == 'files')
+      return true;
     return !isImage && !isVideo && !isAudio;
   }
 }
@@ -820,7 +1012,10 @@ class UploadsResponseModel {
     required this.items,
   });
 
-  factory UploadsResponseModel.fromJson(Map<String, dynamic> json, {String? requestedFolder}) {
+  factory UploadsResponseModel.fromJson(
+    Map<String, dynamic> json, {
+    String? requestedFolder,
+  }) {
     final page = json['page'] is int
         ? json['page'] as int
         : int.tryParse(json['page']?.toString() ?? '1') ?? 1;
@@ -843,7 +1038,10 @@ class UploadsResponseModel {
         for (final entry in foldersMap.entries) {
           final kLower = entry.key.toString().toLowerCase();
           if (kLower == req ||
-              (req == 'doc' && (kLower == 'document' || kLower == 'documents' || kLower == 'files')) ||
+              (req == 'doc' &&
+                  (kLower == 'document' ||
+                      kLower == 'documents' ||
+                      kLower == 'files')) ||
               (req == 'image' && kLower == 'images') ||
               (req == 'video' && kLower == 'videos') ||
               (req == 'audio' && (kLower == 'audios' || kLower == 'music'))) {
@@ -864,7 +1062,9 @@ class UploadsResponseModel {
           if (rawItems is List) {
             items = rawItems
                 .whereType<Map>()
-                .map((e) => UploadItemModel.fromJson(Map<String, dynamic>.from(e)))
+                .map(
+                  (e) => UploadItemModel.fromJson(Map<String, dynamic>.from(e)),
+                )
                 .toList();
           }
         }
@@ -875,9 +1075,9 @@ class UploadsResponseModel {
             final rawItems = fMap['items'];
             if (rawItems is List) {
               items.addAll(
-                rawItems
-                    .whereType<Map>()
-                    .map((e) => UploadItemModel.fromJson(Map<String, dynamic>.from(e))),
+                rawItems.whereType<Map>().map(
+                  (e) => UploadItemModel.fromJson(Map<String, dynamic>.from(e)),
+                ),
               );
             }
           }
@@ -945,8 +1145,12 @@ class ServerMessagesPageModel {
     final totalPages = json['total_pages'] is int
         ? json['total_pages'] as int
         : (json['totalPages'] is int
-            ? json['totalPages'] as int
-            : int.tryParse((json['total_pages'] ?? json['totalPages'])?.toString() ?? '1') ?? 1);
+              ? json['totalPages'] as int
+              : int.tryParse(
+                      (json['total_pages'] ?? json['totalPages'])?.toString() ??
+                          '1',
+                    ) ??
+                    1);
 
     List<ServerMessageModel> msgs = [];
     dynamic rawList;
@@ -954,13 +1158,15 @@ class ServerMessagesPageModel {
       rawList = json['data'];
     } else if (json['data'] is Map) {
       final dataMap = json['data'] as Map;
-      rawList = dataMap['messages'] ??
+      rawList =
+          dataMap['messages'] ??
           dataMap['items'] ??
           dataMap['rows'] ??
           dataMap['results'] ??
           dataMap['data'];
     }
-    rawList ??= json['messages'] ??
+    rawList ??=
+        json['messages'] ??
         json['items'] ??
         json['rows'] ??
         json['results'] ??
@@ -982,4 +1188,3 @@ class ServerMessagesPageModel {
     );
   }
 }
-

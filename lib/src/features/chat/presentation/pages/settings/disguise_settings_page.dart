@@ -35,7 +35,9 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
 
     return ShakePanicWrapper(
       child: Scaffold(
-        backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
+        backgroundColor: isDark
+            ? AppTheme.darkBackground
+            : AppTheme.lightBackground,
         body: SafeArea(
           child: Column(
             children: [
@@ -46,14 +48,18 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 16.0, vertical: 8.0),
+                    horizontal: 16.0,
+                    vertical: 8.0,
+                  ),
                   children: [
                     Container(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.3 : 0.03,
+                            ),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
@@ -67,20 +73,29 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                           children: [
                             SwitchListTile(
                               activeTrackColor: AppTheme.onlineGreen,
-                              title: const Text('Real Shake Panic Gesture',
-                                  style: TextStyle(
-                                      fontSize: 14, fontWeight: FontWeight.bold)),
+                              title: const Text(
+                                'Real Shake Panic Gesture',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               subtitle: const Text(
-                                  'Shaking physical device opens Calculator instantly',
-                                  style: TextStyle(
-                                      fontSize: 12, color: AppTheme.subtitleGrey)),
+                                'Shaking physical device opens Calculator instantly',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.subtitleGrey,
+                                ),
+                              ),
                               value: _panicShakeEnabled,
                               onChanged: (val) {
                                 setState(() => _panicShakeEnabled = val);
                                 AppPreferences.setPanicShake(val);
-                                AppToast.show(val
-                                    ? 'Shake panic sensor enabled'
-                                    : 'Shake panic sensor disabled');
+                                AppToast.show(
+                                  val
+                                      ? 'Shake panic sensor enabled'
+                                      : 'Shake panic sensor disabled',
+                                );
                               },
                             ),
                             Divider(
@@ -93,20 +108,29 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                             ),
                             SwitchListTile(
                               activeTrackColor: AppTheme.onlineGreen,
-                              title: const Text('Disguise App Title',
-                                  style: TextStyle(
-                                      fontSize: 14, fontWeight: FontWeight.bold)),
+                              title: const Text(
+                                'Disguise App Title',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               subtitle: const Text(
-                                  'App appears as "Calculator" in system Recent Apps',
-                                  style: TextStyle(
-                                      fontSize: 12, color: AppTheme.subtitleGrey)),
+                                'App appears as "Calculator" in system Recent Apps',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.subtitleGrey,
+                                ),
+                              ),
                               value: _disguiseTitleEnabled,
                               onChanged: (val) {
                                 setState(() => _disguiseTitleEnabled = val);
                                 AppPreferences.setDisguiseTitle(val);
-                                AppToast.show(val
-                                    ? 'Calculator disguise enabled'
-                                    : 'Calculator disguise disabled');
+                                AppToast.show(
+                                  val
+                                      ? 'Calculator disguise enabled'
+                                      : 'Calculator disguise disabled',
+                                );
                               },
                             ),
                             Divider(
@@ -119,20 +143,29 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                             ),
                             SwitchListTile(
                               activeTrackColor: AppTheme.onlineGreen,
-                              title: const Text('Prevent Screenshots',
-                                  style: TextStyle(
-                                      fontSize: 14, fontWeight: FontWeight.bold)),
+                              title: const Text(
+                                'Prevent Screenshots',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               subtitle: const Text(
-                                  'Blocks screenshots and screen recording inside vault',
-                                  style: TextStyle(
-                                      fontSize: 12, color: AppTheme.subtitleGrey)),
+                                'Blocks screenshots and screen recording inside vault',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.subtitleGrey,
+                                ),
+                              ),
                               value: _preventScreenshots,
                               onChanged: (val) {
                                 setState(() => _preventScreenshots = val);
                                 AppPreferences.setPreventScreenshots(val);
-                                AppToast.show(val
-                                    ? 'Screenshot prevention enabled'
-                                    : 'Screenshot prevention disabled');
+                                AppToast.show(
+                                  val
+                                      ? 'Screenshot prevention enabled'
+                                      : 'Screenshot prevention disabled',
+                                );
                               },
                             ),
                             Divider(
@@ -145,20 +178,29 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                             ),
                             SwitchListTile(
                               activeTrackColor: AppTheme.onlineGreen,
-                              title: const Text('Floating Edge Quick Bar',
-                                  style: TextStyle(
-                                      fontSize: 14, fontWeight: FontWeight.bold)),
+                              title: const Text(
+                                'Floating Edge Quick Bar',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               subtitle: const Text(
-                                  'Draggable edge bar for 1-tap vault shortcuts',
-                                  style: TextStyle(
-                                      fontSize: 12, color: AppTheme.subtitleGrey)),
+                                'Draggable edge bar for 1-tap vault shortcuts',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.subtitleGrey,
+                                ),
+                              ),
                               value: _edgePanelEnabled,
                               onChanged: (val) {
                                 setState(() => _edgePanelEnabled = val);
                                 AppPreferences.setEdgePanelEnabled(val);
-                                AppToast.show(val
-                                    ? 'Vault edge bar enabled'
-                                    : 'Vault edge bar disabled');
+                                AppToast.show(
+                                  val
+                                      ? 'Vault edge bar enabled'
+                                      : 'Vault edge bar disabled',
+                                );
                               },
                             ),
                             Divider(
@@ -170,13 +212,20 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                                   : Colors.black.withValues(alpha: 0.06),
                             ),
                             ListTile(
-                              title: const Text('Disappearing Messages',
-                                  style: TextStyle(
-                                      fontSize: 14, fontWeight: FontWeight.bold)),
+                              title: const Text(
+                                'Disappearing Messages',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               subtitle: Text(
-                                  'Auto-erase messages after: $_disappearingDuration',
-                                  style: const TextStyle(
-                                      fontSize: 12, color: AppTheme.subtitleGrey)),
+                                'Auto-erase messages after: $_disappearingDuration',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.subtitleGrey,
+                                ),
+                              ),
                               trailing: DropdownButton<String>(
                                 value: _disappearingDuration,
                                 underline: const SizedBox(),
@@ -187,20 +236,29 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                                 ),
                                 items: const [
                                   DropdownMenuItem(
-                                      value: 'Off', child: Text('Off')),
+                                    value: 'Off',
+                                    child: Text('Off'),
+                                  ),
                                   DropdownMenuItem(
-                                      value: '1 hour', child: Text('1 hour')),
+                                    value: '1 hour',
+                                    child: Text('1 hour'),
+                                  ),
                                   DropdownMenuItem(
-                                      value: '24 hours', child: Text('24 hours')),
+                                    value: '24 hours',
+                                    child: Text('24 hours'),
+                                  ),
                                   DropdownMenuItem(
-                                      value: '7 days', child: Text('7 days')),
+                                    value: '7 days',
+                                    child: Text('7 days'),
+                                  ),
                                 ],
                                 onChanged: (val) {
                                   if (val != null) {
                                     setState(() => _disappearingDuration = val);
                                     AppPreferences.setDisappearingTimer(val);
                                     AppToast.show(
-                                        'Disappearing timer set to $val');
+                                      'Disappearing timer set to $val',
+                                    );
                                   }
                                 },
                               ),

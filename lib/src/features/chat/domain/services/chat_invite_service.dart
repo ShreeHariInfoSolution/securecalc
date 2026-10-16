@@ -6,7 +6,8 @@ import 'server_chat_manager.dart';
 
 /// The single QR/link/text format accepted when starting a direct chat.
 class ChatInvite {
-  static String forUser(int userId) => 'securecalc://chat?target_id=$userId&v=1';
+  static String forUser(int userId) =>
+      'securecalc://chat?target_id=$userId&v=1';
 
   /// Accepts the app link, its HTTPS fallback, or a plain numeric user ID.
   static int? targetUserIdFrom(String value) {
@@ -41,8 +42,12 @@ class DirectChatStarter {
       throw ArgumentError('You cannot start a chat with your own profile.');
     }
 
-    final UserModel? targetUser = await ServerApiService.instance.getUser(targetUserId);
-    final serverChat = await ServerApiService.instance.createDirectChat(targetUserId);
+    final UserModel? targetUser = await ServerApiService.instance.getUser(
+      targetUserId,
+    );
+    final serverChat = await ServerApiService.instance.createDirectChat(
+      targetUserId,
+    );
     if (serverChat.id <= 0) {
       throw StateError('The server did not return a valid chat ID.');
     }

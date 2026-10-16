@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/typing_dots.dart';
+
 import '../../domain/entities/chat_conversation.dart';
 
 class ConversationTile extends StatelessWidget {
@@ -26,6 +27,27 @@ class ConversationTile extends StatelessWidget {
     final showTyping = isTyping || conversation.isTyping;
     final hasUnread = conversation.unreadCount > 0;
 
+    final lastMsg = conversation.messages.isNotEmpty
+        ? conversation.messages.last
+        : null;
+    final isLastMsgFromMe = lastMsg != null && lastMsg.senderId == 'user';
+
+    IconData? statusIcon;
+    Color? statusColor;
+
+    if (isLastMsgFromMe) {
+      if (lastMsg.isRead) {
+        statusIcon = Icons.done_all_rounded;
+        statusColor = const Color(0xFF34B7F1);
+      } else if (lastMsg.isDelivered) {
+        statusIcon = Icons.done_all_rounded;
+        statusColor = AppTheme.secondaryText(isDark);
+      } else {
+        statusIcon = Icons.done_rounded;
+        statusColor = AppTheme.secondaryText(isDark);
+      }
+    }
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -35,7 +57,10 @@ class ConversationTile extends StatelessWidget {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14.0,
+                vertical: 10.0,
+              ),
               child: Row(
                 children: [
                   // Dynamic Far Left Unread Indicator Blue Dot
@@ -77,7 +102,9 @@ class ConversationTile extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: 16,
-                                  fontWeight: hasUnread ? FontWeight.w700 : FontWeight.w600,
+                                  fontWeight: hasUnread
+                                      ? FontWeight.w700
+                                      : FontWeight.w600,
                                   color: AppTheme.primaryText(isDark),
                                   letterSpacing: -0.3,
                                 ),
@@ -98,7 +125,8 @@ class ConversationTile extends StatelessWidget {
                             Icon(
                               CupertinoIcons.chevron_right,
                               size: 14,
-                              color: AppTheme.secondaryText(isDark).withValues(alpha: 0.6),
+                              color: AppTheme.secondaryText(isDark)
+                                  .withValues(alpha: 0.6),
                             ),
                           ],
                         ),
@@ -110,14 +138,20 @@ class ConversationTile extends StatelessWidget {
                             if (conversation.isPinned)
                               const Padding(
                                 padding: EdgeInsets.only(right: 4.0),
-                                child: Icon(CupertinoIcons.pin_fill,
-                                    size: 12, color: Colors.amber),
+                                child: Icon(
+                                  CupertinoIcons.pin_fill,
+                                  size: 12,
+                                  color: Colors.amber,
+                                ),
                               ),
                             if (conversation.isMuted)
                               Padding(
                                 padding: const EdgeInsets.only(right: 4.0),
-                                child: Icon(CupertinoIcons.bell_slash_fill,
-                                    size: 12, color: AppTheme.secondaryText(isDark)),
+                                child: Icon(
+                                  CupertinoIcons.bell_slash_fill,
+                                  size: 12,
+                                  color: AppTheme.secondaryText(isDark),
+                                ),
                               ),
                             Expanded(
                               child: showTyping
@@ -138,20 +172,36 @@ class ConversationTile extends StatelessWidget {
                                         ),
                                       ],
                                     )
-                                  : Text(
-                                      conversation.lastMessage,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: hasUnread
-                                            ? AppTheme.primaryText(isDark)
-                                            : AppTheme.secondaryText(isDark),
-                                        fontWeight: hasUnread
-                                            ? FontWeight.w500
-                                            : FontWeight.w400,
-                                        height: 1.25,
-                                      ),
+                                  : Row(
+                                      children: [
+                                        if (isLastMsgFromMe &&
+                                            statusIcon != null) ...[
+                                          Icon(
+                                            statusIcon,
+                                            size: 16,
+                                            color: statusColor,
+                                          ),
+                                          const SizedBox(width: 4),
+                                        ],
+                                        Expanded(
+                                          child: Text(
+                                            conversation.lastMessage,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: hasUnread
+                                                  ? AppTheme.primaryText(isDark)
+                                                  : AppTheme.secondaryText(
+                                                    isDark,
+                                                  ),
+                                              fontWeight: hasUnread
+                                                  ? FontWeight.w500
+                                                  : FontWeight.w400,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                             ),
                             if (hasUnread && conversation.unreadCount > 1) ...[
@@ -162,7 +212,9 @@ class ConversationTile extends StatelessWidget {
                                   minHeight: 18,
                                 ),
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 5, vertical: 1),
+                                  horizontal: 5,
+                                  vertical: 1,
+                                ),
                                 decoration: BoxDecoration(
                                   color: AppTheme.primaryColor,
                                   borderRadius: BorderRadius.circular(9),
@@ -201,4 +253,3 @@ class ConversationTile extends StatelessWidget {
     );
   }
 }
-
