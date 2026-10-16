@@ -1015,9 +1015,9 @@ class _ConversationListPageState extends State<ConversationListPage> {
             final archivedTotal = conversations
                 .where((c) => c.isArchived)
                 .length;
-            final archivedUnreadTotal = conversations
-                .where((c) => c.isArchived)
-                .fold<int>(0, (sum, c) => sum + c.unreadCount);
+            final archivedUnreadChatsCount = conversations
+                .where((c) => c.isArchived && c.unreadCount > 0)
+                .length;
 
             final query = _searchController.text.trim().toLowerCase();
             final filtered =
@@ -1166,7 +1166,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                                         ),
                                       ),
                                       const Spacer(),
-                                      if (archivedUnreadTotal > 0) ...[
+                                      if (archivedUnreadChatsCount > 0) ...[
                                         Container(
                                           padding: const EdgeInsets.symmetric(
                                             horizontal: 7,
@@ -1178,7 +1178,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                                                 BorderRadius.circular(10),
                                           ),
                                           child: Text(
-                                            '$archivedUnreadTotal',
+                                            '$archivedUnreadChatsCount',
                                             style: const TextStyle(
                                               fontSize: 12,
                                               fontWeight: FontWeight.bold,
@@ -1186,9 +1186,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                                             ),
                                           ),
                                         ),
-                                        const SizedBox(width: 8),
-                                      ],
-                                      if (archivedTotal > 0)
+                                      ] else if (archivedTotal > 0) ...[
                                         Text(
                                           '$archivedTotal',
                                           style: TextStyle(
@@ -1199,6 +1197,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                                             ),
                                           ),
                                         ),
+                                      ],
                                     ],
                                   ),
                                 ),

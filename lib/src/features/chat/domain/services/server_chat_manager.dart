@@ -319,12 +319,13 @@ class ServerChatManager {
         finalUnreadCount = sc.unreadCount;
       }
 
-      // Transient WebSocket states (typing / presence / pin / mute)
+      // Transient WebSocket states (typing / presence / pin / mute / archive)
       final isOnline = peer?.isOnline == true || (liveLocal?.isOnline ?? false);
       final isTyping =
           _typingChatIds.contains(chatIdStr) || (liveLocal?.isTyping ?? false);
       final isPinned = liveLocal?.isPinned ?? false;
       final isMuted = liveLocal?.isMuted ?? false;
+      final isArchived = liveLocal?.isArchived ?? false;
 
       final conversation = ChatConversation(
         id: chatIdStr,
@@ -342,6 +343,7 @@ class ServerChatManager {
         memberNames: {for (final member in sc.members) member.id: member.name},
         isPinned: isPinned,
         isMuted: isMuted,
+        isArchived: isArchived,
         backgroundUrl: sc.backgroundUrl,
         messages: cachedMessages,
       );
