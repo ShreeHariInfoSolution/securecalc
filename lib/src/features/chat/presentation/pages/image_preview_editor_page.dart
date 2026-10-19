@@ -2,10 +2,14 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../../../core/config/app_preferences.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../widgets/app_video_player.dart';
 
 class ImageEditorResult {
   final List<File> images;
@@ -36,13 +40,15 @@ class ImagePreviewEditorPage extends StatefulWidget {
 }
 
 class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
+  final ImagePicker _picker = ImagePicker();
+
   late List<File> _files;
   late Map<int, List<DrawingStroke>> _strokesPerImage;
   final Map<int, Size> _imageSizes = {};
   int _currentIndex = 0;
   bool _isDrawingMode = false;
   Color _selectedColor = Colors.red;
-  double _strokeWidth = 4.0;
+  final double _strokeWidth = 4.0;
 
   final TextEditingController _captionController = TextEditingController();
   final PageController _pageController = PageController();
@@ -67,8 +73,14 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
     _preloadImageSizes();
   }
 
+  bool _isVideo(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    return ['mp4', 'mov', 'mkv', 'avi', '3gp', 'webm'].contains(ext);
+  }
+
   Future<void> _preloadImageSizes() async {
     for (int i = 0; i < _files.length; i++) {
+      if (_isVideo(_files[i].path)) continue;
       try {
         final bytes = await _files[i].readAsBytes();
         final codec = await ui.instantiateImageCodec(bytes);
@@ -103,6 +115,108 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
     }
   }
 
+  Future<void> _addMoreMedia() async {
+    final choice = await showCupertinoModalPopup<String>(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        title: const Text('Add Media'),
+        message: const Text('Take photo, video or choose from gallery'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () => Navigator.pop(ctx, 'camera_photo'),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.camera_fill, size: 20),
+                SizedBox(width: 8),
+                Text('Take Photo'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () => Navigator.pop(ctx, 'camera_video'),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.videocam_fill, size: 20),
+                SizedBox(width: 8),
+                Text('Record Video'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () => Navigator.pop(ctx, 'gallery'),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.photo_fill, size: 20),
+                SizedBox(width: 8),
+                Text('Choose from Gallery'),
+              ],
+            ),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          isDefaultAction: true,
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
+
+    if (choice == null) return;
+
+    AppPreferences.isPickerActive = true;
+    try {
+      if (choice == 'camera_photo') {
+        final picked = await _picker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: 90,
+        );
+        if (picked != null) {
+          _addNewFile(File(picked.path));
+        }
+      } else if (choice == 'camera_video') {
+        final picked = await _picker.pickVideo(source: ImageSource.camera);
+        if (picked != null) {
+          _addNewFile(File(picked.path));
+        }
+      } else if (choice == 'gallery') {
+        final multi = await _picker.pickMultiImage(imageQuality: 90);
+        if (multi.isNotEmpty) {
+          for (final f in multi) {
+            _addNewFile(File(f.path));
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[ADD MEDIA ERROR] $e');
+    } finally {
+      AppPreferences.isPickerActive = false;
+    }
+  }
+
+  void _addNewFile(File file) {
+    setState(() {
+      _files.add(file);
+      final newIndex = _files.length - 1;
+      _strokesPerImage[newIndex] = <DrawingStroke>[];
+      _currentIndex = newIndex;
+    });
+
+    _preloadImageSizes();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_pageController.hasClients) {
+        _pageController.animateToPage(
+          _files.length - 1,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
+
   Offset? _toNormalized(Offset touch, Size boxSize, Size imageSize) {
     if (imageSize.width <= 0 || imageSize.height <= 0) return null;
     final fitted = applyBoxFit(BoxFit.contain, imageSize, boxSize);
@@ -122,7 +236,9 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
     File originalFile,
     List<DrawingStroke> strokes,
   ) async {
-    if (strokes.isEmpty) return originalFile;
+    if (_isVideo(originalFile.path) || strokes.isEmpty) {
+      return originalFile;
+    }
 
     try {
       final bytes = await originalFile.readAsBytes();
@@ -196,6 +312,9 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isCurrentVideo =
+        _files.isNotEmpty && _isVideo(_files[_currentIndex].path);
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -215,41 +334,53 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
                     onPressed: () => Navigator.pop(context),
                   ),
                   const Spacer(),
-                  if (_isDrawingMode) ...[
+                  IconButton(
+                    icon: const Icon(
+                      CupertinoIcons.camera_fill,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                    onPressed: _addMoreMedia,
+                    tooltip: 'Add photo or video',
+                  ),
+                  if (!isCurrentVideo) ...[
+                    const SizedBox(width: 8),
+                    if (_isDrawingMode) ...[
+                      IconButton(
+                        icon: const Icon(
+                          Icons.undo_rounded,
+                          color: Colors.white,
+                          size: 26,
+                        ),
+                        onPressed: _currentStrokes.isNotEmpty
+                            ? _undoStroke
+                            : null,
+                        tooltip: 'Undo draw',
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                     IconButton(
-                      icon: const Icon(
-                        Icons.undo_rounded,
-                        color: Colors.white,
+                      icon: Icon(
+                        Icons.draw_rounded,
+                        color: _isDrawingMode
+                            ? AppTheme.primaryColor
+                            : Colors.white,
                         size: 26,
                       ),
-                      onPressed: _currentStrokes.isNotEmpty
-                          ? _undoStroke
-                          : null,
-                      tooltip: 'Undo draw',
+                      onPressed: () {
+                        setState(() {
+                          _isDrawingMode = !_isDrawingMode;
+                        });
+                      },
+                      tooltip: 'Draw tool',
                     ),
-                    const SizedBox(width: 8),
                   ],
-                  IconButton(
-                    icon: Icon(
-                      Icons.draw_rounded,
-                      color: _isDrawingMode
-                          ? AppTheme.primaryColor
-                          : Colors.white,
-                      size: 26,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        _isDrawingMode = !_isDrawingMode;
-                      });
-                    },
-                    tooltip: 'Draw tool',
-                  ),
                 ],
               ),
             ),
 
             // Color Palette Row when Drawing Mode active
-            if (_isDrawingMode)
+            if (_isDrawingMode && !isCurrentVideo)
               Container(
                 height: 44,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -283,7 +414,7 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
                 ),
               ),
 
-            // Main Interactive Image & Drawing Canvas Area
+            // Main Interactive Image / Video & Drawing Canvas Area
             Expanded(
               child: PageView.builder(
                 controller: _pageController,
@@ -293,13 +424,33 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
                 onPageChanged: (idx) {
                   setState(() {
                     _currentIndex = idx;
+                    if (_isVideo(_files[idx].path)) {
+                      _isDrawingMode = false;
+                    }
                   });
                 },
                 itemCount: _files.length,
                 itemBuilder: (context, index) {
                   final file = _files[index];
+                  final isVid = _isVideo(file.path);
                   final strokes = _strokesPerImage[index] ?? [];
                   final imageSize = _imageSizes[index] ?? const Size(1, 1);
+
+                  if (isVid) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: VideoThumbnailCard(
+                            mediaUrl: file.path,
+                            width: double.infinity,
+                            height: double.infinity,
+                          ),
+                        ),
+                      ),
+                    );
+                  }
 
                   return LayoutBuilder(
                     builder: (context, constraints) {
@@ -368,50 +519,99 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
               ),
             ),
 
-            // Thumbnail Carousel if multiple images
-            if (_files.length > 1)
-              Container(
-                height: 60,
-                margin: const EdgeInsets.symmetric(vertical: 6),
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: _files.length,
-                  itemBuilder: (context, index) {
-                    final selected = index == _currentIndex;
+            // Thumbnail Carousel (Items + Add More Camera Button)
+            Container(
+              height: 60,
+              margin: const EdgeInsets.symmetric(vertical: 6),
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _files.length + 1,
+                itemBuilder: (context, index) {
+                  if (index == _files.length) {
+                    // Add More / Camera Button
                     return GestureDetector(
-                      onTap: () {
-                        _pageController.animateToPage(
-                          index,
-                          duration: const Duration(milliseconds: 250),
-                          curve: Curves.easeInOut,
-                        );
-                      },
+                      onTap: _addMoreMedia,
                       child: Container(
+                        width: 50,
+                        height: 50,
                         margin: const EdgeInsets.only(right: 8),
                         decoration: BoxDecoration(
+                          color: const Color(0xFF2C2C2E),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: selected
-                                ? AppTheme.primaryColor
-                                : Colors.transparent,
-                            width: 2.5,
-                          ),
+                          border: Border.all(color: Colors.white24, width: 1),
                         ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.file(
-                            _files[index],
-                            width: 50,
-                            height: 50,
-                            fit: BoxFit.cover,
-                          ),
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              CupertinoIcons.camera_fill,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Add',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     );
-                  },
-                ),
+                  }
+
+                  final selected = index == _currentIndex;
+                  final file = _files[index];
+                  final isVid = _isVideo(file.path);
+
+                  return GestureDetector(
+                    onTap: () {
+                      _pageController.animateToPage(
+                        index,
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeInOut,
+                      );
+                    },
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: selected
+                              ? AppTheme.primaryColor
+                              : Colors.transparent,
+                          width: 2.5,
+                        ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Stack(
+                          children: [
+                            if (isVid)
+                              VideoThumbnailCard(
+                                mediaUrl: file.path,
+                                width: 50,
+                                height: 50,
+                              )
+                            else
+                              Image.file(
+                                file,
+                                width: 50,
+                                height: 50,
+                                fit: BoxFit.cover,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
+            ),
 
             // Bottom Caption Bar & Send Button
             Padding(

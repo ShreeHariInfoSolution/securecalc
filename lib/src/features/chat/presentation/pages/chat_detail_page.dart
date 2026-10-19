@@ -29,6 +29,7 @@ import '../widgets/chat_composer.dart';
 import '../widgets/chat_detail_header.dart';
 import '../widgets/chat_message_list.dart';
 import '../widgets/chat_typing_indicator.dart';
+import '../widgets/forward_chat_selection_dialog.dart';
 import 'message_info_page.dart';
 import '../widgets/chat_wallpaper_widget.dart';
 import 'chat_info_page.dart';
@@ -50,8 +51,6 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   late String _chatName;
   late String _chatAvatar;
   bool _isLoadingMessages = true;
-  bool _isRefreshingAfterIncoming = false;
-  bool _refreshAfterIncomingAgain = false;
   bool _didPurgeSeenMessagesOnExit = false;
   int _historyLoadGeneration = 0;
   final Map<String, ChatMessage> _messagesReceivedWhileLoading = {};
@@ -60,6 +59,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   bool _hasMorePages = true;
   bool _isLoadingMore = false;
   bool _isSending = false;
+  bool _isSelectionMode = false;
+  final Set<String> _selectedMessageIds = <String>{};
   ChatMessage? _editingMessage;
   ChatMessage? _replyingMessage;
   String? _historyError;
@@ -231,10 +232,16 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
         if (peer != null) {
           _isPeerOnline.value = peer.isOnline;
+          final peerLastSeen = peer.lastSeenAt != null
+              ? DateTime.tryParse(peer.lastSeenAt!)?.toLocal()
+              : null;
           unawaited(
             LocalChatStorage.instance.updateConversation(
               widget.conversation.id,
-              (c) => c.copyWith(isOnline: peer.isOnline),
+              (c) => c.copyWith(
+                isOnline: peer.isOnline,
+                lastSeenAt: peerLastSeen,
+              ),
             ),
           );
         }
@@ -359,11 +366,18 @@ class _ChatDetailPageState extends State<ChatDetailPage>
             fileName: serverMessage.fileName,
             filePath: serverMessage.filePath,
           ) ??
-          (serverMessage.filePath != null
+          (serverMessage.filePath != null &&
+                  serverMessage.filePath!.trim().isNotEmpty
               ? 'application/octet-stream'
               : 'text'),
-      mediaUrl: serverMessage.filePath,
-      fileName: serverMessage.fileName,
+      mediaUrl: (serverMessage.filePath != null &&
+              serverMessage.filePath!.trim().isNotEmpty)
+          ? serverMessage.filePath
+          : null,
+      fileName: (serverMessage.fileName != null &&
+              serverMessage.fileName!.trim().isNotEmpty)
+          ? serverMessage.fileName
+          : null,
       isRead: true,
       isEdited: serverMessage.isEdited,
       isDeleted: serverMessage.isDeleted,
@@ -906,22 +920,77 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     });
   }
 
+  bool _isImageMsg(ChatMessage msg) {
+    if (msg.isDeleted) return false;
+    final type = msg.type.toLowerCase();
+    if (type.startsWith('image/') || type == 'image') return true;
+    if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) {
+      final ext = msg.mediaUrl!.split('.').last.split('?').first.toLowerCase();
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].contains(ext) ||
+          msg.previewText == 'Photo') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<void> _shareMessage(ChatMessage message) async {
     try {
       final mediaUrl = message.mediaUrl;
       if (mediaUrl != null && mediaUrl.isNotEmpty) {
-        AppToast.show('Sharing file...');
-        final localFilePath = await _downloadOrResolveFile(message);
-        if (localFilePath != null && await File(localFilePath).exists()) {
-          final xFile = XFile(localFilePath);
+        AppToast.show('Preparing files for sharing...');
+
+        final grouped = <ChatMessage>[];
+        final msgIndex = _messages.indexWhere((m) => m.id == message.id);
+        if (msgIndex != -1 && _isImageMsg(message)) {
+          int start = msgIndex;
+          while (start > 0 &&
+              _isImageMsg(_messages[start - 1]) &&
+              _messages[start - 1].senderId == message.senderId &&
+              message.timestamp
+                      .difference(_messages[start - 1].timestamp)
+                      .inMinutes
+                      .abs() <=
+                  15) {
+            start--;
+          }
+          int end = msgIndex;
+          while (end < _messages.length - 1 &&
+              _isImageMsg(_messages[end + 1]) &&
+              _messages[end + 1].senderId == message.senderId &&
+              _messages[end]
+                      .timestamp
+                      .difference(_messages[end + 1].timestamp)
+                      .inMinutes
+                      .abs() <=
+                  15) {
+            end++;
+          }
+
+          for (int i = start; i <= end; i++) {
+            grouped.add(_messages[i]);
+          }
+        }
+
+        final shareFiles = <XFile>[];
+        final targets = grouped.isNotEmpty ? grouped : [message];
+
+        for (final targetMsg in targets) {
+          final localPath = await _downloadOrResolveFile(targetMsg);
+          if (localPath != null && await File(localPath).exists()) {
+            shareFiles.add(XFile(localPath));
+          }
+        }
+
+        if (shareFiles.isNotEmpty) {
           final caption =
               message.content.isNotEmpty &&
-                  message.content != 'Sent a photo' &&
-                  message.content != 'Sent an attachment'
-              ? message.content
-              : null;
+                      message.content != 'Sent a photo' &&
+                      message.content != 'Sent an attachment'
+                  ? message.content
+                  : null;
           await SharePlus.instance.share(
-            ShareParams(files: [xFile], text: caption),
+            ShareParams(files: shareFiles, text: caption),
           );
           return;
         }
@@ -1025,6 +1094,122 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     return null;
   }
 
+  void _enterSelectionMode(ChatMessage msg) {
+    setState(() {
+      _isSelectionMode = true;
+      _selectedMessageIds.clear();
+      _selectedMessageIds.add(msg.id);
+    });
+  }
+
+  void _toggleSelectMessage(ChatMessage msg) {
+    setState(() {
+      if (_selectedMessageIds.contains(msg.id)) {
+        _selectedMessageIds.remove(msg.id);
+        if (_selectedMessageIds.isEmpty) {
+          _isSelectionMode = false;
+        }
+      } else {
+        _selectedMessageIds.add(msg.id);
+      }
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _isSelectionMode = false;
+      _selectedMessageIds.clear();
+    });
+  }
+
+  void _openForwardDialog() {
+    final selectedMsgs =
+        _messages.where((m) => _selectedMessageIds.contains(m.id)).toList();
+    if (selectedMsgs.isEmpty) return;
+
+    ForwardChatSelectionDialog.show(
+      context,
+      selectedMessages: selectedMsgs,
+    ).then((_) {
+      if (mounted) _exitSelectionMode();
+    });
+  }
+
+  Widget _buildSelectionHeader(bool isDark) {
+    final topPadding = MediaQuery.paddingOf(context).top;
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, topPadding + 10, 16, 12),
+      decoration: BoxDecoration(
+        color: isDark
+            ? const Color(0xF21C1C1E)
+            : Colors.white.withValues(alpha: 0.92),
+        border: Border(
+          bottom: BorderSide(
+            color: isDark ? Colors.white12 : Colors.black12,
+            width: 0.8,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          GlassButton(
+            width: 36,
+            height: 36,
+            radius: 18,
+            isDark: isDark,
+            onTap: _exitSelectionMode,
+            child: Center(
+              child: Icon(
+                CupertinoIcons.xmark,
+                size: 18,
+                color: isDark ? Colors.white : Colors.black,
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Text(
+            '${_selectedMessageIds.length} Selected',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: isDark ? Colors.white : Colors.black,
+            ),
+          ),
+          const Spacer(),
+          if (_selectedMessageIds.isNotEmpty)
+            GlassButton(
+              height: 36,
+              radius: 18,
+              isDark: isDark,
+              onTap: _openForwardDialog,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.shortcut_rounded,
+                      size: 18,
+                      color: AppTheme.primaryColor,
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'Forward',
+                      style: TextStyle(
+                        color: AppTheme.primaryColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showMessageActions(
     ChatMessage message,
     Offset globalPosition,
@@ -1066,9 +1251,6 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         targetBubbleTop = minTop + emojiHeight + 10;
       }
     }
-
-    final emojiTop = targetBubbleTop - emojiHeight - 8.0;
-    final menuTop = targetBubbleTop + bubbleHeight + 8.0;
 
     HapticFeedback.mediumImpact();
 
@@ -1128,233 +1310,303 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           color: isDark ? Colors.white12 : Colors.black12,
         );
 
-        return Stack(
-          children: [
-            // 1. Frosted Glass Blur Background
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => Navigator.pop(dialogContext),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                  child: Container(
-                    color: isDark
-                        ? Colors.black.withValues(alpha: 0.35)
-                        : Colors.black.withValues(alpha: 0.22),
+        return Material(
+          color: Colors.transparent,
+          child: Stack(
+            children: [
+              // 1. Frosted Glass Blur Background
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => Navigator.pop(dialogContext),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                    child: Container(
+                      color: isDark
+                          ? Colors.black.withValues(alpha: 0.45)
+                          : Colors.black.withValues(alpha: 0.25),
+                    ),
                   ),
                 ),
               ),
-            ),
 
-            // 2. Emoji Reaction Bar
-            Positioned(
-              left: isMine ? null : 16,
-              right: isMine ? 16 : null,
-              top: emojiTop,
-              child: Material(
-                color: cardColor,
-                elevation: 8,
-                borderRadius: BorderRadius.circular(28),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 4,
-                    vertical: 2,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ...emojiItems.map(
-                        (emoji) => InkWell(
-                          borderRadius: BorderRadius.circular(20),
-                          onTap: messageId == null
-                              ? null
-                              : () {
-                                  Navigator.pop(dialogContext);
-                                  _reactToMessage(message, emoji);
-                                },
+              // 2. Scrollable Glass Sheet with Reactions, Message & Action Menu
+              SafeArea(
+                child: GestureDetector(
+                  onTap: () => Navigator.pop(dialogContext),
+                  behavior: HitTestBehavior.opaque,
+                  child: Center(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 20,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: isMine
+                          ? CrossAxisAlignment.end
+                          : CrossAxisAlignment.start,
+                      children: [
+                        // Emoji Reaction Bar
+                        Material(
+                          color: cardColor,
+                          elevation: 8,
+                          borderRadius: BorderRadius.circular(28),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 6,
-                              vertical: 6,
+                              vertical: 3,
                             ),
-                            child: Text(
-                              emoji,
-                              style: const TextStyle(fontSize: 24),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ...emojiItems.map(
+                                  (emoji) => InkWell(
+                                    borderRadius: BorderRadius.circular(20),
+                                    onTap: messageId == null
+                                        ? null
+                                        : () {
+                                            HapticFeedback.lightImpact();
+                                            Navigator.pop(dialogContext);
+                                            _reactToMessage(message, emoji);
+                                          },
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 6,
+                                      ),
+                                      child: Text(
+                                        emoji,
+                                        style: const TextStyle(
+                                          fontSize: 24,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  tooltip: 'More reactions',
+                                  onPressed: () {
+                                    HapticFeedback.lightImpact();
+                                    Navigator.pop(dialogContext);
+                                    _showMoreReactions(message);
+                                  },
+                                  icon: const Icon(
+                                    Icons.add_circle_outline_rounded,
+                                    size: 26,
+                                    color: AppTheme.subtitleGrey,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                      ),
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        tooltip: 'More reactions',
-                        onPressed: () {
-                          Navigator.pop(dialogContext);
-                          _showMoreReactions(message);
-                        },
-                        icon: const Icon(
-                          Icons.add_circle_outline_rounded,
-                          size: 26,
-                          color: AppTheme.subtitleGrey,
+
+                        const SizedBox(height: 10),
+
+                        // Highlighted Message Preview (Scrollable for Big Messages)
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: screen.width * 0.82,
+                            maxHeight: screen.height * 0.45,
+                          ),
+                          child: Container(
+                            clipBehavior: Clip.antiAlias,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: SingleChildScrollView(
+                              physics: const BouncingScrollPhysics(),
+                              child: ChatBubble(
+                                chatId: widget.conversation.id,
+                                message: message.content,
+                                isMe: isMine,
+                                timestamp: message.timestamp,
+                                type: message.type,
+                                mediaUrl: message.mediaUrl,
+                                fileName: message.fileName,
+                                isRead: message.isRead,
+                                isDelivered: message.isDelivered,
+                                isEdited: message.isEdited,
+                                isDeleted: message.isDeleted,
+                                isSaved: message.isSaved,
+                                senderName: !isMine && widget.conversation.isGroup
+                                    ? _groupMemberNames[int.tryParse(message.senderId)]
+                                    : null,
+                                replyToId: message.replyToId,
+                                repliedMessage: message.replyToId == null
+                                    ? null
+                                    : _messages.cast<ChatMessage?>().firstWhere(
+                                        (m) => m?.id == message.replyToId.toString(),
+                                        orElse: () => null,
+                                      ),
+                                reactions: message.reaction == null
+                                    ? null
+                                    : [message.reaction!],
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
+
+                        const SizedBox(height: 10),
+
+                        // Glass Action Menu
+                        Container(
+                          width: menuWidth,
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? const Color(0xEE2C2C2E)
+                                : const Color(0xF2FFFFFF),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: isDark ? Colors.white12 : Colors.black12,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(
+                                  alpha: isDark ? 0.35 : 0.1,
+                                ),
+                                blurRadius: 16,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              actionRow(
+                                icon: Icons.reply_rounded,
+                                label: 'Reply',
+                                onTap: () {
+                                  HapticFeedback.lightImpact();
+                                  Navigator.pop(dialogContext);
+                                  _beginReply(message);
+                                },
+                              ),
+                              divider(),
+                              actionRow(
+                                icon: Icons.shortcut_rounded,
+                                label: 'Forward',
+                                onTap: () {
+                                  HapticFeedback.lightImpact();
+                                  Navigator.pop(dialogContext);
+                                  _enterSelectionMode(message);
+                                },
+                              ),
+                              divider(),
+                              actionRow(
+                                icon: Icons.copy_rounded,
+                                label: 'Copy',
+                                onTap: () {
+                                  HapticFeedback.lightImpact();
+                                  Navigator.pop(dialogContext);
+                                  Clipboard.setData(
+                                    ClipboardData(text: message.content),
+                                  );
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Message copied'),
+                                    ),
+                                  );
+                                },
+                              ),
+                              divider(),
+                              actionRow(
+                                icon: Icons.share_rounded,
+                                label: 'Share',
+                                onTap: () {
+                                  HapticFeedback.lightImpact();
+                                  Navigator.pop(dialogContext);
+                                  _shareMessage(message);
+                                },
+                              ),
+                              divider(),
+                              actionRow(
+                                icon: Icons.info_outline_rounded,
+                                label: 'Info',
+                                onTap: () {
+                                  HapticFeedback.lightImpact();
+                                  Navigator.pop(dialogContext);
+                                  _showMessageInfo(message);
+                                },
+                              ),
+                              divider(),
+                              actionRow(
+                                icon: message.reaction == 'star'
+                                    ? Icons.star_rounded
+                                    : Icons.star_outline_rounded,
+                                label: message.reaction == 'star'
+                                    ? 'Unstar'
+                                    : 'Star',
+                                color: message.reaction == 'star'
+                                    ? Colors.amber
+                                    : null,
+                                onTap: () {
+                                  HapticFeedback.lightImpact();
+                                  Navigator.pop(dialogContext);
+                                  if (message.reaction == 'star') {
+                                    _reactToMessage(message, '');
+                                  } else {
+                                    _reactToMessage(message, 'star');
+                                  }
+                                },
+                              ),
+                              divider(),
+                              actionRow(
+                                icon: message.isSaved
+                                    ? Icons.bookmark_rounded
+                                    : Icons.bookmark_border_rounded,
+                                label: message.isSaved
+                                    ? 'Unsave Message'
+                                    : 'Save Message',
+                                color:
+                                    message.isSaved ? AppTheme.primaryColor : null,
+                                onTap: () {
+                                  HapticFeedback.lightImpact();
+                                  Navigator.pop(dialogContext);
+                                  _toggleSaveMessage(message);
+                                },
+                              ),
+                              if (canEdit) ...[
+                                divider(),
+                                actionRow(
+                                  icon: Icons.edit_outlined,
+                                  label: 'Edit',
+                                  onTap: () {
+                                    HapticFeedback.lightImpact();
+                                    Navigator.pop(dialogContext);
+                                    _beginEditingMessage(message);
+                                  },
+                                ),
+                              ],
+                              if (canDelete) ...[
+                                divider(),
+                                actionRow(
+                                  icon: Icons.delete_outline_rounded,
+                                  label: 'Delete',
+                                  color: Colors.redAccent,
+                                  onTap: () {
+                                    HapticFeedback.lightImpact();
+                                    Navigator.pop(dialogContext);
+                                    _deleteMessage(message);
+                                  },
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-
-            // 3. Highlighted Message Bubble
-            Positioned(
-              left: isMine ? null : 12,
-              right: isMine ? 12 : null,
-              top: targetBubbleTop,
-              width: math.min(bubbleSize.width, screen.width - 24),
-              child: IgnorePointer(
-                child: ChatBubble(
-                  chatId: widget.conversation.id,
-                  message: message.content,
-                  isMe: isMine,
-                  timestamp: message.timestamp,
-                  type: message.type,
-                  mediaUrl: message.mediaUrl,
-                  fileName: message.fileName,
-                  isRead: message.isRead,
-                  isDelivered: message.isDelivered,
-                  isEdited: message.isEdited,
-                  isDeleted: message.isDeleted,
-                  isSaved: message.isSaved,
-                  senderName: !isMine && widget.conversation.isGroup
-                      ? _groupMemberNames[int.tryParse(message.senderId)]
-                      : null,
-                  replyToId: message.replyToId,
-                  repliedMessage: message.replyToId == null
-                      ? null
-                      : _messages.cast<ChatMessage?>().firstWhere(
-                          (m) => m?.id == message.replyToId.toString(),
-                          orElse: () => null,
-                        ),
-                  reactions: message.reaction == null
-                      ? null
-                      : [message.reaction!],
-                ),
-              ),
-            ),
-
-            // 4. Action Menu Card
-            Positioned(
-              left: isMine ? null : 16,
-              right: isMine ? 16 : null,
-              top: menuTop,
-              width: menuWidth,
-              child: Material(
-                color: cardColor,
-                elevation: 12,
-                borderRadius: BorderRadius.circular(18),
-                clipBehavior: Clip.antiAlias,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: math.max(
-                      180.0,
-                      screen.height -
-                          menuTop -
-                          MediaQuery.paddingOf(dialogContext).bottom -
-                          16.0,
-                    ),
-                  ),
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                    actionRow(
-                      icon: Icons.reply_rounded,
-                      label: 'Reply',
-                      onTap: () {
-                        Navigator.pop(dialogContext);
-                        _beginReply(message);
-                      },
-                    ),
-                    divider(),
-                    actionRow(
-                      icon: Icons.copy_rounded,
-                      label: 'Copy',
-                      onTap: () {
-                        Navigator.pop(dialogContext);
-                        Clipboard.setData(ClipboardData(text: message.content));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Message copied')),
-                        );
-                      },
-                    ),
-                    divider(),
-                    actionRow(
-                      icon: Icons.info_outline_rounded,
-                      label: 'Info',
-                      onTap: () {
-                        Navigator.pop(dialogContext);
-                        _showMessageInfo(message);
-                      },
-                    ),
-                    divider(),
-                    actionRow(
-                      icon: message.reaction == 'star'
-                          ? Icons.star_rounded
-                          : Icons.star_outline_rounded,
-                      label: message.reaction == 'star' ? 'Unstar' : 'Star',
-                      color: message.reaction == 'star' ? Colors.amber : null,
-                      onTap: () {
-                        Navigator.pop(dialogContext);
-                        if (message.reaction == 'star') {
-                          _reactToMessage(message, '');
-                        } else {
-                          _reactToMessage(message, 'star');
-                        }
-                      },
-                    ),
-                    divider(),
-                    actionRow(
-                      icon: message.isSaved
-                          ? Icons.bookmark_rounded
-                          : Icons.bookmark_border_rounded,
-                      label: message.isSaved
-                          ? 'Unsave Message'
-                          : 'Save Message',
-                      color: message.isSaved ? AppTheme.primaryColor : null,
-                      onTap: () {
-                        Navigator.pop(dialogContext);
-                        _toggleSaveMessage(message);
-                      },
-                    ),
-                    if (canEdit) ...[
-                      divider(),
-                      actionRow(
-                        icon: Icons.edit_outlined,
-                        label: 'Edit',
-                        onTap: () {
-                          Navigator.pop(dialogContext);
-                          _beginEditingMessage(message);
-                        },
-                      ),
-                    ],
-                    if (canDelete) ...[
-                      divider(),
-                      actionRow(
-                        icon: Icons.delete_outline_rounded,
-                        label: 'Delete',
-                        color: Colors.redAccent,
-                        onTap: () {
-                          Navigator.pop(dialogContext);
-                          _deleteMessage(message);
-                        },
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ),
+          ],
         ),
-      ],
-    );
+      );
   },
 );
   }
@@ -1491,14 +1743,23 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     if (messageId == null || chatId == null) return;
 
     final newIsSaved = !message.isSaved;
+    final updatedMessage = message.copyWith(isSaved: newIsSaved);
 
-    // Optimistic update
+    // Optimistic update in UI state
     setState(() {
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index >= 0) {
-        _messages[index] = _messages[index].copyWith(isSaved: newIsSaved);
+        _messages[index] = updatedMessage;
       }
     });
+
+    // Save directly to local storage
+    await LocalChatStorage.instance.saveMessage(
+      deviceId: widget.conversation.id,
+      peerName: widget.conversation.name,
+      message: updatedMessage,
+      markUnread: false,
+    );
 
     final success = await ServerApiService.instance.saveMessageREST(
       chatId: chatId,
@@ -1508,12 +1769,19 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
     if (!success && mounted) {
       // Revert if API failed
+      final reverted = message.copyWith(isSaved: !newIsSaved);
       setState(() {
         final index = _messages.indexWhere((m) => m.id == message.id);
         if (index >= 0) {
-          _messages[index] = _messages[index].copyWith(isSaved: !newIsSaved);
+          _messages[index] = reverted;
         }
       });
+      await LocalChatStorage.instance.saveMessage(
+        deviceId: widget.conversation.id,
+        peerName: widget.conversation.name,
+        message: reverted,
+        markUnread: false,
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not update save status.')),
       );
@@ -2212,17 +2480,31 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                   ),
                 ),
                 if (_messageSearchController.text.isNotEmpty) ...[
-                  Text(
-                    _searchResults.isEmpty
-                        ? '0 matches'
-                        : '${_currentSearchIndex + 1}/${_searchResults.length}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.secondaryText(isDark),
-                      fontWeight: FontWeight.w600,
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _searchResults.isEmpty
+                          ? (isDark ? Colors.white12 : Colors.black12)
+                          : AppTheme.primaryColor,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      _searchResults.isEmpty
+                          ? '0 matches'
+                          : '${_currentSearchIndex + 1} of ${_searchResults.length}',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: _searchResults.isEmpty
+                            ? AppTheme.secondaryText(isDark)
+                            : Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 6),
                   GestureDetector(
                     onTap: _searchResults.isEmpty
                         ? null
@@ -2410,11 +2692,17 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                           onBeginReply: _beginReply,
                           onTapReply: _scrollToMessage,
                           highlightedMessageId: _effectiveHighlightedMessageId,
+                          searchQuery: _isSearchingMessages
+                              ? _messageSearchController.text.trim()
+                              : null,
                           decryptingMessageIds: _decryptingEditedMessageIds,
                           onJumpToLatest: _jumpToLatest,
                           onReloadMessages: _reloadMessages,
                           sessionStartTime: _sessionStartTime,
                           initialUnreadCount: _initialUnreadCount,
+                          isSelectionMode: _isSelectionMode,
+                          selectedMessageIds: _selectedMessageIds,
+                          onToggleSelectMessage: _toggleSelectMessage,
                         ),
                       ),
 
@@ -2447,20 +2735,22 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                         ),
                       ),
 
-                      // Floating Frosted Header
+                      // Floating Frosted Header / Selection Header
                       Positioned(
                         top: 0,
                         left: 0,
                         right: 0,
-                        child: ChatDetailHeader(
-                          conversation: widget.conversation,
-                          chatName: _chatName,
-                          chatAvatar: _chatAvatar,
-                          isPeerOnline: _isPeerOnline,
-                          isPeerTyping: _isPeerTyping,
-                          onOpenChatInfo: _openChatInfo,
-                          onSearchMessages: _toggleMessageSearch,
-                        ),
+                        child: _isSelectionMode
+                            ? _buildSelectionHeader(isDark)
+                            : ChatDetailHeader(
+                                conversation: widget.conversation,
+                                chatName: _chatName,
+                                chatAvatar: _chatAvatar,
+                                isPeerOnline: _isPeerOnline,
+                                isPeerTyping: _isPeerTyping,
+                                onOpenChatInfo: _openChatInfo,
+                                onSearchMessages: _toggleMessageSearch,
+                              ),
                       ),
 
                       if (_disappearType != 0 && !_isSearchingMessages)

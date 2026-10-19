@@ -5,12 +5,10 @@ import 'package:securecalc/src/features/calculator/presentation/pages/calculator
 import 'package:securecalc/src/features/calling/domain/services/device_identity_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
 
-import '../../../../core/ui/vault_page_route.dart';
 import '../../domain/services/deeplink/deep_link_handler.dart';
+import '../../domain/services/push_service.dart';
 import '../../domain/services/server_chat_manager.dart';
 import 'conversation_list_page.dart';
-import 'secret_settings_page.dart';
-import 'vault_dashboard_page.dart';
 
 class VaultHomePage extends StatefulWidget {
   final bool isDuressMode;
@@ -54,12 +52,14 @@ class _VaultHomePageState extends State<VaultHomePage> {
             _isLoggingIn = false;
           });
           DeepLinkHandler.instance.init(context);
+          PushService.instance.initVault(context);
         }
       }
     } else {
       await ServerChatManager.instance.init();
       if (mounted) {
         DeepLinkHandler.instance.init(context);
+        PushService.instance.initVault(context);
       }
     }
   }
@@ -67,6 +67,7 @@ class _VaultHomePageState extends State<VaultHomePage> {
   @override
   void dispose() {
     DeepLinkHandler.instance.dispose();
+    PushService.instance.disposeVault();
     super.dispose();
   }
 

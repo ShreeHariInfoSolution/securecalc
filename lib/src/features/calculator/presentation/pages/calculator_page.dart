@@ -1,6 +1,5 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../../../../core/config/app_preferences.dart';
 import '../../../auth/presentation/pages/privacy_consent_page.dart';
 import '../../domain/calculator_logic.dart';

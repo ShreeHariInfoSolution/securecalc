@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/features/calculator/domain/calculator_logic.dart';
 import 'package:securecalc/src/features/calculator/presentation/pages/calculator_page.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
+import 'package:securecalc/src/features/chat/presentation/widgets/profile_image_cropper_dialog.dart';
 
 class PersonalSettingsPage extends StatefulWidget {
   const PersonalSettingsPage({super.key});
@@ -66,6 +68,183 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     );
   }
 
+  /// Opens glass popup menu when tapping on avatar
+  void _showProfileGlassMenu() {
+    HapticFeedback.lightImpact();
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'ProfileMenu',
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      transitionDuration: const Duration(milliseconds: 250),
+      pageBuilder: (context, anim1, anim2) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        return BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Center(
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                width: MediaQuery.of(context).size.width * 0.84,
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xDD1C1C1E)
+                      : const Color(0xF2FFFFFF),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                    color: isDark ? Colors.white12 : Colors.black12,
+                    width: 1.2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 32,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Profile Avatar Preview
+                    IosAvatar(
+                      name: AppPreferences.getDisplayName(),
+                      imagePath: _profileImagePath,
+                      size: 78,
+                      showOnline: false,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      AppPreferences.getDisplayName(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? Colors.white : Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Divider(
+                      height: 1,
+                      color: isDark ? Colors.white12 : Colors.black12,
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Option 1: View Profile
+                    Material(
+                      color: Colors.transparent,
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.fullscreen_rounded,
+                            color: AppTheme.primaryColor,
+                            size: 22,
+                          ),
+                        ),
+                        title: Text(
+                          'View Profile',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'View full photo in full screen',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.subtitleGrey,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _viewFullProfilePicture();
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+
+                    // Option 2: Update Profile
+                    Material(
+                      color: Colors.transparent,
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF34C759).withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.photo_camera_rounded,
+                            color: Color(0xFF34C759),
+                            size: 22,
+                          ),
+                        ),
+                        title: Text(
+                          'Update Profile',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Choose new photo from gallery or camera',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.subtitleGrey,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _showImagePickerOptions();
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (context, anim1, anim2, child) {
+        return Transform.scale(
+          scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack).value,
+          child: FadeTransition(
+            opacity: anim1,
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
+  /// Displays full screen image preview dialog
+  void _viewFullProfilePicture() {
+    final currentPath =
+        _profileImagePath ?? AppPreferences.getProfileImagePath();
+    showFullProfilePictureDialog(
+      context,
+      name: AppPreferences.getDisplayName(),
+      imagePath: currentPath,
+      onChangePhoto: _showImagePickerOptions,
+    );
+  }
+
   Future<void> _pickProfileImage(ImageSource source) async {
     AppPreferences.isPickerActive = true;
     try {
@@ -106,19 +285,27 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
         await [Permission.photos, Permission.storage].request();
       }
 
-      final picked = await _picker.pickImage(source: source, imageQuality: 85);
+      final picked = await _picker.pickImage(source: source, imageQuality: 95);
       if (picked != null) {
-        await AppPreferences.setProfileImagePath(picked.path);
+        if (!mounted) return;
+        final croppedFile = await ProfileImageCropperDialog.cropImage(
+          context,
+          imageFile: File(picked.path),
+        );
+        if (croppedFile == null) return; // User cancelled crop
+
+        final finalPath = croppedFile.path;
+        await AppPreferences.setProfileImagePath(finalPath);
         if (mounted) {
           setState(() {
-            _profileImagePath = picked.path;
+            _profileImagePath = finalPath;
           });
         }
 
         try {
           final updatedUser = await ServerApiService.instance.updateProfile(
             name: _displayNameController.text.trim(),
-            profileImage: File(picked.path),
+            profileImage: File(finalPath),
           );
           if (updatedUser != null && updatedUser.avatar != null) {
             await AppPreferences.setProfileImagePath(updatedUser.avatar!);
@@ -337,11 +524,6 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    final hasProfilePic =
-        _profileImagePath != null &&
-        _profileImagePath!.isNotEmpty &&
-        File(_profileImagePath!).existsSync();
-
     return ShakePanicWrapper(
       child: Scaffold(
         backgroundColor: isDark
@@ -368,38 +550,38 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                       child: Column(
                         children: [
                           Center(
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                ValueListenableBuilder<String?>(
-                                  valueListenable:
-                                      AppPreferences.profileImagePathNotifier,
-                                  builder: (context, currentPath, _) {
-                                    return ValueListenableBuilder<String>(
-                                      valueListenable:
-                                          AppPreferences.displayNameNotifier,
-                                      builder: (context, currentName, _) {
-                                        return IosAvatar(
-                                          name: currentName.isNotEmpty
-                                              ? currentName
-                                              : _displayNameController.text,
-                                          imagePath:
-                                              currentPath ?? _profileImagePath,
-                                          size: 84,
-                                          showOnline: false,
-                                        );
-                                      },
-                                    );
-                                  },
-                                ),
-                                Positioned(
-                                  right: -2,
-                                  bottom: -2,
-                                  child: GestureDetector(
-                                    onTap: _showImagePickerOptions,
+                            child: GestureDetector(
+                              onTap: _showProfileGlassMenu,
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  ValueListenableBuilder<String?>(
+                                    valueListenable:
+                                        AppPreferences.profileImagePathNotifier,
+                                    builder: (context, currentPath, _) {
+                                      return ValueListenableBuilder<String>(
+                                        valueListenable:
+                                            AppPreferences.displayNameNotifier,
+                                        builder: (context, currentName, _) {
+                                          return IosAvatar(
+                                            name: currentName.isNotEmpty
+                                                ? currentName
+                                                : _displayNameController.text,
+                                            imagePath:
+                                                currentPath ?? _profileImagePath,
+                                            size: 88,
+                                            showOnline: false,
+                                          );
+                                        },
+                                      );
+                                    },
+                                  ),
+                                  Positioned(
+                                    right: -2,
+                                    bottom: -2,
                                     child: Container(
-                                      width: 28,
-                                      height: 28,
+                                      width: 30,
+                                      height: 30,
                                       decoration: BoxDecoration(
                                         color: AppTheme.primaryColor,
                                         shape: BoxShape.circle,
@@ -407,56 +589,50 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                           color: isDark
                                               ? AppTheme.darkSurface
                                               : Colors.white,
-                                          width: 2,
+                                          width: 2.5,
                                         ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withValues(alpha: 0.2),
+                                            blurRadius: 4,
+                                          ),
+                                        ],
                                       ),
                                       child: const Icon(
                                         Icons.camera_alt_rounded,
-                                        size: 14,
+                                        size: 15,
                                         color: Colors.white,
                                       ),
                                     ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 16),
-                          TextField(
-                            controller: _displayNameController,
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Tap photo to View or Update',
                             style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: isDark ? Colors.white : Colors.black,
-                            ),
-                            decoration: InputDecoration(
-                              labelText: 'Display Name',
-                              labelStyle: const TextStyle(
-                                color: AppTheme.subtitleGrey,
-                              ),
-                              prefixIcon: const Icon(
-                                Icons.person_outline_rounded,
-                                color: AppTheme.primaryColor,
-                                size: 20,
-                              ),
-                              filled: true,
-                              fillColor: isDark
-                                  ? const Color(0xFF2C2C2E)
-                                  : const Color(0xFFE5E5EA),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide.none,
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                vertical: 12,
-                              ),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: AppTheme.subtitleGrey,
                             ),
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 18),
+                          _buildCustomTextField(
+                            isDark: isDark,
+                            controller: _displayNameController,
+                            label: 'Display Name',
+                            hint: 'Enter your display name',
+                            icon: Icons.person_rounded,
+                            iconBgColor: AppTheme.primaryColor.withValues(alpha: 0.12),
+                            iconColor: AppTheme.primaryColor,
+                          ),
+                          const SizedBox(height: 14),
                           SizedBox(
                             width: double.infinity,
-                            height: 42,
-                            child: ElevatedButton(
+                            height: 44,
+                            child: ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppTheme.primaryColor,
                                 foregroundColor: Colors.white,
@@ -466,7 +642,8 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                 ),
                               ),
                               onPressed: _saveDisplayName,
-                              child: const Text(
+                              icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                              label: const Text(
                                 'Save Display Name',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
@@ -493,57 +670,29 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                             style: TextStyle(
                               fontSize: 12,
                               color: AppTheme.subtitleGrey,
-                              height: 1.3,
+                              height: 1.35,
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          TextField(
+                          const SizedBox(height: 14),
+                          _buildCustomTextField(
+                            isDark: isDark,
                             controller: _passcodeController,
-                            keyboardType: TextInputType.number,
-                            obscureText: _obscurePasscode,
-                            style: TextStyle(
-                              fontSize: 16,
-                              letterSpacing: _obscurePasscode ? 3.0 : 1.0,
-                              color: isDark ? Colors.white : Colors.black,
-                            ),
-                            decoration: InputDecoration(
-                              labelText: 'Secret Passcode',
-                              labelStyle: const TextStyle(
-                                color: AppTheme.subtitleGrey,
-                              ),
-                              filled: true,
-                              fillColor: isDark
-                                  ? const Color(0xFF2C2C2E)
-                                  : const Color(0xFFE5E5EA),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide.none,
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 12,
-                              ),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscurePasscode
-                                      ? Icons.visibility_off_outlined
-                                      : Icons.visibility_outlined,
-                                  color: AppTheme.subtitleGrey,
-                                  size: 20,
-                                ),
-                                onPressed: () {
-                                  setState(
-                                    () => _obscurePasscode = !_obscurePasscode,
-                                  );
-                                },
-                              ),
-                            ),
+                            label: 'Secret Passcode',
+                            hint: 'Enter numeric passcode',
+                            icon: Icons.lock_rounded,
+                            iconBgColor: AppTheme.primaryColor.withValues(alpha: 0.12),
+                            iconColor: AppTheme.primaryColor,
+                            isNumber: true,
+                            isObscured: _obscurePasscode,
+                            onToggleObscure: () {
+                              setState(() => _obscurePasscode = !_obscurePasscode);
+                            },
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 14),
                           SizedBox(
                             width: double.infinity,
-                            height: 42,
-                            child: ElevatedButton(
+                            height: 44,
+                            child: ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppTheme.primaryColor,
                                 foregroundColor: Colors.white,
@@ -553,7 +702,8 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                 ),
                               ),
                               onPressed: _savePasscode,
-                              child: const Text(
+                              icon: const Icon(Icons.security_rounded, size: 18),
+                              label: const Text(
                                 'Save Vault Passcode',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
@@ -580,58 +730,29 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                             style: TextStyle(
                               fontSize: 12,
                               color: AppTheme.subtitleGrey,
-                              height: 1.3,
+                              height: 1.35,
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          TextField(
+                          const SizedBox(height: 14),
+                          _buildCustomTextField(
+                            isDark: isDark,
                             controller: _duressPasscodeController,
-                            keyboardType: TextInputType.number,
-                            obscureText: _obscureDuressPasscode,
-                            style: TextStyle(
-                              fontSize: 16,
-                              letterSpacing: _obscureDuressPasscode ? 3.0 : 1.0,
-                              color: isDark ? Colors.white : Colors.black,
-                            ),
-                            decoration: InputDecoration(
-                              labelText: 'Duress Passcode (Default: 4321)',
-                              labelStyle: const TextStyle(
-                                color: AppTheme.subtitleGrey,
-                              ),
-                              filled: true,
-                              fillColor: isDark
-                                  ? const Color(0xFF2C2C2E)
-                                  : const Color(0xFFE5E5EA),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide.none,
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 12,
-                              ),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscureDuressPasscode
-                                      ? Icons.visibility_off_outlined
-                                      : Icons.visibility_outlined,
-                                  color: AppTheme.subtitleGrey,
-                                  size: 20,
-                                ),
-                                onPressed: () {
-                                  setState(
-                                    () => _obscureDuressPasscode =
-                                        !_obscureDuressPasscode,
-                                  );
-                                },
-                              ),
-                            ),
+                            label: 'Duress Passcode (Default: 4321)',
+                            hint: 'Enter decoy passcode',
+                            icon: Icons.shield_outlined,
+                            iconBgColor: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                            iconColor: const Color(0xFFF59E0B),
+                            isNumber: true,
+                            isObscured: _obscureDuressPasscode,
+                            onToggleObscure: () {
+                              setState(() => _obscureDuressPasscode = !_obscureDuressPasscode);
+                            },
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 14),
                           SizedBox(
                             width: double.infinity,
-                            height: 42,
-                            child: ElevatedButton(
+                            height: 44,
+                            child: ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF6B7280),
                                 foregroundColor: Colors.white,
@@ -641,7 +762,8 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                                 ),
                               ),
                               onPressed: _saveDuressCode,
-                              child: const Text(
+                              icon: const Icon(Icons.shield_rounded, size: 18),
+                              label: const Text(
                                 'Save Duress Passcode',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
@@ -714,6 +836,101 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     );
   }
 
+  Widget _buildCustomTextField({
+    required bool isDark,
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    required IconData icon,
+    required Color iconBgColor,
+    required Color iconColor,
+    bool isNumber = false,
+    bool isObscured = false,
+    VoidCallback? onToggleObscure,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isDark ? Colors.white12 : Colors.black12,
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: iconBgColor,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              icon,
+              color: iconColor,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+              obscureText: isObscured,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                letterSpacing: isObscured ? 3.0 : 0.5,
+                color: isDark ? Colors.white : Colors.black,
+              ),
+              decoration: InputDecoration(
+                labelText: label,
+                hintText: hint,
+                labelStyle: const TextStyle(
+                  color: AppTheme.subtitleGrey,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+                hintStyle: const TextStyle(
+                  color: AppTheme.subtitleGrey,
+                  fontSize: 13,
+                ),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              ),
+            ),
+          ),
+          if (onToggleObscure != null)
+            IconButton(
+              icon: Icon(
+                isObscured
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                color: AppTheme.subtitleGrey,
+                size: 20,
+              ),
+              onPressed: onToggleObscure,
+            )
+          else if (controller.text.isNotEmpty)
+            IconButton(
+              icon: const Icon(
+                Icons.cancel_rounded,
+                color: AppTheme.subtitleGrey,
+                size: 18,
+              ),
+              onPressed: () {
+                controller.clear();
+                setState(() {});
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSectionHeader(String title) {
     return Padding(
       padding: const EdgeInsets.only(left: 12.0, bottom: 6.0),
@@ -732,18 +949,18 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
   Widget _buildGroupedCard({required bool isDark, required Widget child}) {
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
-            blurRadius: 6,
-            offset: const Offset(0, 1),
+            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Material(
         color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         clipBehavior: Clip.antiAlias,
         child: Padding(padding: const EdgeInsets.all(16.0), child: child),
       ),

@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 import '../../../../core/config/app_preferences.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -67,7 +68,17 @@ class _ChatComposerState extends State<ChatComposer> {
   final ImagePicker _picker = ImagePicker();
   final AudioRecorder _audioRecorder = AudioRecorder();
 
+  AudioPlayer? _previewPlayer;
+  StreamSubscription<PlayerState>? _previewStateSub;
+  StreamSubscription<Duration>? _previewPosSub;
+  StreamSubscription<Duration>? _previewDurSub;
+
   bool _isRecordingVoice = false;
+  bool _isPreviewingVoice = false;
+  String? _previewAudioPath;
+  bool _isPlayingPreview = false;
+  Duration _previewPosition = Duration.zero;
+  Duration _previewDuration = Duration.zero;
   Duration _recordingDuration = Duration.zero;
   Timer? _recordingTimer;
   Timer? _typingDebounce;
@@ -76,6 +87,10 @@ class _ChatComposerState extends State<ChatComposer> {
   void dispose() {
     _recordingTimer?.cancel();
     _typingDebounce?.cancel();
+    _previewStateSub?.cancel();
+    _previewPosSub?.cancel();
+    _previewDurSub?.cancel();
+    _previewPlayer?.dispose();
     _audioRecorder.dispose();
     super.dispose();
   }
@@ -152,13 +167,60 @@ class _ChatComposerState extends State<ChatComposer> {
       final List<File> pickedFiles = [];
       if (source == ImageSource.camera) {
         final hasPermission = await _checkCameraPermission();
-        if (!hasPermission) return;
-        final picked = await _picker.pickImage(
-          source: source,
-          imageQuality: 90,
+        if (!hasPermission || !mounted) return;
+
+        final currentContext = context;
+        final cameraChoice = await showCupertinoModalPopup<String>(
+          context: currentContext,
+          builder: (ctx) => CupertinoActionSheet(
+            title: const Text('Camera'),
+            message: const Text('Choose camera mode'),
+            actions: [
+              CupertinoActionSheetAction(
+                onPressed: () => Navigator.pop(ctx, 'photo'),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(CupertinoIcons.camera_fill, size: 20),
+                    SizedBox(width: 8),
+                    Text('Take Photo'),
+                  ],
+                ),
+              ),
+              CupertinoActionSheetAction(
+                onPressed: () => Navigator.pop(ctx, 'video'),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(CupertinoIcons.videocam_fill, size: 20),
+                    SizedBox(width: 8),
+                    Text('Record Video'),
+                  ],
+                ),
+              ),
+            ],
+            cancelButton: CupertinoActionSheetAction(
+              isDefaultAction: true,
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+          ),
         );
-        if (picked == null) return;
-        pickedFiles.add(File(picked.path));
+
+        if (cameraChoice == null) return;
+
+        if (cameraChoice == 'photo') {
+          final picked = await _picker.pickImage(
+            source: ImageSource.camera,
+            imageQuality: 90,
+          );
+          if (picked == null) return;
+          pickedFiles.add(File(picked.path));
+        } else if (cameraChoice == 'video') {
+          final picked = await _picker.pickVideo(source: ImageSource.camera);
+          if (picked == null) return;
+          pickedFiles.add(File(picked.path));
+        }
       } else {
         final multi = await _picker.pickMultiImage(imageQuality: 90);
         if (multi.isEmpty) return;
@@ -258,8 +320,12 @@ class _ChatComposerState extends State<ChatComposer> {
 
   Future<void> _toggleVoiceRecording() async {
     if (widget.isSending) return;
+    if (_isPreviewingVoice) {
+      await _cancelPreviewVoiceRecording();
+      return;
+    }
     if (_isRecordingVoice) {
-      await _finishVoiceRecording(send: true);
+      await _stopAndPreviewRecording();
       return;
     }
     try {
@@ -276,6 +342,7 @@ class _ChatComposerState extends State<ChatComposer> {
       if (!mounted) return;
       setState(() {
         _isRecordingVoice = true;
+        _isPreviewingVoice = false;
         _recordingDuration = Duration.zero;
       });
       _recordingTimer?.cancel();
@@ -293,17 +360,115 @@ class _ChatComposerState extends State<ChatComposer> {
     }
   }
 
-  Future<void> _finishVoiceRecording({required bool send}) async {
+  Future<void> _stopAndPreviewRecording() async {
     _recordingTimer?.cancel();
     _recordingTimer = null;
     final path = await _audioRecorder.stop();
+    if (!mounted) return;
+
+    if (path == null || path.isEmpty) {
+      setState(() {
+        _isRecordingVoice = false;
+        _isPreviewingVoice = false;
+      });
+      return;
+    }
+
+    _previewPlayer?.dispose();
+    final player = AudioPlayer();
+    _previewPlayer = player;
+
+    _previewStateSub?.cancel();
+    _previewPosSub?.cancel();
+    _previewDurSub?.cancel();
+
+    _previewStateSub = player.onPlayerStateChanged.listen((s) {
+      if (mounted) setState(() => _isPlayingPreview = s == PlayerState.playing);
+    });
+    _previewPosSub = player.onPositionChanged.listen((p) {
+      if (mounted) setState(() => _previewPosition = p);
+    });
+    _previewDurSub = player.onDurationChanged.listen((d) {
+      if (mounted) setState(() => _previewDuration = d);
+    });
+
+    try {
+      await player.setSource(DeviceFileSource(path));
+    } catch (_) {}
+
     if (mounted) {
       setState(() {
         _isRecordingVoice = false;
-        _recordingDuration = Duration.zero;
+        _isPreviewingVoice = true;
+        _previewAudioPath = path;
+        _isPlayingPreview = false;
+        _previewPosition = Duration.zero;
       });
     }
-    if (!send || path == null || path.isEmpty) return;
+  }
+
+  Future<void> _togglePreviewPlayback() async {
+    final player = _previewPlayer;
+    if (player == null || _previewAudioPath == null) return;
+    if (_isPlayingPreview) {
+      await player.pause();
+    } else {
+      if (_previewPosition >= _previewDuration && _previewDuration > Duration.zero) {
+        await player.seek(Duration.zero);
+      }
+      await player.play(DeviceFileSource(_previewAudioPath!));
+    }
+  }
+
+  Future<void> _cancelPreviewVoiceRecording() async {
+    _previewStateSub?.cancel();
+    _previewPosSub?.cancel();
+    _previewDurSub?.cancel();
+    _previewPlayer?.stop();
+    _previewPlayer?.dispose();
+    _previewPlayer = null;
+
+    if (_previewAudioPath != null) {
+      try {
+        final file = File(_previewAudioPath!);
+        if (file.existsSync()) await file.delete();
+      } catch (_) {}
+    }
+
+    if (mounted) {
+      setState(() {
+        _isRecordingVoice = false;
+        _isPreviewingVoice = false;
+        _previewAudioPath = null;
+        _isPlayingPreview = false;
+        _previewPosition = Duration.zero;
+        _previewDuration = Duration.zero;
+      });
+    }
+  }
+
+  Future<void> _sendPreviewVoiceRecording() async {
+    final path = _previewAudioPath;
+    if (path == null || path.isEmpty) return;
+
+    _previewStateSub?.cancel();
+    _previewPosSub?.cancel();
+    _previewDurSub?.cancel();
+    _previewPlayer?.stop();
+    _previewPlayer?.dispose();
+    _previewPlayer = null;
+
+    if (mounted) {
+      setState(() {
+        _isRecordingVoice = false;
+        _isPreviewingVoice = false;
+        _previewAudioPath = null;
+        _isPlayingPreview = false;
+        _previewPosition = Duration.zero;
+        _previewDuration = Duration.zero;
+      });
+    }
+
     await widget.onSendAttachment(
       file: File(path),
       fileName: 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
@@ -318,6 +483,7 @@ class _ChatComposerState extends State<ChatComposer> {
     if (mounted) {
       setState(() {
         _isRecordingVoice = false;
+        _isPreviewingVoice = false;
         _recordingDuration = Duration.zero;
       });
     }
@@ -550,7 +716,7 @@ class _ChatComposerState extends State<ChatComposer> {
         if (widget.editingMessage != null)
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(16, 8, 12, 4),
+            padding: const EdgeInsets.fromLTRB(16, 8, 12, 6),
             color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
             child: Row(
               children: [
@@ -560,14 +726,32 @@ class _ChatComposerState extends State<ChatComposer> {
                   color: AppTheme.primaryColor,
                 ),
                 const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Editing message',
-                    style: TextStyle(
-                      color: AppTheme.primaryColor,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Editing message',
+                        style: TextStyle(
+                          color: AppTheme.primaryColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (widget.editingMessage!.content.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          widget.editingMessage!.content,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppTheme.subtitleGrey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 IconButton(
@@ -624,12 +808,12 @@ class _ChatComposerState extends State<ChatComposer> {
               ),
               const SizedBox(width: 8),
 
-              // Adaptive Input Surface (expandable height up to 110)
+              // Adaptive Input Surface (expandable height up to 145 for 5-line big messages)
               Expanded(
                 child: Container(
                   constraints: const BoxConstraints(
                     minHeight: 38,
-                    maxHeight: 110,
+                    maxHeight: 145,
                   ),
                   child: GlassSurface(
                     radius: 19,
@@ -675,14 +859,133 @@ class _ChatComposerState extends State<ChatComposer> {
                                     visualDensity: VisualDensity.compact,
                                     padding: EdgeInsets.zero,
                                     constraints: const BoxConstraints(
-                                      minWidth: 24,
-                                      minHeight: 24,
+                                      minWidth: 28,
+                                      minHeight: 28,
+                                    ),
+                                    onPressed: _stopAndPreviewRecording,
+                                    tooltip: 'Stop & Preview',
+                                    icon: const Icon(
+                                      CupertinoIcons.stop_fill,
+                                      size: 18,
+                                      color: Colors.redAccent,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                      minHeight: 28,
                                     ),
                                     onPressed: _cancelVoiceRecording,
+                                    tooltip: 'Cancel',
                                     icon: Icon(
                                       CupertinoIcons.xmark,
-                                      size: 15,
+                                      size: 16,
                                       color: AppTheme.secondaryText(isDark),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else if (_isPreviewingVoice)
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                      minHeight: 28,
+                                    ),
+                                    onPressed: _cancelPreviewVoiceRecording,
+                                    tooltip: 'Delete recording',
+                                    icon: const Icon(
+                                      CupertinoIcons.trash,
+                                      size: 18,
+                                      color: Colors.redAccent,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                      minHeight: 28,
+                                    ),
+                                    onPressed: _togglePreviewPlayback,
+                                    tooltip: _isPlayingPreview ? 'Pause' : 'Play',
+                                    icon: Icon(
+                                      _isPlayingPreview
+                                          ? CupertinoIcons.pause_fill
+                                          : CupertinoIcons.play_fill,
+                                      size: 20,
+                                      color: const Color(0xFF007AFF),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: SliderTheme(
+                                      data: SliderTheme.of(context).copyWith(
+                                        trackHeight: 3,
+                                        thumbShape: const RoundSliderThumbShape(
+                                          enabledThumbRadius: 6,
+                                        ),
+                                        overlayShape: const RoundSliderOverlayShape(
+                                          overlayRadius: 10,
+                                        ),
+                                        activeTrackColor: const Color(0xFF007AFF),
+                                        inactiveTrackColor: isDark
+                                            ? Colors.white24
+                                            : Colors.black12,
+                                        thumbColor: const Color(0xFF007AFF),
+                                      ),
+                                      child: Slider(
+                                        min: 0.0,
+                                        max: _previewDuration.inMilliseconds > 0
+                                            ? _previewDuration.inMilliseconds.toDouble()
+                                            : 1.0,
+                                        value: _previewPosition.inMilliseconds
+                                            .toDouble()
+                                            .clamp(
+                                              0.0,
+                                              _previewDuration.inMilliseconds > 0
+                                                  ? _previewDuration.inMilliseconds.toDouble()
+                                                  : 1.0,
+                                            ),
+                                        onChanged: (val) {
+                                          _previewPlayer?.seek(
+                                            Duration(milliseconds: val.toInt()),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    '${_formatRecordingDuration(_previewPosition)} / ${_formatRecordingDuration(_previewDuration)}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppTheme.secondaryText(isDark),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  GestureDetector(
+                                    onTap: _sendPreviewVoiceRecording,
+                                    child: Container(
+                                      width: 28,
+                                      height: 28,
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xFF007AFF),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Center(
+                                        child: Icon(
+                                          CupertinoIcons.arrow_up,
+                                          size: 16,
+                                          color: Colors.white,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],

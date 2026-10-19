@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../entities/chat_conversation.dart';
 import '../entities/chat_message.dart';
 import '../models/server_models.dart';
+import 'bot_assistant_service.dart';
 
 /// Local persistent storage manager for P2P messages and conversations.
 class LocalChatStorage {
@@ -139,6 +140,11 @@ class LocalChatStorage {
               // Presence and typing are socket-only transient states. Do not
               // restore stale values from a previous app session.
               isOnline: false,
+              lastSeenAt: map['lastSeenAt'] is int
+                  ? DateTime.fromMillisecondsSinceEpoch(
+                      map['lastSeenAt'] as int,
+                    )
+                  : DateTime.tryParse(map['lastSeenAt']?.toString() ?? ''),
               isTyping: false,
               peerUserId: map['peerUserId'] as int?,
               isGroup: map['isGroup'] as bool? ?? false,
@@ -159,14 +165,65 @@ class LocalChatStorage {
         }
 
         if (epoch != _accountEpoch) return [];
-        _setConversationsNotifier(conversations);
-        return conversations;
+        final withBot = await _ensureBotIncluded(conversations);
+        _setConversationsNotifier(withBot);
+        return withBot;
       } catch (_) {}
     }
 
-    // Return clean empty list for real API server integration
-    if (epoch == _accountEpoch) _setConversationsNotifier([]);
+    // Return bot conversation when list is otherwise empty
+    if (epoch == _accountEpoch) {
+      final emptyWithBot = await _ensureBotIncluded([]);
+      _setConversationsNotifier(emptyWithBot);
+      return emptyWithBot;
+    }
     return [];
+  }
+
+  Future<List<ChatConversation>> _ensureBotIncluded(
+    List<ChatConversation> conversations,
+  ) async {
+    final botIndex =
+        conversations.indexWhere((c) => c.id == BotAssistantService.botId);
+    if (botIndex < 0) {
+      final botMessages = await loadMessages(BotAssistantService.botId);
+      final initialMessages = botMessages.isNotEmpty
+          ? botMessages
+          : [
+              ChatMessage(
+                id: 'bot_welcome_1',
+                senderId: BotAssistantService.botId,
+                content:
+                    '👋 Hello! I am your Calnox AI Assistant.\n\nHow can I help you today? Tap any of the suggested questions below or type your query!',
+                timestamp: DateTime.now().subtract(const Duration(minutes: 1)),
+                isRead: true,
+                isDelivered: true,
+              ),
+            ];
+
+      if (botMessages.isEmpty) {
+        await cacheMessages(BotAssistantService.botId, initialMessages);
+      }
+
+      final botConv = ChatConversation(
+        id: BotAssistantService.botId,
+        name: BotAssistantService.botName,
+        avatarUrl: '',
+        lastMessage: initialMessages.last.content,
+        lastMessageTime: 'Online',
+        lastActivityAt: DateTime.now(),
+        unreadCount: 0,
+        isOnline: true,
+        isPinned: true,
+        messages: initialMessages,
+      );
+
+      conversations.insert(0, botConv);
+    } else {
+      final bot = conversations[botIndex];
+      conversations[botIndex] = bot.copyWith(isOnline: true);
+    }
+    return conversations;
   }
 
   Future<List<ChatConversation>> _currentConversations() async {
@@ -183,7 +240,10 @@ class LocalChatStorage {
     final conversationsKey = _keyConversations;
     _prefs ??= await SharedPreferences.getInstance();
     if (epoch != _accountEpoch) return;
-    final snapshot = List<ChatConversation>.unmodifiable(conversations);
+    final listWithBot = await _ensureBotIncluded(
+      List<ChatConversation>.from(conversations),
+    );
+    final snapshot = List<ChatConversation>.unmodifiable(listWithBot);
     conversationsNotifier.value = snapshot;
     final jsonList = snapshot
         .map(
@@ -198,6 +258,7 @@ class LocalChatStorage {
             'isPinned': c.isPinned,
             'disappearType': c.disappearType,
             'isOnline': c.isOnline,
+            'lastSeenAt': c.lastSeenAt?.millisecondsSinceEpoch,
             'isTyping': c.isTyping,
             'peerUserId': c.peerUserId,
             'isGroup': c.isGroup,
@@ -259,6 +320,7 @@ class LocalChatStorage {
           isEdited: (m['isEdited'] as bool?) ?? false,
           isDeleted: (m['isDeleted'] as bool?) ?? false,
           isSaved: (m['isSaved'] as bool?) ?? false,
+          isForwarded: (m['isForwarded'] as bool?) ?? false,
           disappearType: (m['disappearType'] as int?) ?? 0,
           expiresAt: m['expiresAt'] != null
               ? DateTime.tryParse(m['expiresAt'].toString())
@@ -313,6 +375,7 @@ class LocalChatStorage {
             'isEdited': message.isEdited,
             'isDeleted': message.isDeleted,
             'isSaved': message.isSaved,
+            'isForwarded': message.isForwarded,
             'disappearType': message.disappearType,
             'expiresAt': message.expiresAt?.toIso8601String(),
             'reaction': message.reaction,
@@ -386,12 +449,30 @@ class LocalChatStorage {
       (m) =>
           m.id == message.id ||
           (m.senderId == message.senderId &&
-              m.content == message.content &&
               m.timestamp.difference(message.timestamp).inSeconds.abs() <= 5),
     );
     final isNewMessage = existingIdx < 0;
     if (existingIdx >= 0) {
-      messages[existingIdx] = message;
+      final existing = messages[existingIdx];
+      final effectiveContent = (message.content.trim().isEmpty ||
+                  message.content == '[Attachment]') &&
+              existing.content.trim().isNotEmpty &&
+              existing.content != '[Attachment]'
+          ? existing.content
+          : message.content;
+
+      final effectiveMediaUrl =
+          (message.mediaUrl == null || message.mediaUrl!.isEmpty) &&
+                  existing.mediaUrl != null &&
+                  existing.mediaUrl!.isNotEmpty
+              ? existing.mediaUrl
+              : message.mediaUrl;
+
+      messages[existingIdx] = message.copyWith(
+        content: effectiveContent,
+        mediaUrl: effectiveMediaUrl,
+        isSaved: message.isSaved,
+      );
     } else {
       messages.add(message);
     }

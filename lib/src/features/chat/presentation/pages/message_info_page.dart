@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
+import 'package:securecalc/src/core/ui/vault_page_route.dart';
 
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
@@ -15,28 +16,18 @@ class MessageInfoPage extends StatelessWidget {
     required this.conversation,
   });
 
-  /// Pushes the MessageInfoPage with a smooth right-to-left slide transition.
+  /// Pushes the MessageInfoPage with a native iOS interactive slide transition.
   static Future<void> open(
     BuildContext context, {
     required ChatMessage message,
     required ChatConversation conversation,
   }) {
     return Navigator.of(context).push(
-      PageRouteBuilder<void>(
-        pageBuilder: (context, animation, secondaryAnimation) {
-          return MessageInfoPage(message: message, conversation: conversation);
-        },
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final tween = Tween<Offset>(
-            begin: const Offset(1.0, 0.0),
-            end: Offset.zero,
-          ).chain(CurveTween(curve: Curves.easeOutCubic));
-
-          return SlideTransition(
-            position: animation.drive(tween),
-            child: child,
-          );
-        },
+      VaultPageRoute<void>(
+        builder: (context) => MessageInfoPage(
+          message: message,
+          conversation: conversation,
+        ),
       ),
     );
   }
@@ -157,7 +148,7 @@ class MessageInfoPage extends StatelessWidget {
           children: [
             // Top Preview Card with Wallpaper Background
             Container(
-              height: 160,
+              constraints: const BoxConstraints(minHeight: 160),
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(20),
@@ -168,124 +159,131 @@ class MessageInfoPage extends StatelessWidget {
                 ),
               ),
               child: Stack(
-                fit: StackFit.expand,
                 children: [
                   // Wallpaper
-                  ChatWallpaperWidget(
-                    chatId: conversation.id,
-                    isDark: isDark,
-                    backgroundUrl: conversation.backgroundUrl,
+                  Positioned.fill(
+                    child: ChatWallpaperWidget(
+                      chatId: conversation.id,
+                      isDark: isDark,
+                      backgroundUrl: conversation.backgroundUrl,
+                    ),
                   ),
 
                   // Message Content Layer
                   Padding(
                     padding: const EdgeInsets.all(12),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        // Date Chip
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? Colors.black87
-                                : Colors.white.withValues(alpha: 0.9),
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.06),
-                                blurRadius: 4,
-                              ),
-                            ],
-                          ),
-                          child: Text(
-                            _formatDateChip(createdTime),
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: isDark ? Colors.white70 : Colors.black87,
-                            ),
-                          ),
-                        ),
-
-                        // Message Bubble
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Container(
-                            constraints: BoxConstraints(
-                              maxWidth:
-                                  MediaQuery.of(context).size.width * 0.72,
-                            ),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 136),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          // Date Chip
+                          Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
+                              horizontal: 14,
+                              vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: bubbleColor,
-                              borderRadius: const BorderRadius.only(
-                                topLeft: Radius.circular(16),
-                                topRight: Radius.circular(16),
-                                bottomLeft: Radius.circular(16),
-                                bottomRight: Radius.circular(4),
-                              ),
+                              color: isDark
+                                  ? Colors.black87
+                                  : Colors.white.withValues(alpha: 0.9),
+                              borderRadius: BorderRadius.circular(12),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.05),
+                                  color: Colors.black.withValues(alpha: 0.06),
                                   blurRadius: 4,
-                                  offset: const Offset(0, 1),
                                 ),
                               ],
                             ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    message.content,
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      color: isDark
-                                          ? Colors.white
-                                          : Colors.black87,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      _formatTimeOnly(createdTime),
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: isDark
-                                            ? Colors.white60
-                                            : Colors.black54,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 3),
-                                    Icon(
-                                      (isRead || isDelivered)
-                                          ? Icons.done_all_rounded
-                                          : Icons.done_rounded,
-                                      size: 14,
-                                      color: isRead
-                                          ? const Color(0xFF53BDEB)
-                                          : (isDark
-                                                ? Colors.white60
-                                                : Colors.black45),
-                                    ),
-                                  ],
-                                ),
-                              ],
+                            child: Text(
+                              _formatDateChip(createdTime),
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: isDark ? Colors.white70 : Colors.black87,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+
+                          const SizedBox(height: 12),
+
+                          // Message Bubble
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Container(
+                              constraints: BoxConstraints(
+                                maxWidth:
+                                    MediaQuery.of(context).size.width * 0.72,
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: bubbleColor,
+                                borderRadius: const BorderRadius.only(
+                                  topLeft: Radius.circular(16),
+                                  topRight: Radius.circular(16),
+                                  bottomLeft: Radius.circular(16),
+                                  bottomRight: Radius.circular(4),
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.05),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 1),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      message.content,
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        color: isDark
+                                            ? Colors.white
+                                            : Colors.black87,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        _formatTimeOnly(createdTime),
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: isDark
+                                              ? Colors.white60
+                                              : Colors.black54,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Icon(
+                                        (isRead || isDelivered)
+                                            ? Icons.done_all_rounded
+                                            : Icons.done_rounded,
+                                        size: 14,
+                                        color: isRead
+                                            ? const Color(0xFF53BDEB)
+                                            : (isDark
+                                                  ? Colors.white60
+                                                  : Colors.black45),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -297,7 +295,6 @@ class MessageInfoPage extends StatelessWidget {
             // Read & Delivered Info Card
             Container(
               decoration: BoxDecoration(
-                color: cardSurface,
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
@@ -307,8 +304,12 @@ class MessageInfoPage extends StatelessWidget {
                   ),
                 ],
               ),
-              child: Column(
-                children: [
+              child: Material(
+                color: cardSurface,
+                borderRadius: BorderRadius.circular(20),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
                   // Read Row
                   ListTile(
                     contentPadding: const EdgeInsets.symmetric(
@@ -373,7 +374,7 @@ class MessageInfoPage extends StatelessWidget {
                   ),
                 ],
               ),
-            ),
+            ),),
           ],
         ),
       ),

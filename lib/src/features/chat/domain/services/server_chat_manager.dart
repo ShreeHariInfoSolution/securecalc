@@ -321,6 +321,11 @@ class ServerChatManager {
 
       // Transient WebSocket states (typing / presence / pin / mute / archive)
       final isOnline = peer?.isOnline == true || (liveLocal?.isOnline ?? false);
+      final peerLastSeen = peer?.lastSeenAt != null
+          ? DateTime.tryParse(peer!.lastSeenAt!)?.toLocal()
+          : null;
+      final lastSeenAt = peerLastSeen ?? liveLocal?.lastSeenAt;
+
       final isTyping =
           _typingChatIds.contains(chatIdStr) || (liveLocal?.isTyping ?? false);
       final isPinned = liveLocal?.isPinned ?? false;
@@ -336,6 +341,7 @@ class ServerChatManager {
         lastActivityAt: finalLastActivityAt,
         unreadCount: finalUnreadCount,
         isOnline: isOnline,
+        lastSeenAt: lastSeenAt,
         isTyping: isTyping,
         peerUserId: sc.isGroup ? null : peer?.id,
         isGroup: sc.isGroup,
@@ -486,11 +492,15 @@ class ServerChatManager {
                 fileName: sm.fileName,
                 filePath: sm.filePath,
               ) ??
-              (sm.filePath != null
+              (sm.filePath != null && sm.filePath!.trim().isNotEmpty
                   ? 'application/octet-stream'
                   : cachedMessage?.type ?? 'text'),
-          mediaUrl: sm.filePath ?? cachedMessage?.mediaUrl,
-          fileName: sm.fileName ?? cachedMessage?.fileName,
+          mediaUrl: (sm.filePath != null && sm.filePath!.trim().isNotEmpty)
+              ? sm.filePath
+              : cachedMessage?.mediaUrl,
+          fileName: (sm.fileName != null && sm.fileName!.trim().isNotEmpty)
+              ? sm.fileName
+              : cachedMessage?.fileName,
           isRead: isMe ? (sm.isRead || cachedMessage?.isRead == true) : true,
           isDelivered: isMe
               ? (sm.isDelivered ||
@@ -915,6 +925,13 @@ class ServerChatManager {
         rawOnline.toString().toLowerCase() == 'online' ||
         rawOnline.toString().toLowerCase() == 'true';
 
+    final rawLastSeen =
+        data['last_seen_at'] ?? data['lastSeenAt'] ?? data['updated_at'];
+    final parsedLastSeen =
+        rawLastSeen != null
+            ? DateTime.tryParse(rawLastSeen.toString())?.toLocal()
+            : null;
+
     final conversations = LocalChatStorage.instance.conversationsNotifier.value;
     final matchingChatIds = <String>{};
 
@@ -930,7 +947,13 @@ class ServerChatManager {
     for (final chatId in matchingChatIds) {
       await LocalChatStorage.instance.updateConversation(
         chatId,
-        (conversation) => conversation.copyWith(isOnline: isOnline),
+        (conversation) => conversation.copyWith(
+          isOnline: isOnline,
+          lastSeenAt:
+              isOnline
+                  ? null
+                  : (parsedLastSeen ?? conversation.lastSeenAt ?? DateTime.now()),
+        ),
       );
     }
   }
@@ -954,6 +977,17 @@ class ServerChatManager {
 
         final plaintext = sm.decryptedContent('chat_key_${sm.chatHeadId}');
 
+        // Safety check: Ignore malformed socket message events that carry no valid message id, content, or media
+        if (sm.id <= 0 ||
+            (!sm.isDeleted &&
+                plaintext.trim().isEmpty &&
+                (sm.filePath == null || sm.filePath!.trim().isEmpty))) {
+          debugPrint(
+            '[SERVER CHAT] Ignoring malformed socket new_message event with empty content for id=${sm.id}',
+          );
+          return;
+        }
+
         final msg = ChatMessage(
           id: sm.id.toString(),
           senderId: isMe ? 'user' : sm.senderId.toString(),
@@ -966,9 +1000,15 @@ class ServerChatManager {
                 fileName: sm.fileName,
                 filePath: sm.filePath,
               ) ??
-              (sm.filePath != null ? 'application/octet-stream' : 'text'),
-          mediaUrl: sm.filePath,
-          fileName: sm.fileName,
+              (sm.filePath != null && sm.filePath!.trim().isNotEmpty
+                  ? 'application/octet-stream'
+                  : 'text'),
+          mediaUrl: (sm.filePath != null && sm.filePath!.trim().isNotEmpty)
+              ? sm.filePath
+              : null,
+          fileName: (sm.fileName != null && sm.fileName!.trim().isNotEmpty)
+              ? sm.fileName
+              : null,
           isRead: isMe ? sm.isRead : false,
           isDelivered: true,
           isEdited: sm.isEdited,
@@ -1031,6 +1071,46 @@ class ServerChatManager {
       SocketChatService.instance.onMessageDeleted.listen((event) {
         if (generation == _socketGeneration) {
           unawaited(_handleDeletedMessage(event));
+        }
+      }),
+    );
+
+    // 3b. Message Saved
+    _socketSubscriptions.add(
+      SocketChatService.instance.onMessageSaved.listen((event) async {
+        if (generation != _socketGeneration) return;
+        debugPrint('[SERVER CHAT] Socket message saved event: $event');
+        final chatId =
+            (event['chat_head_id'] ?? event['chatHeadId'] ?? event['chat_id'])
+                ?.toString();
+        final messageId =
+            (event['message_id'] ?? event['messageId'] ?? event['id'])
+                ?.toString();
+        final isSaved =
+            event['is_saved'] == true ||
+            event['isSaved'] == true ||
+            event['is_saved'] == 1;
+
+        if (chatId != null && messageId != null) {
+          final messages =
+              await LocalChatStorage.instance.loadMessages(chatId);
+          final index = messages.indexWhere((m) => m.id == messageId);
+          if (index >= 0) {
+            final updatedMsg = messages[index].copyWith(isSaved: isSaved);
+            final conversations =
+                LocalChatStorage.instance.conversationsNotifier.value;
+            final existing =
+                conversations.cast<ChatConversation?>().firstWhere(
+                      (c) => c?.id == chatId,
+                      orElse: () => null,
+                    );
+            await LocalChatStorage.instance.saveMessage(
+              deviceId: chatId,
+              peerName: existing?.name ?? 'Chat #$chatId',
+              message: updatedMsg,
+              markUnread: false,
+            );
+          }
         }
       }),
     );

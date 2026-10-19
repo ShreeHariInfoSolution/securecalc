@@ -62,9 +62,17 @@ class _StarredMessagesPageState extends State<StarredMessagesPage> {
                     DateTime.now(),
                 type:
                     sm.fileType ??
-                    (sm.filePath != null ? 'application/octet-stream' : 'text'),
-                mediaUrl: sm.filePath,
-                fileName: sm.fileName,
+                    (sm.filePath != null && sm.filePath!.trim().isNotEmpty
+                        ? 'application/octet-stream'
+                        : 'text'),
+                mediaUrl:
+                    (sm.filePath != null && sm.filePath!.trim().isNotEmpty)
+                        ? sm.filePath
+                        : null,
+                fileName:
+                    (sm.fileName != null && sm.fileName!.trim().isNotEmpty)
+                        ? sm.fileName
+                        : null,
                 reaction: sm.chatReact,
                 replyToId: sm.replyToId,
               ),

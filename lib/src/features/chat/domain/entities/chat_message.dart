@@ -12,6 +12,7 @@ class ChatMessage {
   final bool isEdited;
   final bool isDeleted;
   final bool isSaved;
+  final bool isForwarded;
   final int disappearType;
   final DateTime? expiresAt;
   final DateTime? updatedAt;
@@ -20,11 +21,14 @@ class ChatMessage {
 
   String get previewText {
     final attachmentType = type.toLowerCase();
-    if (mediaUrl == null || mediaUrl!.isEmpty) return content;
-    if (attachmentType.startsWith('image/')) return 'Photo';
-    if (attachmentType.startsWith('video/')) return 'Video';
-    if (attachmentType.startsWith('audio/')) return 'Voice message';
-    return fileName?.isNotEmpty == true ? fileName! : 'Document';
+    final prefix = isForwarded ? 'Forwarded: ' : '';
+    if (mediaUrl == null || mediaUrl!.isEmpty) {
+      return content.isNotEmpty ? '$prefix$content' : (isForwarded ? 'Forwarded message' : '');
+    }
+    if (attachmentType.startsWith('image/')) return '${prefix}Photo';
+    if (attachmentType.startsWith('video/')) return '${prefix}Video';
+    if (attachmentType.startsWith('audio/')) return '${prefix}Voice message';
+    return fileName?.isNotEmpty == true ? '$prefix$fileName' : '${prefix}Document';
   }
 
   const ChatMessage({
@@ -40,6 +44,7 @@ class ChatMessage {
     this.isEdited = false,
     this.isDeleted = false,
     this.isSaved = false,
+    this.isForwarded = false,
     this.disappearType = 0,
     this.expiresAt,
     this.updatedAt,
@@ -60,6 +65,7 @@ class ChatMessage {
     bool? isEdited,
     bool? isDeleted,
     bool? isSaved,
+    bool? isForwarded,
     int? disappearType,
     DateTime? expiresAt,
     DateTime? updatedAt,
@@ -79,6 +85,7 @@ class ChatMessage {
       isEdited: isEdited ?? this.isEdited,
       isDeleted: isDeleted ?? this.isDeleted,
       isSaved: isSaved ?? this.isSaved,
+      isForwarded: isForwarded ?? this.isForwarded,
       disappearType: disappearType ?? this.disappearType,
       expiresAt: expiresAt ?? this.expiresAt,
       updatedAt: updatedAt ?? this.updatedAt,

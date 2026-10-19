@@ -5,6 +5,7 @@ import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/typing_dots.dart';
 
 import '../../domain/entities/chat_conversation.dart';
+import '../../domain/services/bot_assistant_service.dart';
 
 class ConversationTile extends StatelessWidget {
   final ChatConversation conversation;
@@ -76,13 +77,22 @@ class ConversationTile extends StatelessWidget {
                     const SizedBox(width: 8),
                   ],
 
-                  // iOS Avatar
-                  IosAvatar(
-                    name: conversation.name,
-                    imagePath: conversation.avatarUrl,
-                    isOnline: conversation.isOnline,
-                    size: 54,
-                    showOnline: true,
+                  // iOS Avatar (Tap to view full profile picture)
+                  GestureDetector(
+                    onTap: () {
+                      showFullProfilePictureDialog(
+                        context,
+                        name: conversation.name,
+                        imagePath: conversation.avatarUrl,
+                      );
+                    },
+                    child: IosAvatar(
+                      name: conversation.name,
+                      imagePath: conversation.avatarUrl,
+                      isOnline: conversation.isOnline,
+                      size: 54,
+                      showOnline: true,
+                    ),
                   ),
                   const SizedBox(width: 12),
 
@@ -96,18 +106,48 @@ class ConversationTile extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Expanded(
-                              child: Text(
-                                conversation.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: hasUnread
-                                      ? FontWeight.w700
-                                      : FontWeight.w600,
-                                  color: AppTheme.primaryText(isDark),
-                                  letterSpacing: -0.3,
-                                ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      conversation.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: hasUnread
+                                            ? FontWeight.w700
+                                            : FontWeight.w600,
+                                        color: AppTheme.primaryText(isDark),
+                                        letterSpacing: -0.3,
+                                      ),
+                                    ),
+                                  ),
+                                  if (conversation.id == BotAssistantService.botId ||
+                                      conversation.name.contains('Calnox AI')) ...[
+                                    const SizedBox(width: 5),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 5,
+                                        vertical: 1,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF007AFF)
+                                            .withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: const Text(
+                                        'AI BOT',
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w800,
+                                          color: Color(0xFF007AFF),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
                             const SizedBox(width: 8),

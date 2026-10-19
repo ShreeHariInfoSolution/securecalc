@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../theme/font_size_controller.dart';
 import '../theme/theme_controller.dart';
 import '../../features/calculator/domain/calculator_logic.dart';
+import '../../features/chat/domain/services/push_service.dart';
 
 /// Centralized persistent settings manager using SharedPreferences.
 class AppPreferences {
@@ -422,5 +423,6 @@ class AppPreferences {
     final p = await _getPrefs();
     await p.setString(_keyNotificationSound, sound);
     notificationSoundNotifier.value = sound;
+    await PushService.instance.updateNotificationSound(sound);
   }
 }

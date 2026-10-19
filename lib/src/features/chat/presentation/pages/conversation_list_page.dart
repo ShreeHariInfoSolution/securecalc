@@ -19,7 +19,9 @@ import '../../domain/services/server_chat_manager.dart';
 import '../../domain/services/chat_invite_service.dart';
 import '../widgets/conversation_tile.dart';
 import '../widgets/chat_peek_preview_dialog.dart';
+import '../../domain/services/bot_assistant_service.dart';
 import 'archived_list_page.dart';
+import 'bot_chat_detail_page.dart';
 import 'chat_detail_page.dart';
 import 'secret_settings_page.dart';
 import 'share/scan_qr_page.dart';
@@ -1241,6 +1243,13 @@ class _ConversationListPageState extends State<ConversationListPage> {
                             showDivider: convIndex < filtered.length - 1,
                             onTap: () {
                               FocusScope.of(context).unfocus();
+                              if (conv.id == BotAssistantService.botId) {
+                                BotChatDetailPage.open(
+                                  context,
+                                  conversation: conv,
+                                );
+                                return;
+                              }
                               Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (context) => VaultEdgePanelWrapper(

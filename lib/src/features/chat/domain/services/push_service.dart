@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:app_badge_plus/app_badge_plus.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +14,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:securecalc/src/features/chat/domain/entities/chat_conversation.dart';
 
 import '../../../../core/config/app_preferences.dart';
+import '../../../../core/ui/vault_page_route.dart';
+import '../../../../../firebase_options.dart';
+import '../../presentation/pages/chat_detail_page.dart';
 import 'local_chat_storage.dart';
+import 'server_api_service.dart';
 
 final FlutterLocalNotificationsPlugin _local =
     FlutterLocalNotificationsPlugin();
@@ -38,6 +44,21 @@ Future<void> _updateBadge(int count) async {
   }
 }
 
+/// Plays the currently configured app-side notification sound.
+Future<void> playNotificationSound() async {
+  try {
+    final soundKey = AppPreferences.getNotificationSound();
+    final soundFileName = AppPreferences.getNotificationSoundFileName(soundKey);
+    final player = AudioPlayer();
+    await player.play(
+      AssetSource('sounds/$soundFileName'),
+      mode: PlayerMode.lowLatency,
+    );
+  } catch (e) {
+    debugPrint('[Push Diagnostic] Error playing notification sound: $e');
+  }
+}
+
 Future<void> _ensureLocalInit({
   void Function(NotificationResponse)? onTap,
 }) async {
@@ -46,9 +67,12 @@ Future<void> _ensureLocalInit({
   const init = InitializationSettings(
     android: AndroidInitializationSettings('@drawable/ic_notification'),
     iOS: DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestBadgePermission: false,
-      requestSoundPermission: false,
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+      defaultPresentAlert: true,
+      defaultPresentSound: true,
+      defaultPresentBadge: true,
     ),
   );
   await _local.initialize(init, onDidReceiveNotificationResponse: onTap);
@@ -125,6 +149,9 @@ Future<void> _showNotificationWithDetails({
   debugPrint(
     '[Push Diagnostic] Preparing notification ($id): title="$title", sound="$soundKey" ($soundFileName)',
   );
+
+  // Trigger app-side sound tone ring
+  unawaited(playNotificationSound());
 
   try {
     final soundChannel = AndroidNotificationChannel(
@@ -218,7 +245,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   );
 
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
   } catch (e) {
     debugPrint('[Push Diagnostic BACKGROUND] Firebase init exception: $e');
   }
@@ -254,10 +283,31 @@ class PushService {
   void Function(int chatId)? onOpenChat;
   bool Function(int chatId)? isChatOpen;
 
-  final FirebaseMessaging _fm = FirebaseMessaging.instance;
+  bool _isVaultReady = false;
+  BuildContext? _vaultContext;
+  int? _pendingChatId;
+
+  FirebaseMessaging get _fm => FirebaseMessaging.instance;
   String? _token;
 
   String? get token => _token;
+
+  /// Call this when the vault is fully unlocked and authenticated (e.g. in VaultHomePage).
+  void initVault(BuildContext context) {
+    _isVaultReady = true;
+    _vaultContext = context;
+
+    if (_pendingChatId != null) {
+      final chatId = _pendingChatId!;
+      _pendingChatId = null;
+      _navigateToChat(context, chatId);
+    }
+  }
+
+  void disposeVault() {
+    _isVaultReady = false;
+    _vaultContext = null;
+  }
 
   /// Call once after Firebase.initializeApp()
   Future<void> init({
@@ -313,6 +363,13 @@ class PushService {
           );
           return;
         }
+        if (Platform.isIOS && m.notification != null) {
+          debugPrint(
+            '[Push Diagnostic FOREGROUND] iOS notification presented natively via APNs banner.',
+          );
+          await playNotificationSound();
+          return;
+        }
         await _showLocal(m);
       });
 
@@ -352,7 +409,7 @@ class PushService {
         _register(t);
       });
 
-      _token = await _fm.getToken();
+      _token = await _safeGetFcmToken();
       debugPrint('[Push Diagnostic] FCM Token obtained: $_token');
 
       if (_token != null) {
@@ -390,6 +447,15 @@ class PushService {
         'JWT Snippet: ${jwt.substring(0, math.min(15, jwt.length))}...',
       );
     }
+    if (Platform.isIOS) {
+      try {
+        final apns = await _fm.getAPNSToken();
+        debugPrint('APNs Token Present: ${apns != null && apns.isNotEmpty}');
+        if (apns != null) debugPrint('APNs Token: $apns');
+      } catch (e) {
+        debugPrint('APNs Token Error: $e');
+      }
+    }
     debugPrint('FCM Token: $_token');
     try {
       final settings = await _fm.getNotificationSettings();
@@ -408,22 +474,83 @@ class PushService {
     await _updateBadge(0);
   }
 
+  Future<String?> _safeGetFcmToken() async {
+    if (Platform.isIOS) {
+      debugPrint('[Push Diagnostic] Checking iOS APNs Token status...');
+      String? apnsToken;
+      for (int i = 0; i < 15; i++) {
+        try {
+          apnsToken = await _fm.getAPNSToken();
+          if (apnsToken != null && apnsToken.isNotEmpty) {
+            debugPrint('[Push Diagnostic] APNs Token ready (attempt ${i + 1}): $apnsToken');
+            break;
+          }
+        } catch (e) {
+          debugPrint(
+            '[Push Diagnostic] APNs check attempt ${i + 1} warning: $e',
+          );
+        }
+        await Future.delayed(const Duration(seconds: 1));
+      }
+      if (apnsToken == null) {
+        debugPrint(
+          '[Push Diagnostic WARNING] APNs Token is null after waiting 15s. Ensure Push Notification capability is added in Xcode and APNs key is uploaded in Firebase.',
+        );
+      }
+    }
+
+    for (int retry = 0; retry < 5; retry++) {
+      try {
+        final token = await _fm.getToken();
+        if (token != null && token.isNotEmpty) {
+          return token;
+        }
+      } catch (e) {
+        debugPrint(
+          '[Push Diagnostic ERROR] Failed to obtain FCM Token (attempt ${retry + 1}): $e',
+        );
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    }
+    return null;
+  }
+
   /// Call right AFTER a successful login (needs the JWT).
   Future<void> registerAfterLogin() async {
     try {
       debugPrint('[Push Diagnostic] registerAfterLogin called.');
-      _token ??= await _fm.getToken();
-      if (_token != null) await _register(_token!);
+      _token ??= await _safeGetFcmToken();
+      if (_token != null) {
+        await _register(_token!);
+      } else {
+        debugPrint('[Push Diagnostic WARNING] FCM token still null, starting background retry listener...');
+        _startBackgroundTokenRegistration();
+      }
     } catch (e) {
       debugPrint('[Push Diagnostic ERROR] Register after login error: $e');
     }
+  }
+
+  void _startBackgroundTokenRegistration() {
+    int attempts = 0;
+    Timer.periodic(const Duration(seconds: 4), (timer) async {
+      attempts++;
+      _token ??= await _safeGetFcmToken();
+      if (_token != null) {
+        await _register(_token!);
+        timer.cancel();
+      } else if (attempts >= 8) {
+        timer.cancel();
+        debugPrint('[Push Diagnostic ERROR] Background token registration retries exhausted.');
+      }
+    });
   }
 
   /// Call on logout BEFORE you clear the JWT.
   Future<void> unregisterOnLogout() async {
     try {
       debugPrint('[Push Diagnostic] unregisterOnLogout called.');
-      final t = _token ?? await _fm.getToken();
+      final t = _token ?? await _safeGetFcmToken();
       if (t != null) {
         final jwt = await getAuthToken?.call();
         if (jwt != null) {
@@ -444,13 +571,29 @@ class PushService {
     }
   }
 
+  /// Call when user changes notification sound in settings
+  Future<void> updateNotificationSound(String soundKey) async {
+    try {
+      debugPrint('[Push Diagnostic] Updating device notification sound to: $soundKey');
+      final t = _token ?? await _safeGetFcmToken();
+      if (t != null) {
+        await _register(t);
+      }
+    } catch (e) {
+      debugPrint('[Push Diagnostic ERROR] Failed to update notification sound: $e');
+    }
+  }
+
   Future<void> _register(String token) async {
     try {
       final jwt = await getAuthToken?.call();
+      final soundKey = AppPreferences.getNotificationSound();
+      final soundFileName = AppPreferences.getNotificationSoundFileName(soundKey);
+
       debugPrint('[Push Diagnostic] Registering FCM token to server...');
       debugPrint('[Push Diagnostic] Endpoint: $baseUrl/devices');
       debugPrint(
-        '[Push Diagnostic] Platform: ${Platform.isIOS ? 'ios' : 'android'}',
+        '[Push Diagnostic] Platform: ${Platform.isIOS ? 'ios' : 'android'}, Sound: $soundFileName ($soundKey)',
       );
       debugPrint('[Push Diagnostic] Token: $token');
       if (jwt == null || jwt.isEmpty) {
@@ -465,6 +608,8 @@ class PushService {
         body: jsonEncode({
           'token': token,
           'platform': Platform.isIOS ? 'ios' : 'android',
+          'sound': soundFileName,
+          'sound_key': soundKey,
         }),
       );
       debugPrint(
@@ -492,6 +637,66 @@ class PushService {
       '[Push Diagnostic] Opening chat screen from notification data: $data',
     );
     final id = int.tryParse('${data['chat_id'] ?? data['chatHeadId'] ?? ''}');
-    if (id != null) onOpenChat?.call(id);
+    if (id == null) return;
+
+    if (_isVaultReady && _vaultContext != null && _vaultContext!.mounted) {
+      _navigateToChat(_vaultContext!, id);
+    } else {
+      debugPrint('[Push Diagnostic] Vault is not unlocked. Queuing pending chat notification for chatId: $id');
+      _pendingChatId = id;
+    }
+  }
+
+  Future<void> _navigateToChat(BuildContext context, int chatId) async {
+    try {
+      if (!context.mounted) return;
+      if (ServerApiService.instance.authToken == null) return;
+      if (isChatOpen?.call(chatId) ?? false) return;
+
+      onOpenChat?.call(chatId);
+
+      final conversations = await LocalChatStorage.instance.loadConversations();
+      final match = conversations.cast<ChatConversation?>().firstWhere(
+        (c) => c?.id == chatId.toString(),
+        orElse: () => null,
+      );
+
+      ChatConversation? targetConv = match;
+
+      if (targetConv == null) {
+        final serverChat = await ServerApiService.instance.getChatDetails(chatId);
+        if (serverChat != null) {
+          final peer = serverChat.members.firstWhere(
+            (m) => m.id != ServerApiService.instance.currentUserId,
+            orElse: () => serverChat.members.first,
+          );
+          targetConv = ChatConversation(
+            id: serverChat.id.toString(),
+            name: serverChat.isGroup
+                ? (serverChat.groupName ?? 'Group')
+                : peer.name,
+            avatarUrl: serverChat.isGroup
+                ? (serverChat.groupAvatar ?? '')
+                : (peer.avatar ?? ''),
+            lastMessage: '',
+            lastMessageTime: '',
+            unreadCount: 0,
+            isOnline: peer.isOnline,
+            isGroup: serverChat.isGroup,
+            messages: const [],
+          );
+        }
+      }
+
+      if (targetConv != null && context.mounted) {
+        Navigator.of(context).push(
+          VaultPageRoute(
+            builder: (_) => ChatDetailPage(conversation: targetConv!),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[Push] Error opening chat $chatId: $e');
+    }
   }
 }

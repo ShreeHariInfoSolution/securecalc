@@ -6,14 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
-
-import '../widgets/chat_wallpaper_widget.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/models/server_models.dart';
@@ -23,6 +20,7 @@ import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
 import '../widgets/photo_gallery_viewer.dart';
 import '../widgets/app_video_player.dart';
+import 'chat_wallpaper_page.dart';
 import 'share/share_qr_page.dart';
 import 'starred_messages_page.dart';
 
@@ -502,418 +500,6 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _showWallpaperPicker() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final chatId = widget.conversation.id;
-    final currentServerBg =
-        widget.conversation.backgroundUrl ?? _details?.backgroundUrl;
-
-    String initialType = AppPreferences.getWallpaperType(chatId: chatId);
-    if (currentServerBg != null && currentServerBg.isNotEmpty) {
-      initialType = 'custom';
-    }
-
-    final currentDim = AppPreferences.getWallpaperDim(chatId: chatId);
-
-    final presets = <Map<String, String>>[
-      {'type': 'default', 'title': 'Default Canvas'},
-      {'type': 'preset_1', 'title': 'Midnight Mesh'},
-      {'type': 'preset_2', 'title': 'Sunset Glow'},
-      {'type': 'preset_3', 'title': 'Emerald Forest'},
-      {'type': 'preset_4', 'title': 'Cyber Neon'},
-      {'type': 'preset_5', 'title': 'Royal Velvet'},
-    ];
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
-        String selectedType = initialType;
-        String? customPath = AppPreferences.getWallpaperPath(chatId: chatId);
-        double dimValue = currentDim;
-        File? newUploadFile;
-        bool isUploading = false;
-
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: AppTheme.subtitleGrey.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Chat Wallpaper',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        'Customize background image for this chat screen',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppTheme.subtitleGrey,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-
-                      // Live preview of custom photo
-                      if (selectedType == 'custom' &&
-                          (newUploadFile != null ||
-                              (customPath != null &&
-                                  File(customPath!).existsSync()) ||
-                              (currentServerBg != null &&
-                                  currentServerBg.isNotEmpty)))
-                        Container(
-                          width: double.infinity,
-                          height: 140,
-                          margin: const EdgeInsets.only(bottom: 16),
-                          clipBehavior: Clip.antiAlias,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: AppTheme.subtitleGrey.withValues(
-                                alpha: 0.3,
-                              ),
-                            ),
-                          ),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              if (newUploadFile != null)
-                                Image.file(newUploadFile!, fit: BoxFit.cover)
-                              else if (customPath != null &&
-                                  File(customPath!).existsSync())
-                                Image.file(File(customPath!), fit: BoxFit.cover)
-                              else if (currentServerBg != null)
-                                ChatWallpaperWidget(
-                                  isDark: isDark,
-                                  backgroundUrl: currentServerBg,
-                                ),
-                              Container(
-                                color: Colors.black.withValues(alpha: dimValue),
-                              ),
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: IconButton(
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.white,
-                                    shadows: [
-                                      Shadow(
-                                        color: Colors.black54,
-                                        blurRadius: 4,
-                                      ),
-                                    ],
-                                  ),
-                                  onPressed: () {
-                                    setSheetState(() {
-                                      newUploadFile = null;
-                                      customPath = null;
-                                      selectedType = 'default';
-                                    });
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                      // Presets Horizontal Carousel
-                      SizedBox(
-                        height: 110,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: presets.length + 1,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(width: 12),
-                          itemBuilder: (context, idx) {
-                            if (idx == presets.length) {
-                              // Custom Photo Option
-                              final isSelected = selectedType == 'custom';
-                              return GestureDetector(
-                                onTap: () async {
-                                  AppPreferences.isPickerActive = true;
-                                  try {
-                                    final files = await FilePicker.pickFiles(
-                                      type: FileType.image,
-                                    );
-                                    if (files.isNotEmpty &&
-                                        files.first.path != null) {
-                                      final picked = files.first.path!;
-                                      setSheetState(() {
-                                        newUploadFile = File(picked);
-                                        selectedType = 'custom';
-                                      });
-                                    }
-                                  } catch (e) {
-                                    debugPrint('[WALLPAPER PICK ERROR] $e');
-                                  } finally {
-                                    AppPreferences.isPickerActive = false;
-                                  }
-                                },
-                                child: Container(
-                                  width: 80,
-                                  decoration: BoxDecoration(
-                                    color: isDark
-                                        ? const Color(0xFF2C2C2E)
-                                        : const Color(0xFFE5E5EA),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? AppTheme.primaryColor
-                                          : Colors.transparent,
-                                      width: 2.5,
-                                    ),
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.add_photo_alternate_rounded,
-                                        size: 28,
-                                        color: isSelected
-                                            ? AppTheme.primaryColor
-                                            : AppTheme.subtitleGrey,
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        'From Gallery',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                          color: isSelected
-                                              ? AppTheme.primaryColor
-                                              : AppTheme.subtitleGrey,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }
-
-                            final preset = presets[idx];
-                            final type = preset['type']!;
-                            final title = preset['title']!;
-                            final isSelected = selectedType == type;
-
-                            return GestureDetector(
-                              onTap: () =>
-                                  setSheetState(() => selectedType = type),
-                              child: Container(
-                                width: 80,
-                                clipBehavior: Clip.antiAlias,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: isSelected
-                                        ? AppTheme.primaryColor
-                                        : Colors.transparent,
-                                    width: 2.5,
-                                  ),
-                                ),
-                                child: Stack(
-                                  children: [
-                                    Positioned.fill(
-                                      child:
-                                          ChatWallpaperWidget.buildPresetWallpaper(
-                                            type,
-                                            isDark,
-                                          ),
-                                    ),
-                                    Container(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.25,
-                                      ),
-                                    ),
-                                    Center(
-                                      child: Text(
-                                        title,
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                    if (isSelected)
-                                      const Positioned(
-                                        top: 6,
-                                        right: 6,
-                                        child: CircleAvatar(
-                                          radius: 10,
-                                          backgroundColor:
-                                              AppTheme.primaryColor,
-                                          child: Icon(
-                                            Icons.check_rounded,
-                                            size: 12,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      // Dimming Slider
-                      if (selectedType != 'default') ...[
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Background Darkening',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              '${(dimValue * 100).round()}%',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: AppTheme.primaryColor,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Slider(
-                          value: dimValue,
-                          min: 0.0,
-                          max: 0.6,
-                          divisions: 12,
-                          activeColor: AppTheme.primaryColor,
-                          onChanged: (val) =>
-                              setSheetState(() => dimValue = val),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-
-                      // Apply Button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.primaryColor,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          onPressed: isUploading
-                              ? null
-                              : () async {
-                                  setSheetState(() => isUploading = true);
-                                  try {
-                                    final cid = int.tryParse(chatId);
-                                    if (cid != null) {
-                                      if (selectedType == 'custom' &&
-                                          newUploadFile != null) {
-                                        // Upload new background to server
-                                        await ServerApiService.instance
-                                            .uploadChatBackground(
-                                              cid,
-                                              newUploadFile!,
-                                            );
-                                      } else if (selectedType != 'custom' &&
-                                          currentServerBg != null &&
-                                          currentServerBg.isNotEmpty) {
-                                        // Remove server background if a preset or default is selected instead
-                                        await ServerApiService.instance
-                                            .removeChatBackground(cid);
-                                      } else if (selectedType == 'default' &&
-                                          customPath == null &&
-                                          currentServerBg != null) {
-                                        await ServerApiService.instance
-                                            .removeChatBackground(cid);
-                                      }
-                                    }
-
-                                    await AppPreferences.setChatWallpaper(
-                                      type: selectedType,
-                                      customPath:
-                                          newUploadFile?.path ?? customPath,
-                                      dim: dimValue,
-                                      chatId: chatId,
-                                    );
-
-                                    if (mounted) {
-                                      setState(() {});
-                                      if (cid != null &&
-                                          (newUploadFile != null ||
-                                              selectedType != 'custom')) {
-                                        await _loadDetails();
-                                        await ServerChatManager.instance
-                                            .syncChats();
-                                      }
-                                      if (context.mounted) {
-                                        Navigator.of(context).pop();
-                                        AppToast.show('Wallpaper updated!');
-                                      }
-                                    }
-                                  } catch (e) {
-                                    debugPrint('Wallpaper apply error: $e');
-                                    AppToast.show('Failed to update wallpaper');
-                                  } finally {
-                                    setSheetState(() => isUploading = false);
-                                  }
-                                },
-                          child: isUploading
-                              ? const SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Text(
-                                  'Save Wallpaper',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
                         ),
                       ),
                     ],
@@ -1535,12 +1121,21 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                     ),
                     child: Column(
                       children: [
-                        IosAvatar(
-                          name: displayName,
-                          imagePath: avatar,
-                          isOnline: firstPeer?.isOnline ?? false,
-                          size: 96,
-                          showOnline: details?.isGroup != true,
+                        GestureDetector(
+                          onTap: () {
+                            showFullProfilePictureDialog(
+                              context,
+                              name: displayName,
+                              imagePath: avatar,
+                            );
+                          },
+                          child: IosAvatar(
+                            name: displayName,
+                            imagePath: avatar,
+                            isOnline: firstPeer?.isOnline ?? false,
+                            size: 96,
+                            showOnline: details?.isGroup != true,
+                          ),
                         ),
                         const SizedBox(height: 14),
                         Text(
@@ -1733,7 +1328,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           Icons.chevron_right_rounded,
                           color: AppTheme.subtitleGrey,
                         ),
-                        onTap: _showWallpaperPicker,
+                        onTap: () {
+                          ChatWallpaperPage.open(
+                            context,
+                            conversation: widget.conversation,
+                          ).then((_) {
+                            if (mounted) setState(() {});
+                          });
+                        },
                       ),
                     ],
                   ),

@@ -7,9 +7,11 @@ import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/features/calculator/presentation/pages/calculator_page.dart';
 
 import '../../domain/services/server_chat_manager.dart';
+import '../../domain/services/socket_chat_service.dart';
 import 'settings/appearance_settings_page.dart';
 import 'settings/disguise_settings_page.dart';
 import 'settings/emergency_settings_page.dart';
+import 'settings/help_support_page.dart';
 import 'settings/media_auto_download_settings_page.dart';
 import 'settings/personal_settings_page.dart';
 
@@ -143,6 +145,20 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                               icon: Icons.warning_amber_rounded,
                               isDark: isDark,
                               targetPage: const EmergencySettingsPage(),
+                            ),
+                            Divider(
+                              height: 1,
+                              indent: 52,
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : Colors.black.withValues(alpha: 0.06),
+                            ),
+                            _buildSettingListTile(
+                              context: context,
+                              title: 'Help & Support / Device Key',
+                              icon: Icons.help_outline_rounded,
+                              isDark: isDark,
+                              targetPage: const HelpSupportPage(),
                             ),
                             Divider(
                               height: 1,
@@ -318,47 +334,62 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
           builder: (context, profileImgPath, _) {
             return Column(
               children: [
-                // Pill status badge matching Screenshot 1: 🟢 Online • Wi-Fi Direct
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isDark ? AppTheme.darkSurface : Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: isDark ? 0.25 : 0.04,
-                        ),
-                        blurRadius: 6,
-                        offset: const Offset(0, 1),
+                // Status Pill Badge matching WebSocket Connection State
+                ValueListenableBuilder<bool>(
+                  valueListenable:
+                      SocketChatService.instance.connectionStateNotifier,
+                  builder: (context, isConnected, _) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 7,
                       ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: AppTheme.onlineGreen,
-                          shape: BoxShape.circle,
+                      decoration: BoxDecoration(
+                        color: isDark ? AppTheme.darkSurface : Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: isConnected
+                              ? AppTheme.onlineGreen.withValues(alpha: 0.3)
+                              : Colors.redAccent.withValues(alpha: 0.3),
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.25 : 0.04,
+                            ),
+                            blurRadius: 6,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Online • Wi-Fi Direct',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: isDark ? Colors.white : Colors.black,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: isConnected
+                                  ? AppTheme.onlineGreen
+                                  : Colors.redAccent,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            isConnected ? 'Online' : 'Offline',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: isConnected
+                                  ? (isDark ? Colors.white : Colors.black)
+                                  : Colors.redAccent,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 16),
 

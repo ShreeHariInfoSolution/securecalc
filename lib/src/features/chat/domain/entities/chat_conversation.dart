@@ -9,6 +9,7 @@ class ChatConversation {
   final DateTime? lastActivityAt;
   final int unreadCount;
   final bool isOnline;
+  final DateTime? lastSeenAt;
   final bool isTyping;
   final int? peerUserId;
   final bool isGroup;
@@ -29,6 +30,7 @@ class ChatConversation {
     this.lastActivityAt,
     this.unreadCount = 0,
     this.isOnline = false,
+    this.lastSeenAt,
     this.isTyping = false,
     this.peerUserId,
     this.isGroup = false,
@@ -50,6 +52,7 @@ class ChatConversation {
     DateTime? lastActivityAt,
     int? unreadCount,
     bool? isOnline,
+    DateTime? lastSeenAt,
     bool? isTyping,
     int? peerUserId,
     bool? isGroup,
@@ -70,6 +73,7 @@ class ChatConversation {
       lastActivityAt: lastActivityAt ?? this.lastActivityAt,
       unreadCount: unreadCount ?? this.unreadCount,
       isOnline: isOnline ?? this.isOnline,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
       isTyping: isTyping ?? this.isTyping,
       peerUserId: peerUserId ?? this.peerUserId,
       isGroup: isGroup ?? this.isGroup,

@@ -69,7 +69,7 @@ class ChatReplyBanner extends StatelessWidget {
                     width: 36,
                     height: 36,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
+                    errorBuilder: (c, e, s) => Container(
                       width: 36,
                       height: 36,
                       decoration: const BoxDecoration(
@@ -135,9 +135,11 @@ class ChatReplyBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final msgType = replyingMessage.type.toLowerCase();
-    final hasMedia = (replyingMessage.mediaUrl != null &&
-            replyingMessage.mediaUrl!.trim().isNotEmpty) ||
-        (msgType != 'text' && msgType.isNotEmpty && !msgType.contains('text'));
+    final mediaUrl = replyingMessage.mediaUrl?.trim();
+    final bool hasMediaUrl = mediaUrl != null && mediaUrl.isNotEmpty;
+    final bool isTextMessage =
+        msgType == 'text' || msgType.contains('text') || !hasMediaUrl;
+    final bool hasMedia = hasMediaUrl && !isTextMessage;
 
     final displayContent = replyingMessage.content.trim().isNotEmpty &&
             replyingMessage.content != '[Attachment]'

@@ -28,11 +28,15 @@ class ChatMessageList extends StatelessWidget {
   final Function(ChatMessage) onBeginReply;
   final Function(int)? onTapReply;
   final String? highlightedMessageId;
+  final String? searchQuery;
   final Set<String> decryptingMessageIds;
   final VoidCallback onJumpToLatest;
   final VoidCallback onReloadMessages;
   final DateTime? sessionStartTime;
   final int initialUnreadCount;
+  final bool isSelectionMode;
+  final Set<String> selectedMessageIds;
+  final Function(ChatMessage)? onToggleSelectMessage;
 
   const ChatMessageList({
     super.key,
@@ -53,11 +57,15 @@ class ChatMessageList extends StatelessWidget {
     required this.onBeginReply,
     this.onTapReply,
     this.highlightedMessageId,
+    this.searchQuery,
     this.decryptingMessageIds = const <String>{},
     required this.onJumpToLatest,
     required this.onReloadMessages,
     this.sessionStartTime,
     this.initialUnreadCount = 0,
+    this.isSelectionMode = false,
+    this.selectedMessageIds = const <String>{},
+    this.onToggleSelectMessage,
   });
 
   bool _sameDay(DateTime first, DateTime second) =>
@@ -449,6 +457,12 @@ class ChatMessageList extends StatelessWidget {
                             replyText: repliedMessage?.previewText,
                             onTapReply: onTapReply,
                             isHighlighted: highlightedMessageId == msg.id,
+                            searchQuery: searchQuery,
+                            isForwarded: msg.isForwarded,
+                            isSelectionMode: isSelectionMode,
+                            isSelected: selectedMessageIds.contains(msg.id),
+                            onToggleSelect: () => onToggleSelectMessage?.call(msg),
+                            onShowMessageActions: onShowMessageActions,
                             reactions: msg.reaction == null
                                 ? null
                                 : [msg.reaction!],

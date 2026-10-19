@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Calnox Vault</string>
+	<string>Calculator&#8203;</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -24,38 +24,31 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<true/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-
-	<!-- App Transport Security for HTTP/WebSocket connections -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-
-	<!-- Required Active Privacy Permissions -->
-	<key>NSCameraUsageDescription</key>
-	<string>This app requires camera access to capture photos and videos for your private vault storage and profile avatar.</string>
-
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>This app requires access to your photo library to select photos, videos, and media files to send in encrypted chats or store in your vault.</string>
-
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>This app requires permission to save photos and videos from encrypted messages and your vault to your photo library.</string>
-
-	<key>NSMicrophoneUsageDescription</key>
-	<string>This app requires microphone access to record voice messages in chat conversations.</string>
-
-	<key>NSMotionUsageDescription</key>
-	<string>This app uses motion sensors to detect shake gestures to trigger emergency panic mode and quickly lock your vault.</string>
-
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>This app requires Bluetooth access to connect and communicate with nearby secure devices and accessories.</string>
-
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>This app requires Bluetooth access to connect and communicate with nearby secure devices and accessories.</string>
-
+	<key>NSCameraUsageDescription</key>
+	<string>This app requires camera access to capture photos and videos for your private vault storage and profile avatar.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app requires microphone access to record voice messages in chat conversations.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>This app uses motion sensors to detect shake gestures to trigger emergency panic mode and quickly lock your vault.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>This app requires permission to save photos and videos from encrypted messages and your vault to your photo library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app requires access to your photo library to select photos, videos, and media files to send in encrypted chats or store in your vault.</string>
+	<key>NSUserNotificationUsageDescription</key>
+	<string>This app requires notification permissions to alert you about new encrypted messages and vault updates.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -79,6 +72,11 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

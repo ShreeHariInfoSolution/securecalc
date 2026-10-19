@@ -1,17 +1,136 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/features/chat/domain/services/attachment_cache_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
 
+/// Opens a full screen modal profile picture preview with zoom and change options.
+void showFullProfilePictureDialog(
+  BuildContext context, {
+  required String name,
+  required String? imagePath,
+  VoidCallback? onChangePhoto,
+}) {
+  HapticFeedback.lightImpact();
+
+  showGeneralDialog(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'ViewProfilePic',
+    barrierColor: Colors.black.withValues(alpha: 0.88),
+    transitionDuration: const Duration(milliseconds: 250),
+    pageBuilder: (dialogContext, anim1, anim2) {
+      return Material(
+        color: Colors.transparent,
+        child: SafeArea(
+          child: Stack(
+            children: [
+              // Center Image with Interactive Zoom
+              Center(
+                child: InteractiveViewer(
+                  maxScale: 4.0,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    child: IosAvatar(
+                      name: name,
+                      imagePath: imagePath,
+                      size: 280,
+                      showOnline: false,
+                    ),
+                  ),
+                ),
+              ),
+
+              // Top Bar: Name & Close Button
+              Positioned(
+                top: 16,
+                left: 16,
+                right: 16,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.white24,
+                        shape: const CircleBorder(),
+                      ),
+                      icon: const Icon(Icons.close_rounded,
+                          color: Colors.white, size: 24),
+                      onPressed: () => Navigator.pop(dialogContext),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Bottom Bar: Optional Change Photo Button
+              if (onChangePhoto != null)
+                Positioned(
+                  bottom: 24,
+                  left: 24,
+                  right: 24,
+                  child: Center(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                      ),
+                      icon: const Icon(Icons.edit_rounded, size: 18),
+                      label: const Text(
+                        'Change Photo',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(dialogContext);
+                        onChangePhoto();
+                      },
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+    transitionBuilder: (context, anim1, anim2, child) {
+      return FadeTransition(
+        opacity: anim1,
+        child: child,
+      );
+    },
+  );
+}
+
 String? resolveAvatarUrl(String? raw) {
-  if (raw == null || raw.trim().isEmpty) return null;
+  if (raw == null || raw.trim().isEmpty) {
+    return null;
+  }
   final trimmed = raw.trim();
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://'))
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed;
+  }
 
   final apiBase = ServerApiService.baseUrl.replaceFirst(RegExp(r'/+$'), '');
   final origin = apiBase.replaceFirst(RegExp(r'/api$'), '');
@@ -144,13 +263,42 @@ class IosAvatar extends StatelessWidget {
           color: Colors.white,
           fontWeight: FontWeight.bold,
           fontSize: size * 0.36,
+          decoration: TextDecoration.none,
         ),
       ),
     );
 
+    final isBot = name.contains('Calnox AI') || name.contains('AI Assistant');
+
     Widget avatarWidget;
 
-    if (hasLocalImage) {
+    if (isBot && !hasLocalImage && !hasNetworkImage) {
+      avatarWidget = Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF007AFF), Color(0xFF5856D6)],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF007AFF).withValues(alpha: 0.35),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        alignment: Alignment.center,
+        child: Icon(
+          Icons.smart_toy_rounded,
+          color: Colors.white,
+          size: size * 0.52,
+        ),
+      );
+    } else if (hasLocalImage) {
       avatarWidget = ClipOval(
         child: Image.file(
           File(resolvedImage),

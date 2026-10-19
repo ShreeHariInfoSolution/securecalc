@@ -48,6 +48,12 @@ class ChatBubble extends StatefulWidget {
   final ChatMessage? repliedMessage;
   final Function(int)? onTapReply;
   final bool isHighlighted;
+  final String? searchQuery;
+  final bool isForwarded;
+  final bool isSelectionMode;
+  final bool isSelected;
+  final VoidCallback? onToggleSelect;
+  final Function(ChatMessage, Offset, Size)? onShowMessageActions;
 
   const ChatBubble({
     super.key,
@@ -74,6 +80,12 @@ class ChatBubble extends StatefulWidget {
     this.repliedMessage,
     this.onTapReply,
     this.isHighlighted = false,
+    this.searchQuery,
+    this.isForwarded = false,
+    this.isSelectionMode = false,
+    this.isSelected = false,
+    this.onToggleSelect,
+    this.onShowMessageActions,
   });
 
   @override
@@ -83,6 +95,10 @@ class ChatBubble extends StatefulWidget {
 class _ChatBubbleState extends State<ChatBubble> {
   AudioPlayer? _audioPlayer;
   StreamSubscription<PlayerState>? _audioStateSubscription;
+  StreamSubscription<Duration>? _audioPosSubscription;
+  StreamSubscription<Duration>? _audioDurSubscription;
+  Duration _audioPosition = Duration.zero;
+  Duration _audioDuration = Duration.zero;
   String? _downloadedPath;
   bool _isDownloading = false;
   bool _isPlayingAudio = false;
@@ -114,6 +130,16 @@ class _ChatBubbleState extends State<ChatBubble> {
     _audioStateSubscription = player.onPlayerStateChanged.listen((state) {
       if (mounted) {
         setState(() => _isPlayingAudio = state == PlayerState.playing);
+      }
+    });
+    _audioPosSubscription = player.onPositionChanged.listen((pos) {
+      if (mounted) {
+        setState(() => _audioPosition = pos);
+      }
+    });
+    _audioDurSubscription = player.onDurationChanged.listen((dur) {
+      if (mounted) {
+        setState(() => _audioDuration = dur);
       }
     });
     return player;
@@ -232,6 +258,8 @@ class _ChatBubbleState extends State<ChatBubble> {
   @override
   void dispose() {
     _audioStateSubscription?.cancel();
+    _audioPosSubscription?.cancel();
+    _audioDurSubscription?.cancel();
     _audioPlayer?.dispose();
     super.dispose();
   }
@@ -488,6 +516,12 @@ class _ChatBubbleState extends State<ChatBubble> {
     }
   }
 
+  String _formatAudioDuration(Duration d) {
+    final m = d.inMinutes.toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
   Future<void> _toggleAudioPlayback() async {
     try {
       if (_isPlayingAudio) {
@@ -495,7 +529,11 @@ class _ChatBubbleState extends State<ChatBubble> {
         return;
       }
       final path = await _downloadAttachment();
-      await _ensureAudioPlayer().play(DeviceFileSource(path));
+      final player = _ensureAudioPlayer();
+      if (_audioPosition >= _audioDuration && _audioDuration > Duration.zero) {
+        await player.seek(Duration.zero);
+      }
+      await player.play(DeviceFileSource(path));
     } catch (error) {
       AppToast.show('Could not play voice message: $error', isError: true);
     }
@@ -707,6 +745,35 @@ class _ChatBubbleState extends State<ChatBubble> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (widget.isForwarded) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.shortcut_rounded,
+                  size: 13,
+                  color: widget.isMe
+                      ? Colors.white.withValues(alpha: 0.85)
+                      : (isDark ? Colors.white60 : Colors.black54),
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  'Forwarded',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    fontWeight: FontWeight.w500,
+                    color: widget.isMe
+                        ? Colors.white.withValues(alpha: 0.85)
+                        : (isDark ? Colors.white60 : Colors.black54),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         if (hasReply) ...[
           GestureDetector(
             onTap: () {
@@ -843,6 +910,73 @@ class _ChatBubbleState extends State<ChatBubble> {
     );
   }
 
+  List<InlineSpan> _buildHighlightedTextSpans(
+    String text,
+    Color textColor,
+    bool isDark,
+  ) {
+    final query = widget.searchQuery?.trim();
+    if (query == null || query.isEmpty) {
+      return [TextSpan(text: text)];
+    }
+
+    final queryLower = query.toLowerCase();
+    final textLower = text.toLowerCase();
+
+    if (!textLower.contains(queryLower)) {
+      return [TextSpan(text: text)];
+    }
+
+    final spans = <InlineSpan>[];
+    int start = 0;
+    int indexOfMatch;
+
+    final highlightBg = isDark
+        ? const Color(0xFFFFD60A)
+        : const Color(0xFFFFC107);
+
+    while ((indexOfMatch = textLower.indexOf(queryLower, start)) != -1) {
+      if (indexOfMatch > start) {
+        spans.add(TextSpan(text: text.substring(start, indexOfMatch)));
+      }
+      final matchText =
+          text.substring(indexOfMatch, indexOfMatch + queryLower.length);
+      spans.add(
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            margin: const EdgeInsets.symmetric(horizontal: 1),
+            decoration: BoxDecoration(
+              color: highlightBg,
+              borderRadius: BorderRadius.circular(4),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 2,
+                ),
+              ],
+            ),
+            child: Text(
+              matchText,
+              style: const TextStyle(
+                color: Colors.black,
+                fontSize: 16.0,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+      );
+      start = indexOfMatch + queryLower.length;
+    }
+    if (start < text.length) {
+      spans.add(TextSpan(text: text.substring(start)));
+    }
+
+    return spans;
+  }
+
   Widget _buildExpandableTextMessage(
     BuildContext context,
     bool isDark,
@@ -850,12 +984,12 @@ class _ChatBubbleState extends State<ChatBubble> {
   ) {
     final text = widget.message;
     final lines = text.split('\n');
-    final isLongParagraph = text.length > 180 || lines.length > 4;
+    final isLongParagraph = text.length > 320 || lines.length > 6;
+    final textSpans = _buildHighlightedTextSpans(text, textColor, isDark);
 
     if (!isLongParagraph) {
       return RichText(
         text: TextSpan(
-          text: text,
           style: TextStyle(
             color: textColor,
             fontSize: 17.0,
@@ -864,6 +998,7 @@ class _ChatBubbleState extends State<ChatBubble> {
             fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
           ),
           children: [
+            ...textSpans,
             const TextSpan(text: '    '),
             WidgetSpan(
               alignment: PlaceholderAlignment.middle,
@@ -884,7 +1019,7 @@ class _ChatBubbleState extends State<ChatBubble> {
         children: [
           Text(
             text,
-            maxLines: 4,
+            maxLines: 6,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: textColor,
@@ -917,8 +1052,7 @@ class _ChatBubbleState extends State<ChatBubble> {
                               ? Colors.white.withValues(alpha: 0.95)
                               : AppTheme.primaryColor,
                           fontSize: 14.0,
-                          fontWeight: FontWeight.bold,
-                          decoration: TextDecoration.underline,
+                          fontWeight: FontWeight.bold
                         ),
                       ),
                       const SizedBox(width: 2),
@@ -986,7 +1120,6 @@ class _ChatBubbleState extends State<ChatBubble> {
                         : AppTheme.primaryColor,
                     fontSize: 13.0,
                     fontWeight: FontWeight.w600,
-                    decoration: TextDecoration.underline,
                   ),
                 ),
                 const SizedBox(width: 2),
@@ -1318,17 +1451,121 @@ class _ChatBubbleState extends State<ChatBubble> {
       );
     }
 
-    // ─── 3. OTHER ATTACHMENTS (Audio, Document/File) ─────────────────
+    if (_isAudio) {
+      final maxDur = _audioDuration.inMilliseconds > 0
+          ? _audioDuration.inMilliseconds.toDouble()
+          : 1.0;
+      final curPos = _audioPosition.inMilliseconds
+          .toDouble()
+          .clamp(0.0, maxDur);
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF182229) : const Color(0xFFF1F3F5),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                GestureDetector(
+                  onTap: _isDownloading ? null : _toggleAudioPlayback,
+                  child: Container(
+                    width: 42,
+                    height: 42,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF007AFF),
+                      shape: BoxShape.circle,
+                    ),
+                    child: _isDownloading
+                        ? const Padding(
+                            padding: EdgeInsets.all(10),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(
+                            _isPlayingAudio
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _attachmentName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        hasLocal
+                            ? '${_formatAudioDuration(_audioPosition)} / ${_formatAudioDuration(_audioDuration)}'
+                            : (_downloadFailed
+                                  ? 'Download failed'
+                                  : 'Tap to download audio'),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: _downloadFailed
+                              ? Colors.redAccent
+                              : (isDark ? Colors.white60 : Colors.black54),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (hasLocal) ...[
+              const SizedBox(height: 4),
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3,
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                  activeTrackColor: const Color(0xFF007AFF),
+                  inactiveTrackColor: isDark ? Colors.white24 : Colors.black12,
+                  thumbColor: const Color(0xFF007AFF),
+                ),
+                child: Slider(
+                  min: 0.0,
+                  max: maxDur,
+                  value: curPos,
+                  onChanged: (val) {
+                    _audioPlayer?.seek(Duration(milliseconds: val.toInt()));
+                  },
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    // ─── 3. OTHER ATTACHMENTS (Document/File) ─────────────────
     final icon = _isVideo
         ? Icons.movie_outlined
-        : _isAudio
-        ? Icons.graphic_eq_rounded
         : Icons.insert_drive_file_outlined;
 
     final kind = _isVideo
         ? 'Video'
-        : _isAudio
-        ? 'Voice message'
         : 'Document';
 
     final statusText = hasLocal
@@ -1470,13 +1707,42 @@ class _ChatBubbleState extends State<ChatBubble> {
     final isDark = theme.brightness == Brightness.dark;
 
     if (widget.groupedImages != null && widget.groupedImages!.isNotEmpty) {
-      return Padding(
+      final gridBody = Padding(
         padding: const EdgeInsets.symmetric(vertical: 3.0, horizontal: 12.0),
         child: Column(
           crossAxisAlignment: widget.isMe
               ? CrossAxisAlignment.end
               : CrossAxisAlignment.start,
           children: [
+            if (widget.isForwarded) ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.shortcut_rounded,
+                      size: 13,
+                      color: widget.isMe
+                          ? Colors.white.withValues(alpha: 0.85)
+                          : (isDark ? Colors.white60 : Colors.black54),
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      'Forwarded',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                        fontWeight: FontWeight.w500,
+                        color: widget.isMe
+                            ? Colors.white.withValues(alpha: 0.85)
+                            : (isDark ? Colors.white60 : Colors.black54),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (widget.senderName != null && widget.senderName!.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 3, left: 4, right: 4),
@@ -1496,10 +1762,42 @@ class _ChatBubbleState extends State<ChatBubble> {
               isRead: widget.isRead,
               isDelivered: widget.isDelivered,
               isEdited: widget.isEdited,
+              isSaved: widget.isSaved,
+              isSelectionMode: widget.isSelectionMode,
+              isSelected: widget.isSelected,
+              onToggleSelect: widget.onToggleSelect,
+              onShowMessageActions: widget.onShowMessageActions,
             ),
           ],
         ),
       );
+
+      if (widget.isSelectionMode) {
+        return GestureDetector(
+          onTap: widget.onToggleSelect,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 8.0),
+            child: Row(
+              children: [
+                Icon(
+                  widget.isSelected
+                      ? Icons.check_circle_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  color: widget.isSelected
+                      ? const Color(0xFF007AFF)
+                      : (isDark ? Colors.white54 : Colors.black38),
+                  size: 22,
+                ),
+                const SizedBox(width: 4),
+                Expanded(child: gridBody),
+              ],
+            ),
+          ),
+        );
+      }
+
+      return gridBody;
     }
 
     if (widget.isDeleted) {
@@ -1538,17 +1836,16 @@ class _ChatBubbleState extends State<ChatBubble> {
         ? const Color(0xFFFFD60A)
         : const Color(0xFFFF9500);
 
-    final bubbleColor = widget.isHighlighted
-        ? (isDark ? const Color(0xFF7C5500) : const Color(0xFFFFF3C4))
-        : (widget.isMe ? sentColor : AppTheme.receivedBubble(isDark));
+    final bubbleColor =
+        widget.isMe ? sentColor : AppTheme.receivedBubble(isDark);
 
-    final textColor = widget.isHighlighted
-        ? (isDark ? Colors.white : Colors.black)
-        : (widget.isMe ? Colors.white : (isDark ? Colors.white : Colors.black));
+    final textColor = widget.isMe
+        ? Colors.white
+        : (isDark ? Colors.white : Colors.black);
 
     final mediaUrl = widget.mediaUrl;
 
-    return Padding(
+    final Widget bubbleBody = Padding(
       padding: const EdgeInsets.symmetric(vertical: 3.0, horizontal: 12.0),
       child: Column(
         crossAxisAlignment: widget.isMe
@@ -1604,24 +1901,24 @@ class _ChatBubbleState extends State<ChatBubble> {
                         constraints: BoxConstraints(
                           maxWidth: MediaQuery.of(context).size.width * 0.76,
                         ),
-                      margin: EdgeInsets.only(
-                        left: widget.isMe ? 0 : 6,
-                        right: widget.isMe ? 6 : 0,
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 9,
-                      ),
-                      child: _buildBubbleContent(
-                        context,
-                        isDark,
-                        textColor,
-                        mediaUrl,
+                        margin: EdgeInsets.only(
+                          left: widget.isMe ? 0 : 6,
+                          right: widget.isMe ? 6 : 0,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 9,
+                        ),
+                        child: _buildBubbleContent(
+                          context,
+                          isDark,
+                          textColor,
+                          mediaUrl,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
                 if (widget.reactions?.isNotEmpty == true)
                   Positioned(
                     bottom: -16,
@@ -1690,6 +1987,33 @@ class _ChatBubbleState extends State<ChatBubble> {
         ],
       ),
     );
+
+    if (widget.isSelectionMode) {
+      return GestureDetector(
+        onTap: widget.onToggleSelect,
+        behavior: HitTestBehavior.opaque,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 8.0),
+          child: Row(
+            children: [
+              Icon(
+                widget.isSelected
+                    ? Icons.check_circle_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                color: widget.isSelected
+                    ? const Color(0xFF007AFF)
+                    : (isDark ? Colors.white54 : Colors.black38),
+                size: 22,
+              ),
+              const SizedBox(width: 4),
+              Expanded(child: bubbleBody),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return bubbleBody;
   }
 }
 
@@ -1701,6 +2025,10 @@ class GroupedPhotoGrid extends StatelessWidget {
   final bool isDelivered;
   final bool isEdited;
   final bool isSaved;
+  final bool isSelectionMode;
+  final bool isSelected;
+  final VoidCallback? onToggleSelect;
+  final Function(ChatMessage, Offset, Size)? onShowMessageActions;
 
   const GroupedPhotoGrid({
     super.key,
@@ -1711,6 +2039,10 @@ class GroupedPhotoGrid extends StatelessWidget {
     this.isDelivered = false,
     required this.isEdited,
     this.isSaved = false,
+    this.isSelectionMode = false,
+    this.isSelected = false,
+    this.onToggleSelect,
+    this.onShowMessageActions,
   });
 
   @override
@@ -1850,11 +2182,20 @@ class GroupedPhotoGrid extends StatelessWidget {
       photoMessage: msg,
       width: 270,
       height: 220,
-      onTap: () => PhotoGalleryViewer.open(
-        context,
-        photos: groupedImages,
-        initialIndex: 0,
-      ),
+      onTap: () {
+        if (isSelectionMode) {
+          onToggleSelect?.call();
+        } else {
+          PhotoGalleryViewer.open(
+            context,
+            photos: groupedImages,
+            initialIndex: 0,
+          );
+        }
+      },
+      isSelectionMode: isSelectionMode,
+      onToggleSelect: onToggleSelect,
+      onShowMessageActions: onShowMessageActions,
     );
   }
 
@@ -1865,11 +2206,20 @@ class GroupedPhotoGrid extends StatelessWidget {
           child: _GridTileItem(
             photoMessage: photos[0],
             height: 140,
-            onTap: () => PhotoGalleryViewer.open(
-              context,
-              photos: photos,
-              initialIndex: 0,
-            ),
+            onTap: () {
+              if (isSelectionMode) {
+                onToggleSelect?.call();
+              } else {
+                PhotoGalleryViewer.open(
+                  context,
+                  photos: photos,
+                  initialIndex: 0,
+                );
+              }
+            },
+            isSelectionMode: isSelectionMode,
+            onToggleSelect: onToggleSelect,
+            onShowMessageActions: onShowMessageActions,
           ),
         ),
         const SizedBox(width: 2),
@@ -1877,11 +2227,20 @@ class GroupedPhotoGrid extends StatelessWidget {
           child: _GridTileItem(
             photoMessage: photos[1],
             height: 140,
-            onTap: () => PhotoGalleryViewer.open(
-              context,
-              photos: photos,
-              initialIndex: 1,
-            ),
+            onTap: () {
+              if (isSelectionMode) {
+                onToggleSelect?.call();
+              } else {
+                PhotoGalleryViewer.open(
+                  context,
+                  photos: photos,
+                  initialIndex: 1,
+                );
+              }
+            },
+            isSelectionMode: isSelectionMode,
+            onToggleSelect: onToggleSelect,
+            onShowMessageActions: onShowMessageActions,
           ),
         ),
       ],
@@ -1896,11 +2255,20 @@ class GroupedPhotoGrid extends StatelessWidget {
           child: _GridTileItem(
             photoMessage: photos[0],
             height: 180,
-            onTap: () => PhotoGalleryViewer.open(
-              context,
-              photos: photos,
-              initialIndex: 0,
-            ),
+            onTap: () {
+              if (isSelectionMode) {
+                onToggleSelect?.call();
+              } else {
+                PhotoGalleryViewer.open(
+                  context,
+                  photos: photos,
+                  initialIndex: 0,
+                );
+              }
+            },
+            isSelectionMode: isSelectionMode,
+            onToggleSelect: onToggleSelect,
+            onShowMessageActions: onShowMessageActions,
           ),
         ),
         const SizedBox(width: 2),
@@ -1911,21 +2279,39 @@ class GroupedPhotoGrid extends StatelessWidget {
               _GridTileItem(
                 photoMessage: photos[1],
                 height: 89,
-                onTap: () => PhotoGalleryViewer.open(
-                  context,
-                  photos: photos,
-                  initialIndex: 1,
-                ),
+                onTap: () {
+                  if (isSelectionMode) {
+                    onToggleSelect?.call();
+                  } else {
+                    PhotoGalleryViewer.open(
+                      context,
+                      photos: photos,
+                      initialIndex: 1,
+                    );
+                  }
+                },
+                isSelectionMode: isSelectionMode,
+                onToggleSelect: onToggleSelect,
+                onShowMessageActions: onShowMessageActions,
               ),
               const SizedBox(height: 2),
               _GridTileItem(
                 photoMessage: photos[2],
                 height: 89,
-                onTap: () => PhotoGalleryViewer.open(
-                  context,
-                  photos: photos,
-                  initialIndex: 2,
-                ),
+                onTap: () {
+                  if (isSelectionMode) {
+                    onToggleSelect?.call();
+                  } else {
+                    PhotoGalleryViewer.open(
+                      context,
+                      photos: photos,
+                      initialIndex: 2,
+                    );
+                  }
+                },
+                isSelectionMode: isSelectionMode,
+                onToggleSelect: onToggleSelect,
+                onShowMessageActions: onShowMessageActions,
               ),
             ],
           ),
@@ -1945,11 +2331,20 @@ class GroupedPhotoGrid extends StatelessWidget {
               child: _GridTileItem(
                 photoMessage: photos[0],
                 height: 110,
-                onTap: () => PhotoGalleryViewer.open(
-                  context,
-                  photos: photos,
-                  initialIndex: 0,
-                ),
+                onTap: () {
+                  if (isSelectionMode) {
+                    onToggleSelect?.call();
+                  } else {
+                    PhotoGalleryViewer.open(
+                      context,
+                      photos: photos,
+                      initialIndex: 0,
+                    );
+                  }
+                },
+                isSelectionMode: isSelectionMode,
+                onToggleSelect: onToggleSelect,
+                onShowMessageActions: onShowMessageActions,
               ),
             ),
             const SizedBox(width: 2),
@@ -1957,11 +2352,20 @@ class GroupedPhotoGrid extends StatelessWidget {
               child: _GridTileItem(
                 photoMessage: photos[1],
                 height: 110,
-                onTap: () => PhotoGalleryViewer.open(
-                  context,
-                  photos: photos,
-                  initialIndex: 1,
-                ),
+                onTap: () {
+                  if (isSelectionMode) {
+                    onToggleSelect?.call();
+                  } else {
+                    PhotoGalleryViewer.open(
+                      context,
+                      photos: photos,
+                      initialIndex: 1,
+                    );
+                  }
+                },
+                isSelectionMode: isSelectionMode,
+                onToggleSelect: onToggleSelect,
+                onShowMessageActions: onShowMessageActions,
               ),
             ),
           ],
@@ -1973,11 +2377,20 @@ class GroupedPhotoGrid extends StatelessWidget {
               child: _GridTileItem(
                 photoMessage: photos[2],
                 height: 110,
-                onTap: () => PhotoGalleryViewer.open(
-                  context,
-                  photos: photos,
-                  initialIndex: 2,
-                ),
+                onTap: () {
+                  if (isSelectionMode) {
+                    onToggleSelect?.call();
+                  } else {
+                    PhotoGalleryViewer.open(
+                      context,
+                      photos: photos,
+                      initialIndex: 2,
+                    );
+                  }
+                },
+                isSelectionMode: isSelectionMode,
+                onToggleSelect: onToggleSelect,
+                onShowMessageActions: onShowMessageActions,
               ),
             ),
             const SizedBox(width: 2),
@@ -1988,20 +2401,45 @@ class GroupedPhotoGrid extends StatelessWidget {
                   _GridTileItem(
                     photoMessage: photos[3],
                     height: 110,
-                    onTap: () => PhotoGalleryViewer.open(
-                      context,
-                      photos: photos,
-                      initialIndex: 3,
-                    ),
+                    onTap: () {
+                      if (isSelectionMode) {
+                        onToggleSelect?.call();
+                      } else {
+                        PhotoGalleryViewer.open(
+                          context,
+                          photos: photos,
+                          initialIndex: 3,
+                        );
+                      }
+                    },
+                    isSelectionMode: isSelectionMode,
+                    onToggleSelect: onToggleSelect,
+                    onShowMessageActions: onShowMessageActions,
                   ),
                   if (extraCount > 0)
                     Positioned.fill(
                       child: GestureDetector(
-                        onTap: () => PhotoGalleryViewer.open(
-                          context,
-                          photos: photos,
-                          initialIndex: 3,
-                        ),
+                        onTap: () {
+                          if (isSelectionMode) {
+                            onToggleSelect?.call();
+                          } else {
+                            PhotoGalleryViewer.open(
+                              context,
+                              photos: photos,
+                              initialIndex: 3,
+                            );
+                          }
+                        },
+                        onLongPress: () {
+                          if (isSelectionMode) {
+                            onToggleSelect?.call();
+                          } else if (onShowMessageActions != null) {
+                            final box = context.findRenderObject() as RenderBox?;
+                            final globalPos = box?.localToGlobal(Offset.zero) ?? Offset.zero;
+                            final size = box?.size ?? const Size(200, 200);
+                            onShowMessageActions!(photos[3], globalPos, size);
+                          }
+                        },
                         child: Container(
                           color: Colors.black.withValues(alpha: 0.58),
                           alignment: Alignment.center,
@@ -2031,12 +2469,18 @@ class _GridTileItem extends StatefulWidget {
   final double? width;
   final double height;
   final VoidCallback onTap;
+  final bool isSelectionMode;
+  final VoidCallback? onToggleSelect;
+  final Function(ChatMessage, Offset, Size)? onShowMessageActions;
 
   const _GridTileItem({
     required this.photoMessage,
     this.width,
     required this.height,
     required this.onTap,
+    this.isSelectionMode = false,
+    this.onToggleSelect,
+    this.onShowMessageActions,
   });
 
   @override
@@ -2254,8 +2698,10 @@ class _GridTileItemState extends State<_GridTileItem> {
 
   @override
   Widget build(BuildContext context) {
+    final tileWidth = widget.width ?? double.infinity;
+
     if (_isLoading) {
-      return _buildThumbnailPlaceholder();
+      return _buildThumbnailPlaceholder(tileWidth);
     }
 
     final path = _resolvedPath;
@@ -2263,7 +2709,7 @@ class _GridTileItemState extends State<_GridTileItem> {
       return GestureDetector(
         onTap: _isDownloading ? null : () => _downloadAndCacheTilePhoto(),
         child: Container(
-          width: widget.width,
+          width: tileWidth,
           height: widget.height,
           color: const Color(0xFF263238),
           child: Stack(
@@ -2323,7 +2769,7 @@ class _GridTileItemState extends State<_GridTileItem> {
     if (isLocal) {
       imageWidget = Image.file(
         File(path),
-        width: widget.width,
+        width: tileWidth,
         height: widget.height,
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => const Center(
@@ -2338,7 +2784,7 @@ class _GridTileItemState extends State<_GridTileItem> {
         path,
         key: ValueKey(path),
         headers: headers,
-        width: widget.width,
+        width: tileWidth,
         height: widget.height,
         fit: BoxFit.cover,
         gaplessPlayback: true,
@@ -2366,9 +2812,20 @@ class _GridTileItemState extends State<_GridTileItem> {
 
     return GestureDetector(
       onTap: widget.onTap,
-      onLongPress: _sharePhoto,
+      onLongPress: () {
+        if (widget.isSelectionMode) {
+          widget.onToggleSelect?.call();
+        } else if (widget.onShowMessageActions != null) {
+          final box = context.findRenderObject() as RenderBox?;
+          final globalPos = box?.localToGlobal(Offset.zero) ?? Offset.zero;
+          final size = box?.size ?? const Size(200, 200);
+          widget.onShowMessageActions!(widget.photoMessage, globalPos, size);
+        } else {
+          _sharePhoto();
+        }
+      },
       child: Container(
-        width: widget.width,
+        width: tileWidth,
         height: widget.height,
         clipBehavior: Clip.antiAlias,
         decoration: const BoxDecoration(),
@@ -2377,9 +2834,10 @@ class _GridTileItemState extends State<_GridTileItem> {
     );
   }
 
-  Widget _buildThumbnailPlaceholder() {
+  Widget _buildThumbnailPlaceholder([double? width]) {
+    final tileWidth = width ?? widget.width ?? double.infinity;
     return Container(
-      width: widget.width,
+      width: tileWidth,
       height: widget.height,
       decoration: const BoxDecoration(
         gradient: LinearGradient(

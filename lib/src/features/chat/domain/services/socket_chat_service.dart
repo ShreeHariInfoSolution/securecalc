@@ -21,6 +21,8 @@ class SocketChatService {
       StreamController<Map<String, dynamic>>.broadcast();
   final _messageDeletedStreamController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _messageSavedStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _messageReactionStreamController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _readStreamController =
@@ -38,6 +40,8 @@ class SocketChatService {
       _messageEditedStreamController.stream;
   Stream<Map<String, dynamic>> get onMessageDeleted =>
       _messageDeletedStreamController.stream;
+  Stream<Map<String, dynamic>> get onMessageSaved =>
+      _messageSavedStreamController.stream;
   Stream<Map<String, dynamic>> get onMessageReaction =>
       _messageReactionStreamController.stream;
   Stream<Map<String, dynamic>> get onRead => _readStreamController.stream;
@@ -48,6 +52,10 @@ class SocketChatService {
       _presenceStreamController.stream;
 
   bool get isConnected => _socket?.connected == true;
+
+  /// Connection state notifier for real-time online/offline UI updates
+  final ValueNotifier<bool> connectionStateNotifier =
+      ValueNotifier<bool>(false);
 
   /// Connects to the backend Socket.IO endpoint using the active JWT.
   void connect() {
@@ -62,6 +70,7 @@ class SocketChatService {
       final currentSocketToken = _socket!.io.options?['auth']?['token'];
       if (currentSocketToken == token && _socket!.connected) {
         debugPrint('[SOCKET] Already connected with active user token.');
+        connectionStateNotifier.value = true;
         return;
       }
       debugPrint(
@@ -85,6 +94,7 @@ class SocketChatService {
 
     _socket!.onConnect((_) {
       debugPrint('[SOCKET] Connected successfully! Socket ID: ${_socket!.id}');
+      connectionStateNotifier.value = true;
       try {
         _socket!.emit('presence', {'status': 'online', 'is_online': true});
         _socket!.emit('user_online', {'is_online': true});
@@ -93,14 +103,17 @@ class SocketChatService {
 
     _socket!.onDisconnect((reason) {
       debugPrint('[SOCKET] Disconnected from server. Reason: $reason');
+      connectionStateNotifier.value = false;
     });
 
     _socket!.onConnectError((error) {
       debugPrint('[SOCKET] Connection Error Details: $error');
+      connectionStateNotifier.value = false;
     });
 
     _socket!.onError((err) {
       debugPrint('[SOCKET] General Socket Error Details: $err');
+      connectionStateNotifier.value = false;
     });
 
     // ─── Server -> Client Event Listeners ────────────────────────────────────
@@ -165,6 +178,11 @@ class SocketChatService {
             !normalized.contains('delet') &&
             !normalized.contains('reaction') &&
             !normalized.contains('read') &&
+            !normalized.contains('save') &&
+            !normalized.contains('saved') &&
+            !normalized.contains('pin') &&
+            !normalized.contains('mute') &&
+            !normalized.contains('deliver') &&
             eventName != 'realtime.newMessage' &&
             eventName != 'new_message' &&
             eventName != 'newMessage') {
@@ -186,6 +204,20 @@ class SocketChatService {
       debugPrint('[SOCKET] Event message_deleted: $data');
       if (data is Map) {
         _messageDeletedStreamController.add(Map<String, dynamic>.from(data));
+      }
+    });
+
+    // 3b. Message Saved
+    _socket!.on('message_saved', (data) {
+      debugPrint('[SOCKET] Event message_saved: $data');
+      if (data is Map) {
+        _messageSavedStreamController.add(Map<String, dynamic>.from(data));
+      }
+    });
+    _socket!.on('message_unsaved', (data) {
+      debugPrint('[SOCKET] Event message_unsaved: $data');
+      if (data is Map) {
+        _messageSavedStreamController.add(Map<String, dynamic>.from(data));
       }
     });
 
@@ -237,6 +269,13 @@ class SocketChatService {
   }
 
   void disconnect() {
+    connectionStateNotifier.value = false;
+    if (_socket != null && _socket!.connected) {
+      try {
+        _socket!.emit('presence', {'status': 'offline', 'is_online': false});
+        _socket!.emit('user_offline', {'is_online': false});
+      } catch (_) {}
+    }
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;

@@ -30,6 +30,30 @@ class ChatDetailHeader extends StatelessWidget {
     this.onCallTap,
   });
 
+  static String _formatHeaderLastSeen(DateTime? dateTime) {
+    if (dateTime == null) return 'Offline';
+    final now = DateTime.now();
+    final local = dateTime.toLocal();
+    final today = DateTime(now.year, now.month, now.day);
+    final targetDay = DateTime(local.year, local.month, local.day);
+
+    final hour24 = local.hour;
+    final hour = hour24 > 12 ? hour24 - 12 : (hour24 == 0 ? 12 : hour24);
+    final min = local.minute.toString().padLeft(2, '0');
+    final period = hour24 >= 12 ? 'PM' : 'AM';
+    final timeStr = '$hour:$min $period';
+
+    if (targetDay == today) {
+      return 'Last seen today at $timeStr';
+    } else if (targetDay == today.subtract(const Duration(days: 1))) {
+      return 'Last seen yesterday at $timeStr';
+    } else {
+      final dayStr = local.day.toString().padLeft(2, '0');
+      final monthStr = local.month.toString().padLeft(2, '0');
+      return 'Last seen $dayStr/$monthStr/${local.year} at $timeStr';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -204,17 +228,32 @@ class ChatDetailHeader extends StatelessWidget {
                                       valueListenable: isPeerOnline,
                                       builder: (context, online, _) {
                                         final String statusText;
-                                        final Color statusColor;
+                                        final Color textColor;
+                                        final Color dotColor;
 
                                         if (typing) {
                                           statusText = 'typing...';
-                                          statusColor = const Color(0xFF34C759);
+                                          textColor = const Color(0xFF007AFF);
+                                          dotColor = const Color(0xFF007AFF);
                                         } else if (online) {
                                           statusText = 'Online';
-                                          statusColor = const Color(0xFF34C759);
+                                          textColor = const Color(0xFF34C759);
+                                          dotColor = const Color(0xFF34C759);
                                         } else {
-                                          statusText = 'Last seen recently';
-                                          statusColor = const Color(0xFF8E8E93);
+                                          final lastSeenTime =
+                                              liveConv?.lastSeenAt ??
+                                              liveConv?.lastActivityAt ??
+                                              conversation.lastSeenAt ??
+                                              conversation.lastActivityAt;
+                                          statusText = _formatHeaderLastSeen(
+                                            lastSeenTime,
+                                          );
+                                          textColor = isDark
+                                              ? const Color(0xFFEBEBF5)
+                                              : const Color(0xFF3C3C43);
+                                          dotColor = isDark
+                                              ? Colors.grey.shade400
+                                              : Colors.grey.shade600;
                                         }
 
                                         return Row(
@@ -224,17 +263,19 @@ class ChatDetailHeader extends StatelessWidget {
                                               width: 7,
                                               height: 7,
                                               decoration: BoxDecoration(
-                                                color: statusColor,
+                                                color: dotColor,
                                                 shape: BoxShape.circle,
                                               ),
                                             ),
                                             const SizedBox(width: 5),
-                                            Text(
-                                              statusText,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                                color: statusColor,
+                                            Expanded(
+                                              child: AutoScrollingText(
+                                                text: statusText,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: textColor,
+                                                ),
                                               ),
                                             ),
                                           ],
@@ -369,6 +410,118 @@ class GlassButton extends StatelessWidget {
         width: width,
         height: height,
         child: GlassSurface(radius: radius, isDark: isDark, child: child),
+      ),
+    );
+  }
+}
+
+/// A widget that automatically scrolls text horizontally if it overflows its constrained width.
+class AutoScrollingText extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+  final Duration pauseDuration;
+
+  const AutoScrollingText({
+    super.key,
+    required this.text,
+    required this.style,
+    this.pauseDuration = const Duration(milliseconds: 1500),
+  });
+
+  @override
+  State<AutoScrollingText> createState() => _AutoScrollingTextState();
+}
+
+class _AutoScrollingTextState extends State<AutoScrollingText> {
+  final ScrollController _scrollController = ScrollController();
+  bool _isLooping = false;
+  bool _disposed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startScrollLoop());
+  }
+
+  @override
+  void didUpdateWidget(covariant AutoScrollingText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text || oldWidget.style != widget.style) {
+      _resetAndScroll();
+    }
+  }
+
+  void _resetAndScroll() {
+    if (_disposed) return;
+    _isLooping = false;
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(0.0);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startScrollLoop());
+  }
+
+  Future<void> _startScrollLoop() async {
+    if (_disposed || _isLooping || !mounted) return;
+    _isLooping = true;
+
+    while (mounted && !_disposed) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!mounted || _disposed || !_scrollController.hasClients) break;
+
+      final maxScroll = _scrollController.position.maxScrollExtent;
+      if (maxScroll <= 0) {
+        _isLooping = false;
+        return;
+      }
+
+      // 1. Initial pause at the start
+      await Future.delayed(widget.pauseDuration);
+      if (!mounted || _disposed || !_scrollController.hasClients) break;
+
+      // 2. Smoothly scroll to the end
+      final duration = Duration(
+        milliseconds: (maxScroll * 40).clamp(1500, 8000).toInt(),
+      );
+      await _scrollController.animateTo(
+        maxScroll,
+        duration: duration,
+        curve: Curves.easeInOut,
+      );
+      if (!mounted || _disposed || !_scrollController.hasClients) break;
+
+      // 3. Pause at the end
+      await Future.delayed(widget.pauseDuration);
+      if (!mounted || _disposed || !_scrollController.hasClients) break;
+
+      // 4. Smoothly scroll back to the start
+      await _scrollController.animateTo(
+        0.0,
+        duration: duration,
+        curve: Curves.easeInOut,
+      );
+    }
+
+    _isLooping = false;
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      controller: _scrollController,
+      scrollDirection: Axis.horizontal,
+      physics: const NeverScrollableScrollPhysics(),
+      child: Text(
+        widget.text,
+        style: widget.style,
+        maxLines: 1,
+        softWrap: false,
       ),
     );
   }
