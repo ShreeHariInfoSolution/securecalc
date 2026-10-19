@@ -1291,12 +1291,15 @@ class _ChatDetailPageState extends State<ChatDetailPage>
               children: [
                 Icon(icon, size: 20, color: color ?? primaryText),
                 const SizedBox(width: 14),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: color ?? primaryText,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
+                Expanded(
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: color ?? primaryText,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
               ],
@@ -1352,54 +1355,64 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                           color: cardColor,
                           elevation: 8,
                           borderRadius: BorderRadius.circular(28),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
+                          clipBehavior: Clip.antiAlias,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: screen.width * 0.82,
                             ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                ...emojiItems.map(
-                                  (emoji) => InkWell(
-                                    borderRadius: BorderRadius.circular(20),
-                                    onTap: messageId == null
-                                        ? null
-                                        : () {
-                                            HapticFeedback.lightImpact();
-                                            Navigator.pop(dialogContext);
-                                            _reactToMessage(message, emoji);
-                                          },
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 6,
-                                      ),
-                                      child: Text(
-                                        emoji,
-                                        style: const TextStyle(
-                                          fontSize: 24,
-                                          decoration: TextDecoration.none,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 3,
+                              ),
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                physics: const BouncingScrollPhysics(),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    ...emojiItems.map(
+                                      (emoji) => InkWell(
+                                        borderRadius: BorderRadius.circular(20),
+                                        onTap: messageId == null
+                                            ? null
+                                            : () {
+                                                HapticFeedback.lightImpact();
+                                                Navigator.pop(dialogContext);
+                                                _reactToMessage(message, emoji);
+                                              },
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 6,
+                                          ),
+                                          child: Text(
+                                            emoji,
+                                            style: const TextStyle(
+                                              fontSize: 24,
+                                              decoration: TextDecoration.none,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      tooltip: 'More reactions',
+                                      onPressed: () {
+                                        HapticFeedback.lightImpact();
+                                        Navigator.pop(dialogContext);
+                                        _showMoreReactions(message);
+                                      },
+                                      icon: const Icon(
+                                        Icons.add_circle_outline_rounded,
+                                        size: 26,
+                                        color: AppTheme.subtitleGrey,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                IconButton(
-                                  visualDensity: VisualDensity.compact,
-                                  tooltip: 'More reactions',
-                                  onPressed: () {
-                                    HapticFeedback.lightImpact();
-                                    Navigator.pop(dialogContext);
-                                    _showMoreReactions(message);
-                                  },
-                                  icon: const Icon(
-                                    Icons.add_circle_outline_rounded,
-                                    size: 26,
-                                    color: AppTheme.subtitleGrey,
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                           ),
                         ),
