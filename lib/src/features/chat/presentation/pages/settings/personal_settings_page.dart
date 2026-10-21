@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
+import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
@@ -60,7 +61,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
           children: [
             const Icon(Icons.check_circle_rounded, color: Colors.white),
             const SizedBox(width: 8),
-            Expanded(child: Text(message)),
+            Expanded(child: Text(AppToast.userFriendlyMessage(message))),
           ],
         ),
         backgroundColor: AppTheme.primaryColor,
@@ -325,13 +326,31 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
       }
     } catch (e) {
       debugPrint('[PROFILE PICK ERROR] $e');
-      _showToast('Unable to pick image: $e');
+      _showToast(AppToast.userFriendlyMessage('Unable to pick image: $e'));
     } finally {
       AppPreferences.isPickerActive = false;
     }
   }
 
+  Future<void> _removeProfileImage() async {
+    try {
+      await ServerApiService.instance.deleteProfileImage();
+      await AppPreferences.setProfileImagePath('');
+      if (mounted) {
+        setState(() {
+          _profileImagePath = null;
+        });
+        _showToast('Profile picture removed');
+      }
+    } catch (e) {
+      _showToast('Failed to remove profile picture: $e');
+    }
+  }
+
   void _showImagePickerOptions() {
+    final hasPhoto = (_profileImagePath != null && _profileImagePath!.isNotEmpty) ||
+        (AppPreferences.getProfileImagePath()?.isNotEmpty == true);
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -340,7 +359,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
       builder: (context) {
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(20.0),
+            padding: const EdgeInsets.symmetric(vertical: 20.0, horizontal: 16.0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
@@ -374,20 +393,49 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                   },
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
-                    children: const [
+                    children: [
                       CircleAvatar(
                         radius: 26,
-                        backgroundColor: Color(0x1F007AFF),
-                        child: Icon(
+                        backgroundColor: const Color(0x1F007AFF),
+                        child: const Icon(
                           Icons.camera_alt_rounded,
                           color: Color(0xFF007AFF),
                         ),
                       ),
-                      SizedBox(height: 8),
-                      Text('Camera', style: TextStyle(fontSize: 12)),
+                      const SizedBox(height: 8),
+                      const Text('Camera', style: TextStyle(fontSize: 12)),
                     ],
                   ),
                 ),
+                if (hasPhoto)
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.pop(context);
+                      _removeProfileImage();
+                    },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircleAvatar(
+                          radius: 26,
+                          backgroundColor:
+                              Colors.redAccent.withValues(alpha: 0.15),
+                          child: const Icon(
+                            Icons.delete_outline_rounded,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Remove',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),

@@ -220,9 +220,9 @@ class ServerApiService {
       if (res.statusCode == 401 ||
           res.statusCode == 400 ||
           res.statusCode == 404) {
-        throw Exception('Wrong credentials');
+        throw Exception('Invalid phone, email, or password. Please try again.');
       }
-      String cleanError = 'Wrong credentials';
+      String cleanError = 'Invalid phone, email, or password. Please try again.';
       try {
         final decoded = jsonDecode(res.body);
         if (decoded is Map) {
@@ -253,6 +253,53 @@ class ServerApiService {
       return auth;
     } else {
       String cleanError = 'Device login failed';
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          cleanError =
+              decoded['message'] ??
+              decoded['error'] ??
+              decoded['msg'] ??
+              cleanError;
+        }
+      } catch (_) {}
+      throw Exception(cleanError);
+    }
+  }
+
+  /// Swaps/migrates device key on the server (`POST /api/auth/swap-device`).
+  /// Transfers account data from [oldDeviceKey] to [newDeviceKey] and saves the session.
+  Future<AuthResponseModel> swapDevice({
+    required String oldDeviceKey,
+    required String newDeviceKey,
+  }) async {
+    final body = {
+      'old_device_key': oldDeviceKey,
+      'new_device_key': newDeviceKey,
+    };
+
+    final res = await http.post(
+      Uri.parse('$baseUrl/auth/swap-device'),
+      headers: _headers(requiresAuth: false),
+      body: jsonEncode(body),
+    );
+
+    if (res.statusCode == 200 || res.statusCode == 201) {
+      final json = jsonDecode(res.body);
+      AuthResponseModel auth;
+      try {
+        auth = AuthResponseModel.fromJson(json);
+        if (auth.token.isNotEmpty) {
+          await saveSession(auth.token, auth.user.id, user: auth.user);
+          return auth;
+        }
+      } catch (_) {}
+
+      // Fallback: If swap endpoint returns success status without full token, call deviceLogin with new key
+      auth = await deviceLogin(newDeviceKey);
+      return auth;
+    } else {
+      String cleanError = 'Device backup restore failed';
       try {
         final decoded = jsonDecode(res.body);
         if (decoded is Map) {
@@ -356,6 +403,39 @@ class ServerApiService {
     }
   }
 
+  /// Removes profile image on the server (`DELETE /api/users/me/avatar`).
+  Future<UserModel?> deleteProfileImage() async {
+    try {
+      final uri = Uri.parse('$baseUrl/users/me/avatar');
+      final res = await http.delete(
+        uri,
+        headers: _headers(),
+      );
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final decoded = jsonDecode(res.body);
+        final data = decoded['data'] is Map<String, dynamic>
+            ? decoded['data'] as Map<String, dynamic>
+            : decoded is Map<String, dynamic>
+            ? decoded
+            : <String, dynamic>{};
+
+        final updatedUser = UserModel.fromJson(data);
+        _currentUser = updatedUser;
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_authUserKey, jsonEncode(updatedUser.toJson()));
+
+        await AppPreferences.setProfileImagePath('');
+
+        return updatedUser;
+      }
+    } catch (e) {
+      debugPrint('[API] Delete Profile Image Error: $e');
+    }
+    return null;
+  }
+
   // ─── Users Endpoints ───────────────────────────────────────────────────────
 
   Future<List<UserModel>> searchUsers(String query) async {
@@ -423,7 +503,7 @@ class ServerApiService {
           totalPages: readInt(data is Map ? data['total_pages'] : null, 1),
         );
       }
-      throw Exception('Get User List Failed (${res.statusCode}): ${res.body}');
+      throw Exception('Unable to load user list. Please try again.');
     } catch (e) {
       debugPrint('[API] Get User List Error: $e');
       rethrow;
@@ -489,7 +569,7 @@ class ServerApiService {
           );
         }
       }
-      throw Exception('Get Chats Failed (${res.statusCode}): ${res.body}');
+      throw Exception('Unable to load chats. Please try again.');
     } catch (e) {
       debugPrint('[API] Get Chats Page Error (page=$page): $e');
       rethrow;
@@ -566,9 +646,7 @@ class ServerApiService {
       debugPrint(
         '[API ERROR] Create Direct Chat Failed (${res.statusCode}): ${res.body}',
       );
-      throw Exception(
-        'Create Direct Chat Error (${res.statusCode}): ${res.body}',
-      );
+      throw Exception('Unable to create direct chat. Please try again.');
     }
   }
 
@@ -619,7 +697,7 @@ class ServerApiService {
       debugPrint(
         '[API ERROR] Create Group Failed (${res.statusCode}): ${res.body}',
       );
-      throw Exception('Create Group Error (${res.statusCode}): ${res.body}');
+      throw Exception('Unable to create group. Please try again.');
     }
   }
 
@@ -712,7 +790,7 @@ class ServerApiService {
         final data = decoded['data'] is Map ? decoded['data'] : decoded;
         return data['background_url']?.toString();
       } else {
-        throw Exception('Failed to update background: ${response.statusCode}');
+        throw Exception('Failed to update background image. Please try again.');
       }
     } catch (e) {
       debugPrint('[API] Upload Chat Background Error: $e');
@@ -760,7 +838,7 @@ class ServerApiService {
             : json;
         return ServerMessagesPageModel.fromJson(data);
       }
-      throw Exception('Load Messages Failed (${res.statusCode}): ${res.body}');
+      throw Exception('Unable to load chat messages. Please try again.');
     } catch (e) {
       debugPrint('[API] Get Messages Page Error ($chatId, page=$page): $e');
       rethrow;
@@ -835,9 +913,7 @@ class ServerApiService {
         debugPrint(
           '[API ERROR] Send Message with File Failed (${res.statusCode}): ${res.body}',
         );
-        throw Exception(
-          'Send Message REST Error (${res.statusCode}): ${res.body}',
-        );
+        throw Exception('Failed to send attachment. Please try again.');
       }
     } else {
       final body = {
@@ -872,9 +948,7 @@ class ServerApiService {
         debugPrint(
           '[API ERROR] Send Message Failed (${res.statusCode}): ${res.body}',
         );
-        throw Exception(
-          'Send Message REST Error (${res.statusCode}): ${res.body}',
-        );
+        throw Exception('Failed to send message. Please try again.');
       }
     }
   }
@@ -1043,9 +1117,7 @@ class ServerApiService {
             : json;
         return UploadsResponseModel.fromJson(data, requestedFolder: folder);
       } else {
-        throw Exception(
-          'Failed to load $folder items (${res.statusCode}): ${res.body}',
-        );
+        throw Exception('Failed to load $folder files. Please try again.');
       }
     } catch (e) {
       debugPrint('[API] Get Uploads Error ($folder): $e');

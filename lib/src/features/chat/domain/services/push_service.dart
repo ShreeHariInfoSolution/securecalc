@@ -89,8 +89,46 @@ Future<void> _ensureLocalInit({
 
 Future<void> _showLocal(RemoteMessage m) async {
   final d = m.data;
-  final chatIdStr = (d['chat_id'] ?? d['chatId'] ?? d['id'])?.toString();
-  if (chatIdStr != null) {
+
+  // 1. Suppress notification if message was sent by the current user
+  final currentUserId = ServerApiService.instance.currentUserId?.toString();
+  final senderId = (d['sender_id'] ??
+          d['senderId'] ??
+          d['sender_user_id'] ??
+          d['from_id'] ??
+          d['fromId'] ??
+          d['user_id'] ??
+          d['userId'])
+      ?.toString();
+
+  if (currentUserId != null &&
+      senderId != null &&
+      currentUserId == senderId) {
+    debugPrint(
+      '[Push Diagnostic] Suppressing notification for outgoing message sent by current user ($currentUserId)',
+    );
+    return;
+  }
+
+  // 2. Suppress notification if user is currently inside the active chat screen
+  final chatIdStr = (d['chat_id'] ??
+          d['chatId'] ??
+          d['chat_head_id'] ??
+          d['chatHeadId'] ??
+          d['id'])
+      ?.toString();
+  final chatIdInt = int.tryParse(chatIdStr ?? '');
+
+  if (chatIdInt != null &&
+      (PushService.instance.isChatOpen?.call(chatIdInt) ?? false)) {
+    debugPrint(
+      '[Push Diagnostic] User is currently inside active chat $chatIdInt. Suppressing notification banner.',
+    );
+    return;
+  }
+
+  // 3. Suppress notification for muted or archived chats
+  if (chatIdStr != null && chatIdStr.isNotEmpty) {
     try {
       final conversations =
           LocalChatStorage.instance.conversationsNotifier.value;
@@ -149,9 +187,6 @@ Future<void> _showNotificationWithDetails({
   debugPrint(
     '[Push Diagnostic] Preparing notification ($id): title="$title", sound="$soundKey" ($soundFileName)',
   );
-
-  // Trigger app-side sound tone ring
-  unawaited(playNotificationSound());
 
   try {
     final soundChannel = AndroidNotificationChannel(
@@ -267,7 +302,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   // If message has a notification payload, OS handles it natively when app is killed/background
   if (message.notification != null) {
     debugPrint('[Push Diagnostic BACKGROUND] Message has notification payload. Handled natively by OS.');
-    if (Platform.isIOS) return;
+    return;
   }
 
   await _ensureLocalInit();
@@ -354,8 +389,30 @@ class PushService {
         debugPrint(
           '[Push Diagnostic FOREGROUND] Received FCM message: data=${m.data}, title=${m.notification?.title}',
         );
+        final d = m.data;
+
+        // Check if message was sent by current user
+        final currentUserId = ServerApiService.instance.currentUserId?.toString();
+        final senderId = (d['sender_id'] ??
+                d['senderId'] ??
+                d['sender_user_id'] ??
+                d['from_id'] ??
+                d['fromId'] ??
+                d['user_id'] ??
+                d['userId'])
+            ?.toString();
+
+        if (currentUserId != null &&
+            senderId != null &&
+            currentUserId == senderId) {
+          debugPrint(
+            '[Push Diagnostic FOREGROUND] Message was sent by current user. Suppressing notification.',
+          );
+          return;
+        }
+
         final chatId = int.tryParse(
-          '${m.data['chat_id'] ?? m.data['chatHeadId'] ?? ''}',
+          '${d['chat_id'] ?? d['chatId'] ?? d['chat_head_id'] ?? d['chatHeadId'] ?? d['id'] ?? ''}',
         );
         if (chatId != null && (this.isChatOpen?.call(chatId) ?? false)) {
           debugPrint(
@@ -367,7 +424,6 @@ class PushService {
           debugPrint(
             '[Push Diagnostic FOREGROUND] iOS notification presented natively via APNs banner.',
           );
-          await playNotificationSound();
           return;
         }
         await _showLocal(m);

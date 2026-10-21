@@ -132,6 +132,20 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                               isDark: isDark,
                               targetPage: const MediaAutoDownloadSettingsPage(),
                             ),
+                            // Divider(
+                            //   height: 1,
+                            //   indent: 52,
+                            //   color: isDark
+                            //       ? Colors.white.withValues(alpha: 0.08)
+                            //       : Colors.black.withValues(alpha: 0.06),
+                            // ),
+                            // _buildSettingListTile(
+                            //   context: context,
+                            //   title: 'Emergency & Vault Zone',
+                            //   icon: Icons.warning_amber_rounded,
+                            //   isDark: isDark,
+                            //   targetPage: const EmergencySettingsPage(),
+                            // ),
                             Divider(
                               height: 1,
                               indent: 52,
@@ -141,21 +155,7 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                             ),
                             _buildSettingListTile(
                               context: context,
-                              title: 'Emergency & Vault Zone',
-                              icon: Icons.warning_amber_rounded,
-                              isDark: isDark,
-                              targetPage: const EmergencySettingsPage(),
-                            ),
-                            Divider(
-                              height: 1,
-                              indent: 52,
-                              color: isDark
-                                  ? Colors.white.withValues(alpha: 0.08)
-                                  : Colors.black.withValues(alpha: 0.06),
-                            ),
-                            _buildSettingListTile(
-                              context: context,
-                              title: 'Help & Support / Device Key',
+                              title: 'Help & Support & Backup',
                               icon: Icons.help_outline_rounded,
                               isDark: isDark,
                               targetPage: const HelpSupportPage(),
@@ -220,11 +220,12 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                             size: 22,
                           ),
                           title: const Text(
-                            'Log Out of Server Session',
+                            'LOG OUT',
                             style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.bold,
                               color: Colors.redAccent,
+                              letterSpacing: 0.5,
                             ),
                           ),
                           trailing: const Icon(

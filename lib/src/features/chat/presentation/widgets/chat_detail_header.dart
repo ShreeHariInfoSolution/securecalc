@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../../../core/widgets/ios_avatar.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/services/local_chat_storage.dart';
+import '../../domain/services/presence_store.dart';
 
 class ChatDetailHeader extends StatelessWidget {
   final ChatConversation conversation;
@@ -189,15 +190,26 @@ class ChatDetailHeader extends StatelessWidget {
                       behavior: HitTestBehavior.opaque,
                       child: Row(
                         children: [
-                          ValueListenableBuilder<bool>(
-                            valueListenable: isPeerOnline,
-                            builder: (context, online, _) {
-                              return IosAvatar(
-                                name: displayChatName,
-                                imagePath: displayChatAvatar,
-                                isOnline: online,
-                                size: 42,
-                                showOnline: true,
+                          ValueListenableBuilder<Map<int, PresenceState>>(
+                            valueListenable: PresenceStore.instance.presenceNotifier,
+                            builder: (context, presenceMap, _) {
+                              return ValueListenableBuilder<bool>(
+                                valueListenable: isPeerOnline,
+                                builder: (context, online, _) {
+                                  final peerId = liveConv?.peerUserId ??
+                                      conversation.peerUserId ??
+                                      (conversation.isGroup ? null : int.tryParse(conversation.id));
+                                  final presence = PresenceStore.instance.getPresence(peerId);
+                                  final isOnline = presence != null ? presence.isOnline : (liveConv?.isOnline ?? online);
+
+                                  return IosAvatar(
+                                    name: displayChatName,
+                                    imagePath: displayChatAvatar,
+                                    isOnline: isOnline,
+                                    size: 42,
+                                    showOnline: true,
+                                  );
+                                },
                               );
                             },
                           ),
@@ -224,61 +236,78 @@ class ChatDetailHeader extends StatelessWidget {
                                 ValueListenableBuilder<bool>(
                                   valueListenable: isPeerTyping,
                                   builder: (context, typing, _) {
-                                    return ValueListenableBuilder<bool>(
-                                      valueListenable: isPeerOnline,
-                                      builder: (context, online, _) {
-                                        final String statusText;
-                                        final Color textColor;
-                                        final Color dotColor;
+                                    return ValueListenableBuilder<Map<int, PresenceState>>(
+                                      valueListenable: PresenceStore.instance.presenceNotifier,
+                                      builder: (context, presenceMap, _) {
+                                        return ValueListenableBuilder<bool>(
+                                          valueListenable: isPeerOnline,
+                                          builder: (context, online, _) {
+                                            final presence = PresenceStore.instance.getPresenceForChat(
+                                              peerUserId: liveConv?.peerUserId ?? conversation.peerUserId,
+                                              chatId: liveConv?.id ?? conversation.id,
+                                              isGroup: liveConv?.isGroup ?? conversation.isGroup,
+                                            );
 
-                                        if (typing) {
-                                          statusText = 'typing...';
-                                          textColor = const Color(0xFF007AFF);
-                                          dotColor = const Color(0xFF007AFF);
-                                        } else if (online) {
-                                          statusText = 'Online';
-                                          textColor = const Color(0xFF34C759);
-                                          dotColor = const Color(0xFF34C759);
-                                        } else {
-                                          final lastSeenTime =
-                                              liveConv?.lastSeenAt ??
-                                              liveConv?.lastActivityAt ??
-                                              conversation.lastSeenAt ??
-                                              conversation.lastActivityAt;
-                                          statusText = _formatHeaderLastSeen(
-                                            lastSeenTime,
-                                          );
-                                          textColor = isDark
-                                              ? const Color(0xFFEBEBF5)
-                                              : const Color(0xFF3C3C43);
-                                          dotColor = isDark
-                                              ? Colors.grey.shade400
-                                              : Colors.grey.shade600;
-                                        }
+                                            final String statusText;
+                                            final Color textColor;
+                                            final Color dotColor;
 
-                                        return Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Container(
-                                              width: 7,
-                                              height: 7,
-                                              decoration: BoxDecoration(
-                                                color: dotColor,
-                                                shape: BoxShape.circle,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 5),
-                                            Expanded(
-                                              child: AutoScrollingText(
-                                                text: statusText,
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: textColor,
+                                            final isOnline = presence != null ? presence.isOnline : (liveConv?.isOnline ?? online);
+
+                                            if (typing) {
+                                              statusText = 'typing...';
+                                              textColor = const Color(0xFF007AFF);
+                                              dotColor = const Color(0xFF007AFF);
+                                            } else if (isOnline) {
+                                              statusText = 'online';
+                                              textColor = const Color(0xFF34C759);
+                                              dotColor = const Color(0xFF34C759);
+                                            } else {
+                                              if (presence != null) {
+                                                statusText = presence.formattedLastSeen();
+                                              } else {
+                                                final lastSeenTime =
+                                                    liveConv?.lastSeenAt ??
+                                                    liveConv?.lastActivityAt ??
+                                                    conversation.lastSeenAt ??
+                                                    conversation.lastActivityAt;
+                                                statusText = _formatHeaderLastSeen(
+                                                  lastSeenTime,
+                                                );
+                                              }
+                                              textColor = isDark
+                                                  ? const Color(0xFFEBEBF5)
+                                                  : const Color(0xFF3C3C43);
+                                              dotColor = isDark
+                                                  ? Colors.grey.shade400
+                                                  : Colors.grey.shade600;
+                                            }
+
+                                            return Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Container(
+                                                  width: 7,
+                                                  height: 7,
+                                                  decoration: BoxDecoration(
+                                                    color: dotColor,
+                                                    shape: BoxShape.circle,
+                                                  ),
                                                 ),
-                                              ),
-                                            ),
-                                          ],
+                                                const SizedBox(width: 5),
+                                                Expanded(
+                                                  child: AutoScrollingText(
+                                                    text: statusText,
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      fontWeight: FontWeight.w600,
+                                                      color: textColor,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            );
+                                          },
                                         );
                                       },
                                     );

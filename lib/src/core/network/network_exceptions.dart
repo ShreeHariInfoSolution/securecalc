@@ -1,10 +1,10 @@
 /// Base network exception.
 class NetworkException implements Exception {
   final String message;
-  NetworkException([this.message = 'Network error occurred']);
+  NetworkException([this.message = 'Network error occurred. Please check your connection.']);
 
   @override
-  String toString() => 'NetworkException: $message';
+  String toString() => message;
 }
 
 /// Exception thrown when API returns a non-200 status code.
@@ -18,5 +18,5 @@ class ApiException implements Exception {
   });
 
   @override
-  String toString() => 'ApiException [$statusCode]: $message';
+  String toString() => message.isNotEmpty ? message : 'Server error occurred ($statusCode).';
 }

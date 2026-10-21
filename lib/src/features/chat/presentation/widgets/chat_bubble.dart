@@ -22,6 +22,7 @@ import '../../domain/services/e2e_crypto_service.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/attachment_cache_service.dart';
 import 'photo_gallery_viewer.dart';
+import 'rich_link_preview_card.dart';
 import 'app_video_player.dart';
 
 class ChatBubble extends StatefulWidget {
@@ -221,16 +222,18 @@ class _ChatBubbleState extends State<ChatBubble> {
         return;
       }
 
-      bool shouldAutoDownload = false;
+      String mediaType = 'doc';
       if (_isImage) {
-        shouldAutoDownload = AppPreferences.getAutoDownloadImages();
+        mediaType = 'image';
       } else if (_isVideo) {
-        shouldAutoDownload = AppPreferences.getAutoDownloadVideos();
-      } else {
-        shouldAutoDownload = AppPreferences.getAutoDownloadDocs();
+        mediaType = 'video';
       }
 
-      if (shouldAutoDownload) {
+      final shouldAuto = await AppPreferences.shouldAutoDownload(
+        mediaType: mediaType,
+      );
+
+      if (shouldAuto) {
         unawaited(_autoDownloadAndReveal());
       } else {
         if (mounted) {
@@ -461,9 +464,9 @@ class _ChatBubbleState extends State<ChatBubble> {
         bytes: await File(path).readAsBytes(),
       );
       if (savedUri == null) return;
-      AppToast.show('$_attachmentName saved.');
+      AppToast.show('$_attachmentName saved successfully.');
     } catch (error) {
-      AppToast.show('Could not download attachment: $error', isError: true);
+      AppToast.show(AppToast.userFriendlyMessage('Could not download attachment: $error'), isError: true);
     } finally {
       AppPreferences.isPickerActive = false;
     }
@@ -479,7 +482,7 @@ class _ChatBubbleState extends State<ChatBubble> {
         });
       }
     } catch (error) {
-      AppToast.show('Could not download photo: $error', isError: true);
+      AppToast.show(AppToast.userFriendlyMessage('Could not download photo: $error'), isError: true);
     }
   }
 
@@ -512,7 +515,7 @@ class _ChatBubbleState extends State<ChatBubble> {
       }
       await OpenFilex.open(path);
     } catch (error) {
-      AppToast.show('Could not open attachment: $error', isError: true);
+      AppToast.show(AppToast.userFriendlyMessage('Could not open attachment: $error'), isError: true);
     }
   }
 
@@ -535,7 +538,7 @@ class _ChatBubbleState extends State<ChatBubble> {
       }
       await player.play(DeviceFileSource(path));
     } catch (error) {
-      AppToast.show('Could not play voice message: $error', isError: true);
+      AppToast.show(AppToast.userFriendlyMessage('Could not play voice message: $error'), isError: true);
     }
   }
 
@@ -611,103 +614,116 @@ class _ChatBubbleState extends State<ChatBubble> {
         ),
         if (widget.isMe) ...[
           const SizedBox(width: 3),
-          Icon(
-            (widget.isRead || widget.isDelivered)
-                ? Icons.done_all_rounded
-                : Icons.done_rounded,
-            size: 13,
-            color: widget.isRead
-                ? const Color(0xFF53BDEB)
-                : Colors.white.withValues(alpha: 0.8),
-          ),
+          _buildStatusTick(isDark),
         ],
       ],
     );
   }
 
-  Widget _buildReplyMediaThumbnail(ChatMessage msg, bool isDark) {
-    final url = msg.mediaUrl;
-    final type = msg.type.toLowerCase();
-
-    if (type.startsWith('image/') ||
-        type == 'image' ||
-        (url != null &&
-            [
-              'jpg',
-              'jpeg',
-              'png',
-              'gif',
-              'webp',
-              'heic',
-            ].contains(url.split('.').last.split('?').first.toLowerCase()))) {
-      if (url != null && url.isNotEmpty) {
-        return FutureBuilder<String?>(
-          future: AttachmentCacheService.instance.resolveLocalPath(url),
-          builder: (context, snapshot) {
-            final localPath = snapshot.data;
-            if (localPath != null && localPath.isNotEmpty) {
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: Image.file(
-                  File(localPath),
-                  width: 32,
-                  height: 32,
-                  fit: BoxFit.cover,
-                ),
-              );
-            }
-            final resolved = _resolveRemoteMediaUrl(url);
-            return ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: ImageFiltered(
-                imageFilter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                child: Image.network(
-                  resolved,
-                  width: 32,
-                  height: 32,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    width: 32,
-                    height: 32,
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFF3F51B5), Color(0xFF7E57C2)],
-                      ),
-                    ),
-                    child: const Icon(
-                      Icons.image_outlined,
-                      size: 16,
-                      color: Colors.white70,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      }
-      return Container(
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF3F51B5), Color(0xFF7E57C2)],
-          ),
-        ),
-        child: const Icon(
-          Icons.image_outlined,
-          size: 16,
-          color: Colors.white70,
-        ),
+  Widget _buildStatusTick(bool isDark) {
+    if (widget.isRead) {
+      return const Icon(
+        Icons.done_all_rounded,
+        size: 14,
+        color: Color(0xFF53BDEB),
       );
     }
 
-    if (type.startsWith('video/') || type == 'video') {
+    if (widget.isDelivered) {
+      return Icon(
+        Icons.done_all_rounded,
+        size: 14,
+        color: widget.isMe
+            ? Colors.white.withValues(alpha: 0.8)
+            : (isDark ? Colors.white60 : AppTheme.subtitleGrey),
+      );
+    }
+
+    return Icon(
+      Icons.done_rounded,
+      size: 14,
+      color: widget.isMe
+          ? Colors.white.withValues(alpha: 0.8)
+          : (isDark ? Colors.white60 : AppTheme.subtitleGrey),
+    );
+  }
+
+  Widget _buildReplyMediaThumbnail(ChatMessage msg, bool isDark) {
+    if (!msg.hasMedia) return const SizedBox.shrink();
+
+    final url = msg.mediaUrl;
+    final type = msg.type.toLowerCase();
+
+    final isImage = type.contains('image') ||
+        type == 'photo' ||
+        (url != null &&
+            ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].any(
+                (ext) => url.toLowerCase().split('?').first.endsWith('.$ext')));
+
+    final isVideo = type.contains('video') ||
+        (url != null &&
+            ['mp4', 'mov', 'avi', 'mkv'].any(
+                (ext) => url.toLowerCase().split('?').first.endsWith('.$ext')));
+
+    final isAudio = type.contains('audio') ||
+        type.contains('voice') ||
+        (url != null &&
+            ['m4a', 'mp3', 'wav', 'aac'].any(
+                (ext) => url.toLowerCase().split('?').first.endsWith('.$ext')));
+
+    if (isImage && url != null && url.isNotEmpty) {
+      return FutureBuilder<String?>(
+        future: AttachmentCacheService.instance.resolveLocalPath(url),
+        builder: (context, snapshot) {
+          final localPath = snapshot.data;
+          if (localPath != null &&
+              localPath.isNotEmpty &&
+              File(localPath).existsSync()) {
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.file(
+                File(localPath),
+                width: 32,
+                height: 32,
+                fit: BoxFit.cover,
+              ),
+            );
+          }
+          final resolved = _resolveRemoteMediaUrl(url);
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+              child: Image.network(
+                resolved,
+                width: 32,
+                height: 32,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(
+                    Icons.photo_rounded,
+                    size: 16,
+                    color: AppTheme.primaryColor,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    if (isVideo) {
       return _buildReplyIconBadge(Icons.play_circle_fill_rounded);
     }
 
-    if (type.startsWith('audio/') || type == 'audio') {
+    if (isAudio) {
       return _buildReplyIconBadge(Icons.mic_rounded);
     }
 
@@ -830,9 +846,7 @@ class _ChatBubbleState extends State<ChatBubble> {
                       ],
                     ),
                   ),
-                  if (widget.repliedMessage != null &&
-                      (widget.repliedMessage!.mediaUrl?.isNotEmpty == true ||
-                          widget.repliedMessage!.type != 'text')) ...[
+                  if (widget.repliedMessage != null && widget.repliedMessage!.hasMedia) ...[
                     const SizedBox(width: 6),
                     _buildReplyMediaThumbnail(widget.repliedMessage!, isDark),
                   ],
@@ -977,6 +991,14 @@ class _ChatBubbleState extends State<ChatBubble> {
     return spans;
   }
 
+  Widget _buildLinkPreviewCard(String urlStr, bool isDark) {
+    return RichLinkPreviewCard(
+      url: urlStr,
+      isMe: widget.isMe,
+      isDark: isDark,
+    );
+  }
+
   Widget _buildExpandableTextMessage(
     BuildContext context,
     bool isDark,
@@ -987,46 +1009,113 @@ class _ChatBubbleState extends State<ChatBubble> {
     final isLongParagraph = text.length > 320 || lines.length > 6;
     final textSpans = _buildHighlightedTextSpans(text, textColor, isDark);
 
-    if (!isLongParagraph) {
-      return RichText(
-        text: TextSpan(
-          style: TextStyle(
-            color: textColor,
-            fontSize: 17.0,
-            height: 1.17,
-            fontWeight: FontWeight.w400,
-            fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
-          ),
-          children: [
-            ...textSpans,
-            const TextSpan(text: '    '),
-            WidgetSpan(
-              alignment: PlaceholderAlignment.middle,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 2.0),
-                child: _buildTimestampWidget(isDark),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
+    final linkRegex = RegExp(r'(https?://[^\s]+|www\.[^\s]+)', caseSensitive: false);
+    final matches = linkRegex.allMatches(text);
+    final hasLink = matches.isNotEmpty;
+    final firstLink = hasLink ? text.substring(matches.first.start, matches.first.end) : null;
 
-    if (!_isExpanded) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            text,
-            maxLines: 6,
-            overflow: TextOverflow.ellipsis,
+    Widget buildTextBody() {
+      if (!isLongParagraph) {
+        return RichText(
+          text: TextSpan(
             style: TextStyle(
               color: textColor,
               fontSize: 17.0,
               height: 1.17,
               fontWeight: FontWeight.w400,
               fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
+            ),
+            children: [
+              ...textSpans,
+              const TextSpan(text: '    '),
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2.0),
+                  child: _buildTimestampWidget(isDark),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+
+      if (!_isExpanded) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              text,
+              maxLines: 6,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 17.0,
+                height: 1.17,
+                fontWeight: FontWeight.w400,
+                fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                GestureDetector(
+                  onTap: () => setState(() => _isExpanded = true),
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 2.0,
+                      horizontal: 2.0,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'More',
+                          style: TextStyle(
+                            color: widget.isMe
+                                ? Colors.white.withValues(alpha: 0.95)
+                                : AppTheme.primaryColor,
+                            fontSize: 14.0,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 16,
+                          color: widget.isMe
+                              ? Colors.white.withValues(alpha: 0.95)
+                              : AppTheme.primaryColor,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                _buildTimestampWidget(isDark),
+              ],
+            ),
+          ],
+        );
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          RichText(
+            text: TextSpan(
+              style: TextStyle(
+                color: textColor,
+                fontSize: 17.0,
+                height: 1.17,
+                fontWeight: FontWeight.w400,
+                fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
+              ),
+              children: textSpans,
             ),
           ),
           const SizedBox(height: 4),
@@ -1035,7 +1124,7 @@ class _ChatBubbleState extends State<ChatBubble> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               GestureDetector(
-                onTap: () => setState(() => _isExpanded = true),
+                onTap: () => setState(() => _isExpanded = false),
                 behavior: HitTestBehavior.opaque,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -1046,19 +1135,19 @@ class _ChatBubbleState extends State<ChatBubble> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        'More',
+                        'Less',
                         style: TextStyle(
                           color: widget.isMe
                               ? Colors.white.withValues(alpha: 0.95)
                               : AppTheme.primaryColor,
                           fontSize: 14.0,
-                          fontWeight: FontWeight.bold
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                       const SizedBox(width: 2),
                       Icon(
-                        CupertinoIcons.chevron_down,
-                        size: 13,
+                        Icons.keyboard_arrow_up_rounded,
+                        size: 16,
                         color: widget.isMe
                             ? Colors.white.withValues(alpha: 0.95)
                             : AppTheme.primaryColor,
@@ -1074,66 +1163,16 @@ class _ChatBubbleState extends State<ChatBubble> {
       );
     }
 
+    if (!hasLink) {
+      return buildTextBody();
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        RichText(
-          text: TextSpan(
-            text: text,
-            style: TextStyle(
-              color: textColor,
-              fontSize: 17.0,
-              height: 1.17,
-              fontWeight: FontWeight.w400,
-              fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
-            ),
-            children: [
-              const TextSpan(text: '    '),
-              WidgetSpan(
-                alignment: PlaceholderAlignment.middle,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2.0),
-                  child: _buildTimestampWidget(isDark),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 4),
-        GestureDetector(
-          onTap: () => setState(() => _isExpanded = false),
-          behavior: HitTestBehavior.opaque,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              vertical: 2.0,
-              horizontal: 2.0,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Show less',
-                  style: TextStyle(
-                    color: widget.isMe
-                        ? Colors.white.withValues(alpha: 0.90)
-                        : AppTheme.primaryColor,
-                    fontSize: 13.0,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(width: 2),
-                Icon(
-                  CupertinoIcons.chevron_up,
-                  size: 12,
-                  color: widget.isMe
-                      ? Colors.white.withValues(alpha: 0.90)
-                      : AppTheme.primaryColor,
-                ),
-              ],
-            ),
-          ),
-        ),
+        buildTextBody(),
+        _buildLinkPreviewCard(firstLink!, isDark),
       ],
     );
   }

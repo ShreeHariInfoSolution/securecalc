@@ -21,6 +21,7 @@ import '../../domain/services/server_chat_manager.dart';
 import '../widgets/photo_gallery_viewer.dart';
 import '../widgets/app_video_player.dart';
 import 'chat_wallpaper_page.dart';
+import 'chat_media_gallery_page.dart';
 import 'share/share_qr_page.dart';
 import 'starred_messages_page.dart';
 
@@ -698,24 +699,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     return '${count.toStringAsFixed(count < 10 && i > 0 ? 1 : 0)} ${suffixes[i]}';
   }
 
-  int get _imageCount => _mediaItems.where((x) => x.folder == 'image').length;
-  int get _videoCount => _mediaItems.where((x) => x.folder == 'video').length;
-  int get _audioCount => _mediaItems.where((x) => x.folder == 'audio').length;
-  int get _docCount => _mediaItems.where((x) => x.folder == 'doc').length;
 
-  List<ChatMediaItem> get _filteredMediaItems {
-    return _mediaItems.where((item) {
-      if (item.folder != _selectedFolder) return false;
-      if (_directionFilter == 'sent' && !item.isMe) return false;
-      if (_directionFilter == 'received' && item.isMe) return false;
-      if (_searchQuery.trim().isNotEmpty) {
-        return item.fileName.toLowerCase().contains(
-          _searchQuery.trim().toLowerCase(),
-        );
-      }
-      return true;
-    }).toList();
-  }
 
   Future<void> _clearChat() async {
     final shouldClear = await showDialog<bool>(
@@ -880,7 +864,11 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       if (mounted) {
         setState(() => _updatingMembers = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not add members: $error')),
+          SnackBar(
+            content: Text(
+              AppToast.userFriendlyMessage('Could not add members: $error'),
+            ),
+          ),
         );
       }
     }
@@ -1022,8 +1010,13 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     } catch (e) {
       debugPrint('[DOC OPEN ERROR] $e');
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not open file: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppToast.userFriendlyMessage('Could not open file: $e'),
+            ),
+          ),
+        );
       }
     }
   }
@@ -1204,14 +1197,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                             label: 'Email',
                             value: peers.first.email!,
                           ),
-                        if ((peers.first.phone ?? '').isEmpty &&
-                            (peers.first.email ?? '').isEmpty)
-                          const _InfoRow(
-                            icon: Icons.person_outline_rounded,
-                            label: 'Contact',
-                            value: 'Calculator Chat user',
-                            last: true,
-                          ),
+                        // if ((peers.first.phone ?? '').isEmpty &&
+                        //     (peers.first.email ?? '').isEmpty)
+                        //   const _InfoRow(
+                        //     icon: Icons.person_outline_rounded,
+                        //     label: 'Contact',
+                        //     value: 'Calculator Chat user',
+                        //     last: true,
+                        //   ),
                       ],
                     ),
 
@@ -1494,8 +1487,6 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
 
   // ─── MEDIA BUILDER WIDGET ──────────────────────────────────────────────────
   Widget _buildMediaSection(Color surface, bool isDark) {
-    final filteredItems = _filteredMediaItems;
-
     return Container(
       decoration: BoxDecoration(
         color: surface,
@@ -1516,7 +1507,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
-                  'Media, Docs & Files',
+                  'Media, Docs & Links',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -1537,22 +1528,30 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
               ),
               const SizedBox(width: 8),
               GestureDetector(
-                onTap: () =>
-                    setState(() => _isMediaExpanded = !_isMediaExpanded),
-                child: Row(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ChatMediaGalleryPage(
+                        title: widget.conversation.name,
+                        mediaItems: _mediaItems,
+                        messages: widget.conversation.messages,
+                      ),
+                    ),
+                  );
+                },
+                child: const Row(
                   children: [
                     Text(
-                      _isMediaExpanded ? 'View Less' : 'View All',
-                      style: const TextStyle(
+                      'View All',
+                      style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: AppTheme.primaryColor,
                       ),
                     ),
                     Icon(
-                      _isMediaExpanded
-                          ? Icons.keyboard_arrow_up_rounded
-                          : Icons.keyboard_arrow_right_rounded,
+                      Icons.chevron_right_rounded,
                       size: 18,
                       color: AppTheme.primaryColor,
                     ),
@@ -1562,117 +1561,8 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
             ],
           ),
 
-          if (!_isMediaExpanded) ...[
-            _buildCompactMediaRow(isDark),
-          ] else ...[
-            const SizedBox(height: 14),
-
-            // Folder Category Selector Tabs (Images | Videos | Audio | Docs)
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _buildFolderTab(
-                    'image',
-                    'Images',
-                    CupertinoIcons.photo,
-                    _imageCount,
-                    isDark,
-                  ),
-                  const SizedBox(width: 8),
-                  _buildFolderTab(
-                    'video',
-                    'Videos',
-                    CupertinoIcons.video_camera,
-                    _videoCount,
-                    isDark,
-                  ),
-                  const SizedBox(width: 8),
-                  _buildFolderTab(
-                    'audio',
-                    'Audio',
-                    CupertinoIcons.music_note,
-                    _audioCount,
-                    isDark,
-                  ),
-                  const SizedBox(width: 8),
-                  _buildFolderTab(
-                    'doc',
-                    'Docs',
-                    CupertinoIcons.doc_text,
-                    _docCount,
-                    isDark,
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // Direction Filter Chips (All | Sent 📤 | Received 📥)
-            Row(
-              children: [
-                _buildFilterChip('all', 'All'),
-                const SizedBox(width: 6),
-                _buildFilterChip('sent', 'Sent 📤'),
-                const SizedBox(width: 6),
-                _buildFilterChip('received', 'Received 📥'),
-              ],
-            ),
-
-            const SizedBox(height: 12),
-
-            // Media Content Area
-            if (_loadingMedia) ...[
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              ),
-            ] else if (filteredItems.isEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 28),
-                child: Center(
-                  child: Column(
-                    children: [
-                      Icon(
-                        _selectedFolder == 'image'
-                            ? CupertinoIcons.photo_on_rectangle
-                            : _selectedFolder == 'video'
-                            ? CupertinoIcons.video_camera
-                            : _selectedFolder == 'audio'
-                            ? CupertinoIcons.music_note
-                            : CupertinoIcons.doc,
-                        size: 38,
-                        color: AppTheme.subtitleGrey.withValues(alpha: 0.5),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'No ${_selectedFolder == 'doc' ? 'documents' : '${_selectedFolder}s'} ${_directionFilter == 'all'
-                            ? 'found'
-                            : _directionFilter == 'sent'
-                            ? 'sent'
-                            : 'received'}.',
-                        style: const TextStyle(
-                          color: AppTheme.subtitleGrey,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ] else ...[
-              // Type-wise View Rendering
-              if (_selectedFolder == 'image')
-                _buildImagesGrid(filteredItems)
-              else if (_selectedFolder == 'video')
-                _buildVideosGrid(filteredItems)
-              else if (_selectedFolder == 'audio')
-                _buildAudioList(filteredItems, isDark)
-              else
-                _buildDocsList(filteredItems, isDark),
-            ],
-          ],
+          const SizedBox(height: 12),
+          _buildCompactMediaRow(isDark),
         ],
       ),
     );
@@ -1844,427 +1734,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     );
   }
 
-  Widget _buildFolderTab(
-    String key,
-    String label,
-    IconData icon,
-    int count,
-    bool isDark,
-  ) {
-    final isSelected = _selectedFolder == key;
-    return InkWell(
-      onTap: () => setState(() => _selectedFolder = key),
-      borderRadius: BorderRadius.circular(12),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? AppTheme.primaryColor
-              : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7)),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 15,
-              color: isSelected ? Colors.white : AppTheme.subtitleGrey,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                color: isSelected
-                    ? Colors.white
-                    : (isDark ? Colors.white70 : Colors.black87),
-              ),
-            ),
-            if (count > 0) ...[
-              const SizedBox(width: 5),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? Colors.white24
-                      : AppTheme.subtitleGrey.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '$count',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: isSelected ? Colors.white : AppTheme.subtitleGrey,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
 
-  Widget _buildFilterChip(String key, String label) {
-    final isSelected = _directionFilter == key;
-    return GestureDetector(
-      onTap: () => setState(() => _directionFilter = key),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? AppTheme.primaryColor.withValues(alpha: 0.18)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected
-                ? AppTheme.primaryColor
-                : AppTheme.subtitleGrey.withValues(alpha: 0.3),
-            width: 1,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-            color: isSelected ? AppTheme.primaryColor : AppTheme.subtitleGrey,
-          ),
-        ),
-      ),
-    );
-  }
-
-  // 1. Image Grid
-  Widget _buildImagesGrid(List<ChatMediaItem> items) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: items.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 6,
-        mainAxisSpacing: 6,
-        childAspectRatio: 1.0,
-      ),
-      itemBuilder: (context, index) {
-        final item = items[index];
-
-        return GestureDetector(
-          onTap: () => _openImageGallery(item),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                _ChatMediaThumbnail(rawUrl: item.rawUrl),
-
-                // Direction Pill Tag (Sent / Received)
-                Positioned(
-                  top: 4,
-                  right: 4,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.65),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          item.isMe
-                              ? Icons.arrow_upward_rounded
-                              : Icons.arrow_downward_rounded,
-                          size: 10,
-                          color: item.isMe
-                              ? Colors.lightBlueAccent
-                              : Colors.lightGreenAccent,
-                        ),
-                        const SizedBox(width: 2),
-                        Text(
-                          item.isMe ? 'Sent' : 'Recv',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // 2. Video Grid
-  Widget _buildVideosGrid(List<ChatMediaItem> items) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: items.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 6,
-        mainAxisSpacing: 6,
-        childAspectRatio: 1.0,
-      ),
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return GestureDetector(
-          onTap: () => _openDocument(item),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-              color: Colors.black87,
-              child: Stack(
-                fit: StackFit.expand,
-                alignment: Alignment.center,
-                children: [
-                  VideoThumbnailCard(
-                    mediaUrl: item.rawUrl,
-                    width: double.infinity,
-                    height: double.infinity,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        item.isMe ? 'Sent' : 'Recv',
-                        style: TextStyle(
-                          color: item.isMe
-                              ? Colors.lightBlueAccent
-                              : Colors.lightGreenAccent,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // 3. Audio List
-  Widget _buildAudioList(List<ChatMediaItem> items, bool isDark) {
-    return Column(
-      children: [
-        for (final item in items)
-          Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: () => _toggleAudio(item),
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: const BoxDecoration(
-                      color: AppTheme.primaryColor,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      (_currentlyPlayingAudioUrl == item.fullUrl &&
-                              _isPlayingAudio)
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 22,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.fileName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Icon(
-                            item.isMe
-                                ? Icons.arrow_upward_rounded
-                                : Icons.arrow_downward_rounded,
-                            size: 11,
-                            color: item.isMe
-                                ? AppTheme.primaryColor
-                                : Colors.green,
-                          ),
-                          const SizedBox(width: 3),
-                          Text(
-                            item.isMe
-                                ? 'Sent by You'
-                                : 'Received from ${item.senderName}',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: AppTheme.subtitleGrey,
-                            ),
-                          ),
-                          if (item.fileSize > 0) ...[
-                            const Text(
-                              ' · ',
-                              style: TextStyle(
-                                color: AppTheme.subtitleGrey,
-                                fontSize: 11,
-                              ),
-                            ),
-                            Text(
-                              _formatFileSize(item.fileSize),
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: AppTheme.subtitleGrey,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  // 4. Docs List
-  Widget _buildDocsList(List<ChatMediaItem> items, bool isDark) {
-    return Column(
-      children: [
-        for (final item in items)
-          InkWell(
-            onTap: () => _openDocument(item),
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? const Color(0xFF2C2C2E)
-                    : const Color(0xFFF2F2F7),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  _buildDocTypeIcon(item.fileName),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item.fileName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 5,
-                                vertical: 1,
-                              ),
-                              decoration: BoxDecoration(
-                                color:
-                                    (item.isMe
-                                            ? AppTheme.primaryColor
-                                            : Colors.green)
-                                        .withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                item.isMe ? 'Sent' : 'Received',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: item.isMe
-                                      ? AppTheme.primaryColor
-                                      : Colors.green,
-                                ),
-                              ),
-                            ),
-                            if (item.fileSize > 0) ...[
-                              const SizedBox(width: 6),
-                              Text(
-                                _formatFileSize(item.fileSize),
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: AppTheme.subtitleGrey,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(width: 6),
-                            Text(
-                              '${item.createdAt.day}/${item.createdAt.month}/${item.createdAt.year}',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: AppTheme.subtitleGrey,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Icon(
-                    Icons.download_for_offline_outlined,
-                    color: AppTheme.primaryColor,
-                    size: 22,
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
 
   Widget _buildDocTypeIcon(String name) {
     final ext = name.split('.').last.toLowerCase();

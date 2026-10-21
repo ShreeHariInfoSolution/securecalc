@@ -8,7 +8,7 @@ import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/features/chat/domain/services/attachment_cache_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
 
-/// Opens a full screen modal profile picture preview with zoom and change options.
+/// Opens a full screen profile picture viewer showing the full square/rectangular image with zoom.
 void showFullProfilePictureDialog(
   BuildContext context, {
   required String name,
@@ -17,37 +17,62 @@ void showFullProfilePictureDialog(
 }) {
   HapticFeedback.lightImpact();
 
+  final resolvedImage = resolveAvatarUrl(imagePath);
+  final hasNetworkImage = resolvedImage != null &&
+      (resolvedImage.startsWith('http://') ||
+          resolvedImage.startsWith('https://'));
+  final hasLocalImage = resolvedImage != null && !hasNetworkImage;
+
   showGeneralDialog(
     context: context,
     barrierDismissible: true,
     barrierLabel: 'ViewProfilePic',
-    barrierColor: Colors.black.withValues(alpha: 0.88),
+    barrierColor: Colors.black.withValues(alpha: 0.92),
     transitionDuration: const Duration(milliseconds: 250),
     pageBuilder: (dialogContext, anim1, anim2) {
+      final screenSize = MediaQuery.of(dialogContext).size;
+
+      Widget imageWidget;
+      if (hasLocalImage) {
+        imageWidget = Image.file(
+          File(resolvedImage),
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) =>
+              _buildFallbackInitials(name, 260),
+        );
+      } else if (hasNetworkImage) {
+        imageWidget = _FullNetworkImage(
+          url: resolvedImage,
+          name: name,
+        );
+      } else {
+        imageWidget = _buildFallbackInitials(name, 260);
+      }
+
       return Material(
-        color: Colors.transparent,
+        color: Colors.black,
         child: SafeArea(
           child: Stack(
             children: [
-              // Center Image with Interactive Zoom
+              // Full Screen Zoomable Image (Unclipped Square/Original Aspect)
               Center(
                 child: InteractiveViewer(
-                  maxScale: 4.0,
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    child: IosAvatar(
-                      name: name,
-                      imagePath: imagePath,
-                      size: 280,
-                      showOnline: false,
+                  minScale: 1.0,
+                  maxScale: 5.0,
+                  clipBehavior: Clip.none,
+                  child: SizedBox(
+                    width: screenSize.width,
+                    height: screenSize.height * 0.78,
+                    child: Center(
+                      child: imageWidget,
                     ),
                   ),
                 ),
               ),
 
-              // Top Bar: Name & Close Button
+              // Top Header Bar: Name & Close Button
               Positioned(
-                top: 16,
+                top: 12,
                 left: 16,
                 right: 16,
                 child: Row(
@@ -71,15 +96,18 @@ void showFullProfilePictureDialog(
                         backgroundColor: Colors.white24,
                         shape: const CircleBorder(),
                       ),
-                      icon: const Icon(Icons.close_rounded,
-                          color: Colors.white, size: 24),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: Colors.white,
+                        size: 24,
+                      ),
                       onPressed: () => Navigator.pop(dialogContext),
                     ),
                   ],
                 ),
               ),
 
-              // Bottom Bar: Optional Change Photo Button
+              // Bottom Action Bar: Change Photo
               if (onChangePhoto != null)
                 Positioned(
                   bottom: 24,
@@ -91,7 +119,9 @@ void showFullProfilePictureDialog(
                         backgroundColor: AppTheme.primaryColor,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 24, vertical: 12),
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(24),
                         ),
@@ -100,7 +130,9 @@ void showFullProfilePictureDialog(
                       label: const Text(
                         'Change Photo',
                         style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 14),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
                       ),
                       onPressed: () {
                         Navigator.pop(dialogContext);
@@ -121,6 +153,124 @@ void showFullProfilePictureDialog(
       );
     },
   );
+}
+
+Widget _buildFallbackInitials(String name, double size) {
+  final baseColor = _getDeterministicColor(name);
+  return Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      color: baseColor.withValues(alpha: 0.95),
+      borderRadius: BorderRadius.circular(16),
+    ),
+    alignment: Alignment.center,
+    child: Text(
+      _getInitials(name),
+      style: TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.bold,
+        fontSize: size * 0.36,
+        decoration: TextDecoration.none,
+      ),
+    ),
+  );
+}
+
+Color _getDeterministicColor(String text) {
+  const avatarColors = [
+    Color(0xFFFF6B6B),
+    Color(0xFF4ECDC4),
+    Color(0xFFA78BFA),
+    Color(0xFFF59E0B),
+    Color(0xFF10B981),
+    Color(0xFFF472B6),
+    Color(0xFF60A5FA),
+    Color(0xFFFB7185),
+  ];
+  if (text.isEmpty) return avatarColors[0];
+  int hash = 0;
+  for (int i = 0; i < text.length; i++) {
+    hash = text.codeUnitAt(i) + ((hash << 5) - hash);
+  }
+  return avatarColors[hash.abs() % avatarColors.length];
+}
+
+String _getInitials(String text) {
+  if (text.trim().isEmpty) return '?';
+  final parts = text.trim().split(RegExp(r'\s+'));
+  if (parts.length >= 2) {
+    return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+  }
+  return parts[0][0].toUpperCase();
+}
+
+class _FullNetworkImage extends StatefulWidget {
+  final String url;
+  final String name;
+
+  const _FullNetworkImage({
+    required this.url,
+    required this.name,
+  });
+
+  @override
+  State<_FullNetworkImage> createState() => _FullNetworkImageState();
+}
+
+class _FullNetworkImageState extends State<_FullNetworkImage> {
+  String? _localPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  Future<void> _resolve() async {
+    final cached = AttachmentCacheService.instance.resolveLocalPathSync(
+      widget.url,
+    );
+    if (cached != null) {
+      if (mounted) setState(() => _localPath = cached);
+      return;
+    }
+    final resolved = await AttachmentCacheService.instance.resolveLocalPath(
+      widget.url,
+    );
+    if (resolved != null) {
+      if (mounted) setState(() => _localPath = resolved);
+      return;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_localPath != null) {
+      return Image.file(
+        File(_localPath!),
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) =>
+            _buildFallbackInitials(widget.name, 260),
+      );
+    }
+
+    return Image.network(
+      widget.url,
+      fit: BoxFit.contain,
+      headers: ServerApiService.instance.authToken != null
+          ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
+          : null,
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) =>
+          _buildFallbackInitials(widget.name, 260),
+    );
+  }
 }
 
 String? resolveAvatarUrl(String? raw) {
@@ -145,7 +295,6 @@ String? resolveAvatarUrl(String? raw) {
     return '$origin$trimmed';
   }
   if (trimmed.startsWith('/')) {
-    // Check if it's an absolute local path (e.g. /data/user/0/...)
     if (trimmed.contains('/data/') || trimmed.contains('/storage/')) {
       return trimmed;
     }
@@ -164,7 +313,6 @@ String? resolveAvatarUrl(String? raw) {
     return '$origin/$clean';
   }
 
-  // If it's a typical local Windows or Android path like C:\ or /data/user/...
   if (RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(trimmed) ||
       trimmed.startsWith('/data/') ||
       trimmed.startsWith('/storage/') ||
@@ -191,35 +339,6 @@ class IosAvatar extends StatelessWidget {
     this.showOnline = true,
   });
 
-  static const List<Color> _avatarColors = [
-    Color(0xFFFF6B6B),
-    Color(0xFF4ECDC4),
-    Color(0xFFA78BFA),
-    Color(0xFFF59E0B),
-    Color(0xFF10B981),
-    Color(0xFFF472B6),
-    Color(0xFF60A5FA),
-    Color(0xFFFB7185),
-  ];
-
-  Color _getDeterministicColor(String text) {
-    if (text.isEmpty) return _avatarColors[0];
-    int hash = 0;
-    for (int i = 0; i < text.length; i++) {
-      hash = text.codeUnitAt(i) + ((hash << 5) - hash);
-    }
-    return _avatarColors[hash.abs() % _avatarColors.length];
-  }
-
-  String _getInitials(String text) {
-    if (text.trim().isEmpty) return '?';
-    final parts = text.trim().split(RegExp(r'\s+'));
-    if (parts.length >= 2) {
-      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    }
-    return parts[0][0].toUpperCase();
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -227,8 +346,7 @@ class IosAvatar extends StatelessWidget {
     final badgeSize = size > 44 ? 14.0 : 10.0;
 
     final resolvedImage = resolveAvatarUrl(imagePath);
-    final hasNetworkImage =
-        resolvedImage != null &&
+    final hasNetworkImage = resolvedImage != null &&
         (resolvedImage.startsWith('http://') ||
             resolvedImage.startsWith('https://'));
     final hasLocalImage = resolvedImage != null && !hasNetworkImage;
@@ -407,7 +525,6 @@ class _CachedNetworkAvatarState extends State<_CachedNetworkAvatar> {
       return;
     }
 
-    // Download and cache locally
     try {
       final headers = ServerApiService.instance.authToken != null
           ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
@@ -454,9 +571,6 @@ class _CachedNetworkAvatarState extends State<_CachedNetworkAvatar> {
       );
     }
 
-    // Avoid briefly starting a second network image on every list rebuild.
-    // The resolver above writes the avatar to local storage once, then this
-    // widget uses that local file on subsequent app launches.
     return widget.fallback;
   }
 }

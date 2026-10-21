@@ -87,6 +87,7 @@ class UserModel {
   final String? keyIv;
   final bool isOnline;
   final String? lastSeenAt;
+  final String? lastSeenText;
 
   String get username => name;
   String get avatarUrl => avatar ?? '';
@@ -104,6 +105,7 @@ class UserModel {
     this.keyIv,
     this.isOnline = false,
     this.lastSeenAt,
+    this.lastSeenText,
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -172,6 +174,7 @@ class UserModel {
           json['isOnline'] == 'true' ||
           json['isOnline'] == '1',
       lastSeenAt: (json['last_seen_at'] ?? json['lastSeenAt'])?.toString(),
+      lastSeenText: (json['last_seen_text'] ?? json['lastSeenText'])?.toString(),
     );
   }
 
@@ -645,6 +648,8 @@ class ServerMessageModel {
   final String? chatReact;
   final bool isRead;
   final bool isDelivered;
+  final String status;
+  final String? deliveredAt;
   final bool isEdited;
   final bool isDeleted;
   final bool isSaved;
@@ -667,6 +672,8 @@ class ServerMessageModel {
     this.chatReact,
     this.isRead = false,
     this.isDelivered = false,
+    this.status = 'sent',
+    this.deliveredAt,
     this.isEdited = false,
     this.isDeleted = false,
     this.isSaved = false,
@@ -735,6 +742,12 @@ class ServerMessageModel {
         rawStatus == 'seen' ||
         (rawId is int ? rawId > 0 : (int.tryParse(rawId?.toString() ?? '') ?? 0) > 0);
 
+    final String statusVal = isReadVal
+        ? 'read'
+        : (isDeliveredVal
+            ? 'delivered'
+            : (rawStatus?.isNotEmpty == true ? rawStatus! : 'sent'));
+
     return ServerMessageModel(
       id: rawId is int ? rawId : int.tryParse(rawId?.toString() ?? '') ?? 0,
       chatHeadId: json['chat_head_id'] is int
@@ -765,6 +778,8 @@ class ServerMessageModel {
       chatReact: normalizeChatReaction(json['chat_react']),
       isRead: isReadVal,
       isDelivered: isDeliveredVal,
+      status: statusVal,
+      deliveredAt: (json['delivered_at'] ?? json['deliveredAt'])?.toString(),
       isEdited: json['is_edited'] == true || json['is_edited'] == 1,
       isDeleted: json['is_deleted'] == true || json['is_deleted'] == 1,
       isSaved: json['is_saved'] == true || json['is_saved'] == 1,

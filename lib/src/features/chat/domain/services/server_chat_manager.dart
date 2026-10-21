@@ -10,6 +10,7 @@ import '../entities/chat_message.dart';
 import '../models/server_models.dart';
 import 'e2e_crypto_service.dart';
 import 'local_chat_storage.dart';
+import 'presence_store.dart';
 import 'server_api_service.dart';
 import 'socket_chat_service.dart';
 
@@ -906,6 +907,8 @@ class ServerChatManager {
   }
 
   Future<void> _handlePresenceEvent(Map<String, dynamic> event) async {
+    PresenceStore.instance.updatePresence(event);
+
     final data = event['data'] is Map
         ? Map<String, dynamic>.from(event['data'] as Map)
         : event;
@@ -937,7 +940,13 @@ class ServerChatManager {
 
     if (userId != null && userId > 0) {
       for (final c in conversations) {
-        if (c.peerUserId == userId) matchingChatIds.add(c.id);
+        final effectivePeerId =
+            c.peerUserId ?? (c.isGroup ? null : int.tryParse(c.id));
+        if (effectivePeerId != null && effectivePeerId == userId) {
+          matchingChatIds.add(c.id);
+        } else if (!c.isGroup && c.id == userId.toString()) {
+          matchingChatIds.add(c.id);
+        }
       }
     }
     if (chatHeadId != null && chatHeadId.isNotEmpty && chatHeadId != '0') {

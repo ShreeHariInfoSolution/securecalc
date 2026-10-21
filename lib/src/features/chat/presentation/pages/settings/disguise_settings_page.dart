@@ -203,66 +203,66 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
                                 );
                               },
                             ),
-                            Divider(
-                              height: 1,
-                              indent: 16,
-                              endIndent: 16,
-                              color: isDark
-                                  ? Colors.white.withValues(alpha: 0.08)
-                                  : Colors.black.withValues(alpha: 0.06),
-                            ),
-                            ListTile(
-                              title: const Text(
-                                'Disappearing Messages',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              subtitle: Text(
-                                'Auto-erase messages after: $_disappearingDuration',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: AppTheme.subtitleGrey,
-                                ),
-                              ),
-                              trailing: DropdownButton<String>(
-                                value: _disappearingDuration,
-                                underline: const SizedBox(),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: isDark ? Colors.white : Colors.black,
-                                ),
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: 'Off',
-                                    child: Text('Off'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: '1 hour',
-                                    child: Text('1 hour'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: '24 hours',
-                                    child: Text('24 hours'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: '7 days',
-                                    child: Text('7 days'),
-                                  ),
-                                ],
-                                onChanged: (val) {
-                                  if (val != null) {
-                                    setState(() => _disappearingDuration = val);
-                                    AppPreferences.setDisappearingTimer(val);
-                                    AppToast.show(
-                                      'Disappearing timer set to $val',
-                                    );
-                                  }
-                                },
-                              ),
-                            ),
+                            // Divider(
+                            //   height: 1,
+                            //   indent: 16,
+                            //   endIndent: 16,
+                            //   color: isDark
+                            //       ? Colors.white.withValues(alpha: 0.08)
+                            //       : Colors.black.withValues(alpha: 0.06),
+                            // ),
+                            // ListTile(
+                            //   title: const Text(
+                            //     'Disappearing Messages',
+                            //     style: TextStyle(
+                            //       fontSize: 14,
+                            //       fontWeight: FontWeight.bold,
+                            //     ),
+                            //   ),
+                            //   subtitle: Text(
+                            //     'Auto-erase messages after: $_disappearingDuration',
+                            //     style: const TextStyle(
+                            //       fontSize: 12,
+                            //       color: AppTheme.subtitleGrey,
+                            //     ),
+                            //   ),
+                            //   trailing: DropdownButton<String>(
+                            //     value: _disappearingDuration,
+                            //     underline: const SizedBox(),
+                            //     style: TextStyle(
+                            //       fontSize: 14,
+                            //       fontWeight: FontWeight.bold,
+                            //       color: isDark ? Colors.white : Colors.black,
+                            //     ),
+                            //     items: const [
+                            //       DropdownMenuItem(
+                            //         value: 'Off',
+                            //         child: Text('Off'),
+                            //       ),
+                            //       DropdownMenuItem(
+                            //         value: '1 hour',
+                            //         child: Text('1 hour'),
+                            //       ),
+                            //       DropdownMenuItem(
+                            //         value: '24 hours',
+                            //         child: Text('24 hours'),
+                            //       ),
+                            //       DropdownMenuItem(
+                            //         value: '7 days',
+                            //         child: Text('7 days'),
+                            //       ),
+                            //     ],
+                            //     onChanged: (val) {
+                            //       if (val != null) {
+                            //         setState(() => _disappearingDuration = val);
+                            //         AppPreferences.setDisappearingTimer(val);
+                            //         AppToast.show(
+                            //           'Disappearing timer set to $val',
+                            //         );
+                            //       }
+                            //     },
+                            //   ),
+                            // ),
                           ],
                         ),
                       ),

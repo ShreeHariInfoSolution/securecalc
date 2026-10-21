@@ -5,7 +5,9 @@ import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/typing_dots.dart';
 
 import '../../domain/entities/chat_conversation.dart';
+import '../../domain/entities/chat_message.dart';
 import '../../domain/services/bot_assistant_service.dart';
+import '../../domain/services/presence_store.dart';
 
 class ConversationTile extends StatelessWidget {
   final ChatConversation conversation;
@@ -37,10 +39,14 @@ class ConversationTile extends StatelessWidget {
     Color? statusColor;
 
     if (isLastMsgFromMe) {
-      if (lastMsg.isRead) {
+      final status = lastMsg!.messageStatus;
+      if (status == MessageStatus.sending) {
+        statusIcon = Icons.access_time_rounded;
+        statusColor = AppTheme.secondaryText(isDark);
+      } else if (status == MessageStatus.read) {
         statusIcon = Icons.done_all_rounded;
-        statusColor = const Color(0xFF34B7F1);
-      } else if (lastMsg.isDelivered) {
+        statusColor = const Color(0xFF53BDEB);
+      } else if (status == MessageStatus.delivered) {
         statusIcon = Icons.done_all_rounded;
         statusColor = AppTheme.secondaryText(isDark);
       } else {
@@ -77,22 +83,24 @@ class ConversationTile extends StatelessWidget {
                     const SizedBox(width: 8),
                   ],
 
-                  // iOS Avatar (Tap to view full profile picture)
-                  GestureDetector(
-                    onTap: () {
-                      showFullProfilePictureDialog(
-                        context,
+                  // iOS Avatar
+                  ValueListenableBuilder<Map<int, PresenceState>>(
+                    valueListenable: PresenceStore.instance.presenceNotifier,
+                    builder: (context, presenceMap, _) {
+                      final presence = PresenceStore.instance.getPresenceForChat(
+                        peerUserId: conversation.peerUserId,
+                        chatId: conversation.id,
+                        isGroup: conversation.isGroup,
+                      );
+                      final isOnline = presence != null ? presence.isOnline : conversation.isOnline;
+                      return IosAvatar(
                         name: conversation.name,
                         imagePath: conversation.avatarUrl,
+                        isOnline: isOnline,
+                        size: 54,
+                        showOnline: true,
                       );
                     },
-                    child: IosAvatar(
-                      name: conversation.name,
-                      imagePath: conversation.avatarUrl,
-                      isOnline: conversation.isOnline,
-                      size: 54,
-                      showOnline: true,
-                    ),
                   ),
                   const SizedBox(width: 12),
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
+import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
@@ -46,7 +47,7 @@ class _AuthPageState extends State<AuthPage> {
               color: Colors.white,
             ),
             const SizedBox(width: 8),
-            Expanded(child: Text(message)),
+            Expanded(child: Text(AppToast.userFriendlyMessage(message))),
           ],
         ),
       ),
@@ -98,7 +99,7 @@ class _AuthPageState extends State<AuthPage> {
       await ServerChatManager.instance.init();
       widget.onAuthSuccess();
     } catch (e) {
-      _showToast('Authentication failed: $e', isError: true);
+      _showToast(AppToast.userFriendlyMessage(e), isError: true);
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

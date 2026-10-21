@@ -7,6 +7,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/services/attachment_cache_service.dart';
+import '../../domain/services/server_api_service.dart';
 
 class ChatReplyBanner extends StatelessWidget {
   final ChatMessage replyingMessage;
@@ -24,95 +25,96 @@ class ChatReplyBanner extends StatelessWidget {
     required this.onCancel,
   });
 
+  String _resolveRemoteUrl(String rawUrl) {
+    if (rawUrl.isEmpty) return '';
+    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+      return rawUrl;
+    }
+    final apiBase = ServerApiService.baseUrl.replaceFirst(RegExp(r'/+$'), '');
+    final clean = rawUrl.replaceFirst(RegExp(r'^/+'), '');
+    if (clean.startsWith('api/files/')) {
+      return '$apiBase/${clean.substring(10)}';
+    }
+    if (clean.startsWith('files/')) {
+      return '$apiBase/$clean';
+    }
+    return '$apiBase/files/$clean';
+  }
+
   Widget _buildMediaThumbnail(bool isDark) {
     final url = replyingMessage.mediaUrl;
     final type = replyingMessage.type.toLowerCase();
 
-    if (type.startsWith('image/') ||
-        type == 'image' ||
+    final isImage = type.contains('image') ||
+        type == 'photo' ||
         (url != null &&
-            [
-              'jpg',
-              'jpeg',
-              'png',
-              'gif',
-              'webp',
-              'heic',
-            ].contains(url.split('.').last.split('?').first.toLowerCase()))) {
-      if (url != null && url.isNotEmpty) {
-        return FutureBuilder<String?>(
-          future: AttachmentCacheService.instance.resolveLocalPath(url),
-          builder: (context, snapshot) {
-            final localPath = snapshot.data;
-            if (localPath != null &&
-                localPath.isNotEmpty &&
-                File(localPath).existsSync()) {
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: Image.file(
-                  File(localPath),
-                  width: 36,
-                  height: 36,
-                  fit: BoxFit.cover,
-                ),
-              );
-            }
-            if (url.startsWith('http://') ||
-                url.startsWith('https://') ||
-                url.startsWith('uploads/')) {
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: ImageFiltered(
-                  imageFilter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                  child: Image.network(
-                    url,
-                    width: 36,
-                    height: 36,
-                    fit: BoxFit.cover,
-                    errorBuilder: (c, e, s) => Container(
-                      width: 36,
-                      height: 36,
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF3F51B5), Color(0xFF7E57C2)],
-                        ),
-                      ),
-                      child: const Icon(
-                        Icons.image_outlined,
-                        size: 18,
-                        color: Colors.white70,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }
-            return Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(6),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF3F51B5), Color(0xFF7E57C2)],
-                ),
-              ),
-              child: const Icon(
-                Icons.image_outlined,
-                size: 18,
-                color: Colors.white70,
+            ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].any(
+                (ext) => url.toLowerCase().split('?').first.endsWith('.$ext')));
+
+    final isVideo = type.contains('video') ||
+        (url != null &&
+            ['mp4', 'mov', 'avi', 'mkv'].any(
+                (ext) => url.toLowerCase().split('?').first.endsWith('.$ext')));
+
+    final isAudio = type.contains('audio') ||
+        type.contains('voice') ||
+        (url != null &&
+            ['m4a', 'mp3', 'wav', 'aac'].any(
+                (ext) => url.toLowerCase().split('?').first.endsWith('.$ext')));
+
+    if (isImage && url != null && url.isNotEmpty) {
+      return FutureBuilder<String?>(
+        future: AttachmentCacheService.instance.resolveLocalPath(url),
+        builder: (context, snapshot) {
+          final localPath = snapshot.data;
+          if (localPath != null &&
+              localPath.isNotEmpty &&
+              File(localPath).existsSync()) {
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.file(
+                File(localPath),
+                width: 36,
+                height: 36,
+                fit: BoxFit.cover,
               ),
             );
-          },
-        );
-      }
-      return _buildIconBadge(Icons.image_rounded, isDark);
+          }
+          final resolved = _resolveRemoteUrl(url);
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+              child: Image.network(
+                resolved,
+                width: 36,
+                height: 36,
+                fit: BoxFit.cover,
+                errorBuilder: (c, e, s) => Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(
+                    Icons.photo_rounded,
+                    size: 18,
+                    color: AppTheme.primaryColor,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
     }
 
-    if (type.startsWith('video/') || type == 'video') {
+    if (isVideo) {
       return _buildIconBadge(Icons.play_circle_fill_rounded, isDark);
     }
 
-    if (type.startsWith('audio/') || type == 'audio') {
+    if (isAudio) {
       return _buildIconBadge(Icons.mic_rounded, isDark);
     }
 
@@ -141,10 +143,7 @@ class ChatReplyBanner extends StatelessWidget {
         msgType == 'text' || msgType.contains('text') || !hasMediaUrl;
     final bool hasMedia = hasMediaUrl && !isTextMessage;
 
-    final displayContent = replyingMessage.content.trim().isNotEmpty &&
-            replyingMessage.content != '[Attachment]'
-        ? replyingMessage.content
-        : replyingMessage.previewText;
+    final displayContent = replyingMessage.previewText;
 
     return Container(
       width: double.infinity,
@@ -184,34 +183,14 @@ class ChatReplyBanner extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                Row(
-                  children: [
-                    if (hasMedia) ...[
-                      Icon(
-                        msgType.startsWith('image')
-                            ? Icons.photo_camera_rounded
-                            : msgType.startsWith('video')
-                                ? Icons.videocam_rounded
-                                : msgType.startsWith('audio')
-                                    ? Icons.mic_rounded
-                                    : Icons.attach_file_rounded,
-                        size: 13,
-                        color: AppTheme.subtitleGrey,
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                    Expanded(
-                      child: Text(
-                        displayContent,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppTheme.subtitleGrey,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
+                Text(
+                  displayContent,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTheme.subtitleGrey,
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ),

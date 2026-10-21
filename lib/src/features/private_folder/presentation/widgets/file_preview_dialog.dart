@@ -121,7 +121,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
   Future<void> _saveFileToDevice() async {
     final tempPath = await _downloadLocalFile();
     if (tempPath == null || !File(tempPath).existsSync()) {
-      AppToast.show('Failed to download file.');
+      AppToast.show('Failed to download file.', isError: true);
       return;
     }
 
@@ -162,7 +162,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
       AppToast.show('File saved to Downloads: $finalFileName');
     } catch (e) {
       debugPrint('[Preview] Save file error: $e');
-      AppToast.show('Failed to save file to device.');
+      AppToast.show('Failed to save file to device.', isError: true);
     }
   }
 
@@ -179,7 +179,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
         if (path != null && File(path).existsSync()) {
           await _audioPlayer!.play(DeviceFileSource(path));
         } else {
-          AppToast.show('Failed to download audio file for preview.');
+          AppToast.show('Failed to download audio file for preview.', isError: true);
         }
       }
     }
@@ -190,10 +190,10 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
     if (path != null) {
       final result = await OpenFilex.open(path);
       if (result.type != ResultType.done) {
-        AppToast.show('Cannot open file: ${result.message}');
+        AppToast.show('Cannot open file.', isError: true);
       }
     } else {
-      AppToast.show('Failed to download file for viewing.');
+      AppToast.show('Failed to download file for viewing.', isError: true);
     }
   }
 
@@ -202,7 +202,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
     if (path != null) {
       await Share.shareXFiles([XFile(path)], text: widget.item.fileName);
     } else {
-      AppToast.show('Failed to prepare file for sharing.');
+      AppToast.show('Failed to prepare file for sharing.', isError: true);
     }
   }
 

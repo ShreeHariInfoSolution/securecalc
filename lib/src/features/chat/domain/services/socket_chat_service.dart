@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
 import '../models/server_models.dart';
+import 'presence_store.dart';
 import 'server_api_service.dart';
 
 /// Manages real-time Socket.IO connection to https://synqerp.com/calculatorchat/
@@ -95,6 +96,7 @@ class SocketChatService {
     _socket!.onConnect((_) {
       debugPrint('[SOCKET] Connected successfully! Socket ID: ${_socket!.id}');
       connectionStateNotifier.value = true;
+      PresenceStore.instance.startTimer();
       try {
         _socket!.emit('presence', {'status': 'online', 'is_online': true});
         _socket!.emit('user_online', {'is_online': true});
@@ -261,7 +263,9 @@ class SocketChatService {
     _socket!.on('presence', (data) {
       debugPrint('[SOCKET] Event presence: $data');
       if (data is Map) {
-        _presenceStreamController.add(Map<String, dynamic>.from(data));
+        final mapData = Map<String, dynamic>.from(data);
+        PresenceStore.instance.updatePresence(mapData);
+        _presenceStreamController.add(mapData);
       }
     });
 

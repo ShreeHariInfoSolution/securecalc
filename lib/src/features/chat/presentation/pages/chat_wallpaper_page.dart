@@ -137,13 +137,13 @@ class _ChatWallpaperPageState extends State<ChatWallpaperPage> {
       }
 
       if (mounted) {
-        AppToast.show('Wallpaper updated!');
+        AppToast.show('Wallpaper updated successfully!');
         Navigator.of(context).pop();
       }
     } catch (e) {
       debugPrint('Wallpaper apply error: $e');
       if (mounted) {
-        AppToast.show('Failed to update wallpaper');
+        AppToast.show('Failed to update wallpaper. Please try again.', isError: true);
       }
     } finally {
       if (mounted) {

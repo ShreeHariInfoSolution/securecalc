@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// iOS Style Header matching Screenshots 1, 2, 3, 4 with Panic pill button.
+/// Clean Settings Header.
 class CompactSettingsHeader extends StatelessWidget {
   final String title;
   final bool showBackButton;
@@ -61,44 +61,6 @@ class CompactSettingsHeader extends StatelessWidget {
                 fontWeight: FontWeight.bold,
                 letterSpacing: -0.4,
                 color: isDark ? Colors.white : Colors.black,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Panic Yellow Pill Button matching Screenshots 1-4
-          GestureDetector(
-            onTap: () {
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFEF3C7),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: const Color(0xFFFDE68A),
-                  width: 1,
-                ),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.lock_outline_rounded,
-                    size: 14,
-                    color: Color(0xFFD97706),
-                  ),
-                  SizedBox(width: 4),
-                  Text(
-                    'Panic',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFFD97706),
-                    ),
-                  ),
-                ],
               ),
             ),
           ),

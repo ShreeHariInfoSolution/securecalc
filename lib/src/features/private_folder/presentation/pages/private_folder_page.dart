@@ -290,7 +290,10 @@ class _PrivateFolderPageState extends State<PrivateFolderPage> {
         await _uploadFileToVault(File(file.path));
       }
     } catch (e) {
-      AppToast.show('Error selecting image: $e');
+      AppToast.show(
+        AppToast.userFriendlyMessage('Error selecting image: $e'),
+        isError: true,
+      );
     } finally {
       AppPreferences.isPickerActive = false;
     }
@@ -307,7 +310,10 @@ class _PrivateFolderPageState extends State<PrivateFolderPage> {
         await _uploadFileToVault(File(path));
       }
     } catch (e) {
-      AppToast.show('Error selecting file: $e');
+      AppToast.show(
+        AppToast.userFriendlyMessage('Error selecting file: $e'),
+        isError: true,
+      );
     } finally {
       AppPreferences.isPickerActive = false;
     }
@@ -340,10 +346,16 @@ class _PrivateFolderPageState extends State<PrivateFolderPage> {
           });
         }
       } else {
-        AppToast.show('Upload failed. Please check your connection.');
+        AppToast.show(
+          'Upload failed. Please check your connection.',
+          isError: true,
+        );
       }
     } catch (e) {
-      AppToast.show('Upload error: $e');
+      AppToast.show(
+        AppToast.userFriendlyMessage('Upload error: $e'),
+        isError: true,
+      );
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }

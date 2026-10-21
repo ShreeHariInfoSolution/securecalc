@@ -139,7 +139,7 @@ class _ShareQrPageState extends State<ShareQrPage> {
                         await Clipboard.setData(
                           ClipboardData(text: widget.shareLink),
                         );
-                        if (mounted) _showMessage('Profile code copied.');
+                        if (mounted) _showMessage('Profile code copied to clipboard!');
                       },
                     ),
                   ),

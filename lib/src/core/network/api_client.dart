@@ -30,7 +30,8 @@ class ApiClient {
 
       return _handleResponse(response.statusCode, responseBody);
     } catch (e) {
-      throw NetworkException(e.toString());
+      if (e is ApiException || e is NetworkException) rethrow;
+      throw NetworkException('Network connection error. Please check your internet connection.');
     }
   }
 
@@ -59,7 +60,8 @@ class ApiClient {
 
       return _handleResponse(response.statusCode, responseBody);
     } catch (e) {
-      throw NetworkException(e.toString());
+      if (e is ApiException || e is NetworkException) rethrow;
+      throw NetworkException('Network connection error. Please check your internet connection.');
     }
   }
 
@@ -68,9 +70,18 @@ class ApiClient {
       if (body.isEmpty) return {};
       return jsonDecode(body) as Map<String, dynamic>;
     } else {
+      String cleanMessage = 'Server error ($statusCode).';
+      if (body.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(body);
+          if (decoded is Map) {
+            cleanMessage = decoded['message'] ?? decoded['error'] ?? cleanMessage;
+          }
+        } catch (_) {}
+      }
       throw ApiException(
         statusCode: statusCode,
-        message: body,
+        message: cleanMessage,
       );
     }
   }

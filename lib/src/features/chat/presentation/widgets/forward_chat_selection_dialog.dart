@@ -306,11 +306,18 @@ class _ForwardChatSelectionDialogState
 
       if (mounted) {
         Navigator.pop(context);
-        AppToast.show('Forwarded to ${_selectedChatIds.length} chat(s)');
+        AppToast.show(
+          _selectedChatIds.length == 1
+              ? 'Message forwarded successfully.'
+              : 'Forwarded to ${_selectedChatIds.length} chats successfully.',
+        );
       }
     } catch (e) {
       if (mounted) {
-        AppToast.show('Forwarding failed: $e', isError: true);
+        AppToast.show(
+          AppToast.userFriendlyMessage('Forwarding failed: $e'),
+          isError: true,
+        );
       }
     } finally {
       if (mounted) setState(() => _isSending = false);

@@ -2,13 +2,13 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../../core/utils/app_toast.dart';
 
+/// WhatsApp-style "Move and Scale" Profile Image Cropper Dialog.
 class ProfileImageCropperDialog extends StatefulWidget {
   final File imageFile;
 
@@ -17,7 +17,7 @@ class ProfileImageCropperDialog extends StatefulWidget {
     required this.imageFile,
   });
 
-  /// Opens the cropper dialog and returns the cropped File (or null if cancelled).
+  /// Opens the cropper dialog and returns the cropped square File (or null if cancelled).
   static Future<File?> cropImage(
     BuildContext context, {
     required File imageFile,
@@ -26,7 +26,7 @@ class ProfileImageCropperDialog extends StatefulWidget {
       context: context,
       barrierDismissible: false,
       barrierLabel: 'CropImage',
-      barrierColor: Colors.black.withValues(alpha: 0.88),
+      barrierColor: Colors.black.withValues(alpha: 0.95),
       transitionDuration: const Duration(milliseconds: 250),
       pageBuilder: (context, anim1, anim2) => ProfileImageCropperDialog(
         imageFile: imageFile,
@@ -34,12 +34,7 @@ class ProfileImageCropperDialog extends StatefulWidget {
       transitionBuilder: (context, anim1, anim2, child) {
         return FadeTransition(
           opacity: CurvedAnimation(parent: anim1, curve: Curves.easeOut),
-          child: ScaleTransition(
-            scale: Tween<double>(begin: 0.95, end: 1.0).animate(
-              CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
-            ),
-            child: child,
-          ),
+          child: child,
         );
       },
     );
@@ -107,8 +102,9 @@ class _ProfileImageCropperDialogState
     HapticFeedback.mediumImpact();
 
     try {
-      const double outputResolution = 600.0; // 600x600 high res cropped output
-      const double cropViewSize = 280.0; // Displayed crop box on screen
+      const double outputResolution = 600.0; // 600x600 square output
+      final screenWidth = MediaQuery.of(context).size.width;
+      final double cropViewSize = (screenWidth * 0.88).clamp(280.0, 340.0);
 
       final rawW = _decodedImage!.width.toDouble();
       final rawH = _decodedImage!.height.toDouble();
@@ -125,7 +121,7 @@ class _ProfileImageCropperDialogState
         Rect.fromLTWH(0, 0, outputResolution, outputResolution),
       );
 
-      // Draw black background fill
+      // Black background
       final bgPaint = Paint()..color = Colors.black;
       canvas.drawRect(
         Rect.fromLTWH(0, 0, outputResolution, outputResolution),
@@ -140,7 +136,7 @@ class _ProfileImageCropperDialogState
       // Apply TransformationController matrix from InteractiveViewer
       canvas.transform(_transformationController.value.storage);
 
-      // Handle rotation around center (140, 140) if applied
+      // Rotation around center
       if (_quarterTurns != 0) {
         canvas.translate(cropViewSize / 2, cropViewSize / 2);
         canvas.rotate(_quarterTurns * (math.pi / 2));
@@ -179,7 +175,10 @@ class _ProfileImageCropperDialogState
     } catch (e) {
       debugPrint('[CROPPER SAVE ERROR] $e');
       if (mounted) {
-        AppToast.show('Error saving cropped image: $e', isError: true);
+        AppToast.show(
+          AppToast.userFriendlyMessage('Error saving cropped image: $e'),
+          isError: true,
+        );
         setState(() => _isProcessing = false);
       }
     }
@@ -196,251 +195,194 @@ class _ProfileImageCropperDialogState
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.paddingOf(context).top;
     final bottomPadding = MediaQuery.paddingOf(context).bottom;
-
-    const double cropBoxSize = 280.0;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final double cropBoxSize = (screenWidth * 0.88).clamp(280.0, 340.0);
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // Crop Viewport Center
-          Center(
-            child: _isLoading
-                ? const CircularProgressIndicator(color: Colors.white)
-                : Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        'Move and Scale',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Drag to position your face inside the circle',
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.7),
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Top Bar: "Move and scale"
+            Padding(
+              padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
+              child: const Text(
+                'Move and scale',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w400,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
 
-                      // Interactive Cropper Box
-                      SizedBox(
-                        width: cropBoxSize,
-                        height: cropBoxSize,
-                        child: Stack(
-                          clipBehavior: Clip.hardEdge,
-                          children: [
-                            // Interactive Viewer Image
-                            Positioned.fill(
-                              child: ClipOval(
-                                child: Container(
-                                  color: Colors.black,
-                                  child: InteractiveViewer(
-                                    transformationController:
-                                        _transformationController,
-                                    minScale: 1.0,
-                                    maxScale: 5.0,
-                                    boundaryMargin: const EdgeInsets.all(300),
-                                    child: RotatedBox(
-                                      quarterTurns: _quarterTurns,
-                                      child: Image.file(
-                                        widget.imageFile,
-                                        fit: BoxFit.cover,
-                                        width: cropBoxSize,
-                                        height: cropBoxSize,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+            const Spacer(),
 
-                            // Circular Frame Overlay & Grid Lines
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: const Color(0xFF007AFF),
-                                      width: 2.5,
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.4,
-                                        ),
-                                        blurRadius: 16,
-                                      ),
-                                    ],
-                                  ),
-                                  child: CustomPaint(
-                                    painter: _CropGridPainter(),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 28),
-
-                      // Toolbar Controls: Rotate & Reset
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+            // Center Cropper Canvas Box (WhatsApp Style)
+            Center(
+              child: _isLoading
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : SizedBox(
+                      width: cropBoxSize,
+                      height: cropBoxSize,
+                      child: Stack(
+                        clipBehavior: Clip.hardEdge,
                         children: [
-                          IconButton.filledTonal(
-                            style: IconButton.styleFrom(
-                              backgroundColor: Colors.white12,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.all(12),
+                          // Square Interactive Image Layer
+                          Positioned.fill(
+                            child: Container(
+                              color: Colors.black,
+                              child: InteractiveViewer(
+                                transformationController:
+                                    _transformationController,
+                                minScale: 1.0,
+                                maxScale: 5.0,
+                                boundaryMargin: const EdgeInsets.all(300),
+                                child: RotatedBox(
+                                  quarterTurns: _quarterTurns,
+                                  child: Image.file(
+                                    widget.imageFile,
+                                    fit: BoxFit.cover,
+                                    width: cropBoxSize,
+                                    height: cropBoxSize,
+                                  ),
+                                ),
+                              ),
                             ),
-                            onPressed: _rotateImage,
-                            icon: const Icon(
-                              Icons.rotate_right_rounded,
-                              size: 22,
-                            ),
-                            tooltip: 'Rotate',
                           ),
-                          const SizedBox(width: 16),
-                          IconButton.filledTonal(
-                            style: IconButton.styleFrom(
-                              backgroundColor: Colors.white12,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.all(12),
+
+                          // Circular Overlay Mask (WhatsApp Style)
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: CustomPaint(
+                                size: Size(cropBoxSize, cropBoxSize),
+                                painter: _WhatsAppCropOverlayPainter(),
+                              ),
                             ),
-                            onPressed: _resetTransform,
-                            icon: const Icon(
-                              Icons.restart_alt_rounded,
-                              size: 22,
-                            ),
-                            tooltip: 'Reset',
                           ),
                         ],
                       ),
-                    ],
-                  ),
-          ),
+                    ),
+            ),
 
-          // Top Header Bar (Cancel)
-          Positioned(
-            top: topPadding + 10,
-            left: 16,
-            right: 16,
-            child: Row(
+            const SizedBox(height: 24),
+
+            // Rotation & Reset Tools
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 IconButton(
-                  onPressed: () => Navigator.pop(context, null),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white12,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.all(10),
+                  ),
+                  onPressed: _rotateImage,
                   icon: const Icon(
-                    CupertinoIcons.xmark,
-                    color: Colors.white,
-                    size: 22,
+                    Icons.rotate_right_rounded,
+                    size: 20,
                   ),
+                  tooltip: 'Rotate',
                 ),
-                const Spacer(),
-                const Text(
-                  'Profile Picture',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                const SizedBox(width: 16),
+                IconButton(
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white12,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.all(10),
                   ),
+                  onPressed: _resetTransform,
+                  icon: const Icon(
+                    Icons.restart_alt_rounded,
+                    size: 20,
+                  ),
+                  tooltip: 'Reset',
                 ),
-                const Spacer(),
-                const SizedBox(width: 40),
               ],
             ),
-          ),
 
-          // Bottom Action Button (Crop & Save)
-          Positioned(
-            bottom: bottomPadding + 20,
-            left: 20,
-            right: 20,
-            child: SafeArea(
-              child: SizedBox(
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF007AFF),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(26),
+            const Spacer(),
+
+            // Bottom Actions Bar: Cancel / Choose (WhatsApp Style)
+            Padding(
+              padding: EdgeInsets.only(
+                left: 24.0,
+                right: 24.0,
+                bottom: bottomPadding + 16.0,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextButton(
+                    onPressed: _isProcessing
+                        ? null
+                        : () => Navigator.pop(context, null),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w400,
+                      ),
                     ),
-                    elevation: 6,
                   ),
-                  onPressed: _isProcessing ? null : _performCrop,
-                  child: _isProcessing
+                  _isProcessing
                       ? const SizedBox(
-                          width: 20,
-                          height: 20,
+                          width: 24,
+                          height: 24,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
                             color: Colors.white,
                           ),
                         )
-                      : const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.check_rounded, size: 22),
-                            SizedBox(width: 8),
-                            Text(
-                              'Choose Profile Picture',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
+                      : TextButton(
+                          onPressed: _performCrop,
+                          child: const Text(
+                            'Choose',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
                             ),
-                          ],
+                          ),
                         ),
-                ),
+                ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-class _CropGridPainter extends CustomPainter {
+/// Draws the WhatsApp-style circular overlay mask:
+/// Outer square is dimmed with a 60% dark mask, leaving a clear circular aperture in the middle.
+class _WhatsAppCropOverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.22)
-      ..strokeWidth = 0.8
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+
+    // Dark semi-transparent mask outside the circle
+    final maskPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.62)
+      ..style = PaintingStyle.fill;
+
+    final path = Path()
+      ..addRect(rect)
+      ..addOval(Rect.fromLTWH(0, 0, size.width, size.height));
+    path.fillType = PathFillType.evenOdd;
+
+    canvas.drawPath(path, maskPaint);
+
+    // Subtle white circle border line
+    final borderPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.45)
+      ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
 
-    // Rule of thirds grid lines
-    final thirdW = size.width / 3;
-    final thirdH = size.height / 3;
-
-    canvas.drawLine(
-      Offset(thirdW, 0),
-      Offset(thirdW, size.height),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(thirdW * 2, 0),
-      Offset(thirdW * 2, size.height),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(0, thirdH),
-      Offset(size.width, thirdH),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(0, thirdH * 2),
-      Offset(size.width, thirdH * 2),
-      paint,
-    );
+    canvas.drawOval(Rect.fromLTWH(0, 0, size.width, size.height), borderPaint);
   }
 
   @override

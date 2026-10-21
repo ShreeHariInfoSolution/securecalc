@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../../core/config/app_preferences.dart';
 import '../../../../../core/theme/app_theme.dart';
 import '../../../../../core/utils/app_toast.dart';
+import '../../../../../core/widgets/compact_settings_header.dart';
 
 class MediaAutoDownloadSettingsPage extends StatefulWidget {
   const MediaAutoDownloadSettingsPage({super.key});
@@ -14,16 +15,24 @@ class MediaAutoDownloadSettingsPage extends StatefulWidget {
 
 class _MediaAutoDownloadSettingsPageState
     extends State<MediaAutoDownloadSettingsPage> {
-  late bool _autoImages;
-  late bool _autoVideos;
-  late bool _autoDocs;
+  late bool _mobilePhotos;
+  late bool _mobileVideos;
+  late bool _mobileDocs;
+
+  late bool _wifiPhotos;
+  late bool _wifiVideos;
+  late bool _wifiDocs;
 
   @override
   void initState() {
     super.initState();
-    _autoImages = AppPreferences.getAutoDownloadImages();
-    _autoVideos = AppPreferences.getAutoDownloadVideos();
-    _autoDocs = AppPreferences.getAutoDownloadDocs();
+    _mobilePhotos = AppPreferences.getAutoMobilePhotos();
+    _mobileVideos = AppPreferences.getAutoMobileVideos();
+    _mobileDocs = AppPreferences.getAutoMobileDocs();
+
+    _wifiPhotos = AppPreferences.getAutoWifiPhotos();
+    _wifiVideos = AppPreferences.getAutoWifiVideos();
+    _wifiDocs = AppPreferences.getAutoWifiDocs();
   }
 
   @override
@@ -34,143 +43,217 @@ class _MediaAutoDownloadSettingsPageState
       backgroundColor: isDark
           ? AppTheme.darkBackground
           : AppTheme.lightBackground,
-      appBar: AppBar(
-        title: const Text('Media Auto-Download'),
-        elevation: 0,
-        backgroundColor: Colors.transparent,
-      ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
+        child: Column(
           children: [
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Text(
-                'Automatically download incoming media files when received. If disabled, a download button will be displayed on each file.',
-                style: TextStyle(fontSize: 13, color: AppTheme.subtitleGrey),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              decoration: BoxDecoration(
-                color: isDark ? AppTheme.darkSurface : Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Column(
+            const CompactSettingsHeader(title: 'Media Auto-Download'),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.all(16),
                 children: [
-                  SwitchListTile(
-                    secondary: const Icon(
-                      Icons.photo_outlined,
-                      color: AppTheme.primaryColor,
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Text(
+                      'Configure automatic media downloading based on your active network connection (Mobile Data vs Wi-Fi).',
+                      style: TextStyle(fontSize: 13, color: AppTheme.subtitleGrey),
                     ),
-                    activeTrackColor: AppTheme.onlineGreen,
-                    title: const Text(
-                      'Photos / Images',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    subtitle: const Text(
-                      'Automatically download incoming photos',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.subtitleGrey,
-                      ),
-                    ),
-                    value: _autoImages,
-                    onChanged: (val) async {
-                      setState(() => _autoImages = val);
-                      await AppPreferences.setAutoDownloadImages(val);
-                      AppToast.show(
-                        val
-                            ? 'Auto-download for photos enabled'
-                            : 'Auto-download for photos disabled',
-                      );
-                    },
                   ),
-                  Divider(
-                    height: 1,
-                    indent: 52,
-                    color: isDark
-                        ? Colors.white.withValues(alpha: 0.08)
-                        : Colors.black.withValues(alpha: 0.06),
+                  const SizedBox(height: 16),
+
+                  // SECTION 1: WHEN USING MOBILE DATA
+                  _buildSectionTitle('WHEN USING MOBILE DATA'),
+                  _buildGroupedCard(
+                    isDark: isDark,
+                    children: [
+                      SwitchListTile(
+                        secondary: const Icon(
+                          Icons.photo_outlined,
+                          color: AppTheme.primaryColor,
+                        ),
+                        activeTrackColor: AppTheme.onlineGreen,
+                        title: const Text(
+                          'Photos',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        value: _mobilePhotos,
+                        onChanged: (val) async {
+                          setState(() => _mobilePhotos = val);
+                          await AppPreferences.setAutoMobilePhotos(val);
+                          await AppPreferences.setAutoDownloadImages(_mobilePhotos || _wifiPhotos);
+                          AppToast.show(
+                            val
+                                ? 'Mobile data photo auto-download enabled'
+                                : 'Mobile data photo auto-download disabled',
+                          );
+                        },
+                      ),
+                      Divider(
+                        height: 1,
+                        indent: 52,
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.06),
+                      ),
+                      SwitchListTile(
+                        secondary: const Icon(
+                          Icons.videocam_outlined,
+                          color: AppTheme.primaryColor,
+                        ),
+                        activeTrackColor: AppTheme.onlineGreen,
+                        title: const Text(
+                          'Videos',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        value: _mobileVideos,
+                        onChanged: (val) async {
+                          setState(() => _mobileVideos = val);
+                          await AppPreferences.setAutoMobileVideos(val);
+                          await AppPreferences.setAutoDownloadVideos(_mobileVideos || _wifiVideos);
+                          AppToast.show(
+                            val
+                                ? 'Mobile data video auto-download enabled'
+                                : 'Mobile data video auto-download disabled',
+                          );
+                        },
+                      ),
+                      Divider(
+                        height: 1,
+                        indent: 52,
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.06),
+                      ),
+                      SwitchListTile(
+                        secondary: const Icon(
+                          Icons.insert_drive_file_outlined,
+                          color: AppTheme.primaryColor,
+                        ),
+                        activeTrackColor: AppTheme.onlineGreen,
+                        title: const Text(
+                          'Documents & Audio',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        value: _mobileDocs,
+                        onChanged: (val) async {
+                          setState(() => _mobileDocs = val);
+                          await AppPreferences.setAutoMobileDocs(val);
+                          await AppPreferences.setAutoDownloadDocs(_mobileDocs || _wifiDocs);
+                          AppToast.show(
+                            val
+                                ? 'Mobile data doc auto-download enabled'
+                                : 'Mobile data doc auto-download disabled',
+                          );
+                        },
+                      ),
+                    ],
                   ),
-                  SwitchListTile(
-                    secondary: const Icon(
-                      Icons.videocam_outlined,
-                      color: AppTheme.primaryColor,
-                    ),
-                    activeTrackColor: AppTheme.onlineGreen,
-                    title: const Text(
-                      'Videos',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
+
+                  const SizedBox(height: 24),
+
+                  // SECTION 2: WHEN CONNECTED ON WI-FI
+                  _buildSectionTitle('WHEN CONNECTED ON WI-FI'),
+                  _buildGroupedCard(
+                    isDark: isDark,
+                    children: [
+                      SwitchListTile(
+                        secondary: const Icon(
+                          Icons.wifi_outlined,
+                          color: AppTheme.primaryColor,
+                        ),
+                        activeTrackColor: AppTheme.onlineGreen,
+                        title: const Text(
+                          'Photos',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        value: _wifiPhotos,
+                        onChanged: (val) async {
+                          setState(() => _wifiPhotos = val);
+                          await AppPreferences.setAutoWifiPhotos(val);
+                          await AppPreferences.setAutoDownloadImages(_mobilePhotos || _wifiPhotos);
+                          AppToast.show(
+                            val
+                                ? 'Wi-Fi photo auto-download enabled'
+                                : 'Wi-Fi photo auto-download disabled',
+                          );
+                        },
                       ),
-                    ),
-                    subtitle: const Text(
-                      'Automatically download incoming videos',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.subtitleGrey,
+                      Divider(
+                        height: 1,
+                        indent: 52,
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.06),
                       ),
-                    ),
-                    value: _autoVideos,
-                    onChanged: (val) async {
-                      setState(() => _autoVideos = val);
-                      await AppPreferences.setAutoDownloadVideos(val);
-                      AppToast.show(
-                        val
-                            ? 'Auto-download for videos enabled'
-                            : 'Auto-download for videos disabled',
-                      );
-                    },
-                  ),
-                  Divider(
-                    height: 1,
-                    indent: 52,
-                    color: isDark
-                        ? Colors.white.withValues(alpha: 0.08)
-                        : Colors.black.withValues(alpha: 0.06),
-                  ),
-                  SwitchListTile(
-                    secondary: const Icon(
-                      Icons.insert_drive_file_outlined,
-                      color: AppTheme.primaryColor,
-                    ),
-                    activeTrackColor: AppTheme.onlineGreen,
-                    title: const Text(
-                      'Documents & Audio',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
+                      SwitchListTile(
+                        secondary: const Icon(
+                          Icons.videocam_outlined,
+                          color: AppTheme.primaryColor,
+                        ),
+                        activeTrackColor: AppTheme.onlineGreen,
+                        title: const Text(
+                          'Videos',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        value: _wifiVideos,
+                        onChanged: (val) async {
+                          setState(() => _wifiVideos = val);
+                          await AppPreferences.setAutoWifiVideos(val);
+                          await AppPreferences.setAutoDownloadVideos(_mobileVideos || _wifiVideos);
+                          AppToast.show(
+                            val
+                                ? 'Wi-Fi video auto-download enabled'
+                                : 'Wi-Fi video auto-download disabled',
+                          );
+                        },
                       ),
-                    ),
-                    subtitle: const Text(
-                      'Automatically download files and voice notes',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.subtitleGrey,
+                      Divider(
+                        height: 1,
+                        indent: 52,
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.06),
                       ),
-                    ),
-                    value: _autoDocs,
-                    onChanged: (val) async {
-                      setState(() => _autoDocs = val);
-                      await AppPreferences.setAutoDownloadDocs(val);
-                      AppToast.show(
-                        val
-                            ? 'Auto-download for documents enabled'
-                            : 'Auto-download for documents disabled',
-                      );
-                    },
+                      SwitchListTile(
+                        secondary: const Icon(
+                          Icons.insert_drive_file_outlined,
+                          color: AppTheme.primaryColor,
+                        ),
+                        activeTrackColor: AppTheme.onlineGreen,
+                        title: const Text(
+                          'Documents & Audio',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        value: _wifiDocs,
+                        onChanged: (val) async {
+                          setState(() => _wifiDocs = val);
+                          await AppPreferences.setAutoWifiDocs(val);
+                          await AppPreferences.setAutoDownloadDocs(_mobileDocs || _wifiDocs);
+                          AppToast.show(
+                            val
+                                ? 'Wi-Fi doc auto-download enabled'
+                                : 'Wi-Fi doc auto-download disabled',
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -178,6 +261,41 @@ class _MediaAutoDownloadSettingsPageState
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8, bottom: 8),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: AppTheme.subtitleGrey,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupedCard({
+    required bool isDark,
+    required List<Widget> children,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.darkSurface : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(children: children),
     );
   }
 }

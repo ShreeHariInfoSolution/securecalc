@@ -473,7 +473,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final data = event['data'] is Map
         ? Map<String, dynamic>.from(event['data'] as Map)
         : event;
-    final peerId = widget.conversation.peerUserId;
+
+    final directPeerId = widget.conversation.peerUserId ??
+        (widget.conversation.isGroup ? null : int.tryParse(widget.conversation.id));
+
     final userId = int.tryParse(
       (data['user_id'] ?? data['userId'] ?? data['id'])?.toString() ?? '',
     );
@@ -485,10 +488,13 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         chatHeadId != null &&
         chatHeadId.isNotEmpty &&
         chatHeadId == widget.conversation.id;
-    final matchesUser = peerId != null && userId != null && userId == peerId;
+
+    final matchesUser = userId != null &&
+        ((directPeerId != null && userId == directPeerId) ||
+            (!widget.conversation.isGroup && widget.conversation.id == userId.toString()));
 
     if (!matchesChat && !matchesUser) {
-      if (userId != null && peerId != null && userId != peerId) return;
+      return;
     }
 
     final online = data['is_online'] ?? data['online'] ?? data['status'];
@@ -498,11 +504,25 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           online == 1 ||
           online.toString().toLowerCase() == 'online' ||
           online.toString().toLowerCase() == 'true';
+
       _isPeerOnline.value = isOnline;
+
+      final rawLastSeen =
+          data['last_seen_at'] ?? data['lastSeenAt'] ?? data['updated_at'];
+      final parsedLastSeen = rawLastSeen != null
+          ? DateTime.tryParse(rawLastSeen.toString())?.toLocal()
+          : null;
+
       unawaited(
         LocalChatStorage.instance.updateConversation(
           widget.conversation.id,
-          (c) => c.copyWith(isOnline: isOnline),
+          (c) => c.copyWith(
+            isOnline: isOnline,
+            lastSeenAt:
+                isOnline
+                    ? null
+                    : (parsedLastSeen ?? c.lastSeenAt ?? DateTime.now()),
+          ),
         ),
       );
     }
@@ -1001,7 +1021,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         await SharePlus.instance.share(ShareParams(text: message.content));
       }
     } catch (e) {
-      AppToast.show('Could not share message: $e', isError: true);
+      AppToast.show(AppToast.userFriendlyMessage('Could not share message: $e'), isError: true);
     }
   }
 
@@ -2227,7 +2247,11 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       debugPrint('[ATTACHMENT SEND ERROR] $error');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unable to send attachment: $error')),
+          SnackBar(
+            content: Text(
+              AppToast.userFriendlyMessage('Unable to send attachment: $error'),
+            ),
+          ),
         );
       }
     } finally {
@@ -2719,7 +2743,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                         ),
                       ),
 
-                      // Floating Typing Indicator Bubble above Composer
+                      // Floating Typing Indicator Bubble above Composer (Commented out)
+                      /*
                       Positioned(
                         left: 12,
                         bottom:
@@ -2747,6 +2772,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                           },
                         ),
                       ),
+                      */
 
                       // Floating Frosted Header / Selection Header
                       Positioned(

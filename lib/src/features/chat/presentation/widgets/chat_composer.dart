@@ -13,6 +13,7 @@ import 'package:audioplayers/audioplayers.dart';
 
 import '../../../../core/config/app_preferences.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/utils/app_toast.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/models/server_models.dart';
 import 'chat_detail_header.dart';
@@ -254,9 +255,13 @@ class _ChatComposerState extends State<ChatComposer> {
     } catch (error) {
       debugPrint('[IMAGE PICK ERROR] $error');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Unable to pick image: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppToast.userFriendlyMessage('Unable to pick image: $error'),
+            ),
+          ),
+        );
       }
     } finally {
       AppPreferences.isPickerActive = false;
@@ -276,9 +281,13 @@ class _ChatComposerState extends State<ChatComposer> {
     } catch (error) {
       debugPrint('[VIDEO PICK ERROR] $error');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Unable to pick video: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppToast.userFriendlyMessage('Unable to pick video: $error'),
+            ),
+          ),
+        );
       }
     } finally {
       AppPreferences.isPickerActive = false;
@@ -310,7 +319,11 @@ class _ChatComposerState extends State<ChatComposer> {
       debugPrint('[FILE PICK ERROR] $error');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unable to attach file: $error')),
+          SnackBar(
+            content: Text(
+              AppToast.userFriendlyMessage('Unable to attach file: $error'),
+            ),
+          ),
         );
       }
     } finally {
@@ -354,7 +367,11 @@ class _ChatComposerState extends State<ChatComposer> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unable to start recording: $error')),
+          SnackBar(
+            content: Text(
+              AppToast.userFriendlyMessage('Unable to start recording: $error'),
+            ),
+          ),
         );
       }
     }
@@ -997,8 +1014,6 @@ class _ChatComposerState extends State<ChatComposer> {
                                 controller: widget.inputController,
                                 focusNode: widget.inputFocusNode,
                                 onChanged: _onInputChanged,
-                                onTapOutside: (_) =>
-                                    widget.inputFocusNode.unfocus(),
                                 minLines: 1,
                                 maxLines: 5,
                                 keyboardType: TextInputType.multiline,

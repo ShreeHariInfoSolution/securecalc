@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,6 +35,13 @@ class AppPreferences {
   static const String _keyAutoDownloadImages = 'PREF_AUTO_DOWNLOAD_IMAGES';
   static const String _keyAutoDownloadVideos = 'PREF_AUTO_DOWNLOAD_VIDEOS';
   static const String _keyAutoDownloadDocs = 'PREF_AUTO_DOWNLOAD_DOCS';
+
+  static const String _keyAutoMobilePhotos = 'PREF_AUTO_MOBILE_PHOTOS';
+  static const String _keyAutoMobileVideos = 'PREF_AUTO_MOBILE_VIDEOS';
+  static const String _keyAutoMobileDocs = 'PREF_AUTO_MOBILE_DOCS';
+  static const String _keyAutoWifiPhotos = 'PREF_AUTO_WIFI_PHOTOS';
+  static const String _keyAutoWifiVideos = 'PREF_AUTO_WIFI_VIDEOS';
+  static const String _keyAutoWifiDocs = 'PREF_AUTO_WIFI_DOCS';
   static const String _keyChatBubbleColor = 'PREF_CHAT_BUBBLE_COLOR';
   static const String _keyChatWallpaperType = 'PREF_CHAT_WALLPAPER_TYPE';
   static const String _keyChatWallpaperPath = 'PREF_CHAT_WALLPAPER_PATH';
@@ -306,6 +315,84 @@ class AppPreferences {
   static Future<void> setAutoDownloadDocs(bool enabled) async {
     final p = await _getPrefs();
     await p.setBool(_keyAutoDownloadDocs, enabled);
+  }
+
+  // Mobile Data Auto-Download
+  static bool getAutoMobilePhotos() =>
+      _prefs?.getBool(_keyAutoMobilePhotos) ?? true;
+  static Future<void> setAutoMobilePhotos(bool enabled) async {
+    final p = await _getPrefs();
+    await p.setBool(_keyAutoMobilePhotos, enabled);
+  }
+
+  static bool getAutoMobileVideos() =>
+      _prefs?.getBool(_keyAutoMobileVideos) ?? false;
+  static Future<void> setAutoMobileVideos(bool enabled) async {
+    final p = await _getPrefs();
+    await p.setBool(_keyAutoMobileVideos, enabled);
+  }
+
+  static bool getAutoMobileDocs() =>
+      _prefs?.getBool(_keyAutoMobileDocs) ?? true;
+  static Future<void> setAutoMobileDocs(bool enabled) async {
+    final p = await _getPrefs();
+    await p.setBool(_keyAutoMobileDocs, enabled);
+  }
+
+  // Wi-Fi Auto-Download
+  static bool getAutoWifiPhotos() =>
+      _prefs?.getBool(_keyAutoWifiPhotos) ?? true;
+  static Future<void> setAutoWifiPhotos(bool enabled) async {
+    final p = await _getPrefs();
+    await p.setBool(_keyAutoWifiPhotos, enabled);
+  }
+
+  static bool getAutoWifiVideos() =>
+      _prefs?.getBool(_keyAutoWifiVideos) ?? true;
+  static Future<void> setAutoWifiVideos(bool enabled) async {
+    final p = await _getPrefs();
+    await p.setBool(_keyAutoWifiVideos, enabled);
+  }
+
+  static bool getAutoWifiDocs() =>
+      _prefs?.getBool(_keyAutoWifiDocs) ?? true;
+  static Future<void> setAutoWifiDocs(bool enabled) async {
+    final p = await _getPrefs();
+    await p.setBool(_keyAutoWifiDocs, enabled);
+  }
+
+  static Future<bool> isConnectedToWifi() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.any,
+      );
+      for (final interface in interfaces) {
+        final name = interface.name.toLowerCase();
+        if (name.contains('wlan') ||
+            name.contains('wifi') ||
+            name.contains('wireless') ||
+            name.startsWith('en')) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Determines whether incoming media of [mediaType] ('image', 'video', 'doc')
+  /// should be automatically downloaded based on active network status (Wi-Fi vs Mobile Data).
+  static Future<bool> shouldAutoDownload({required String mediaType}) async {
+    final isWifi = await isConnectedToWifi();
+    final type = mediaType.toLowerCase().trim();
+
+    if (type == 'image' || type == 'photo') {
+      return isWifi ? getAutoWifiPhotos() : getAutoMobilePhotos();
+    } else if (type == 'video') {
+      return isWifi ? getAutoWifiVideos() : getAutoMobileVideos();
+    } else {
+      return isWifi ? getAutoWifiDocs() : getAutoMobileDocs();
+    }
   }
 
   static Future<void> updateSecureFlag() async {
