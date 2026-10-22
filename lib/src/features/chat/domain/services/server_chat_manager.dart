@@ -37,11 +37,13 @@ class ServerChatManager {
 
   static final ServerChatManager instance = ServerChatManager._();
 
+  void Function(String? activeChatId)? onActiveChatIdChanged;
+
   String? _activeChatId;
   String? get activeChatId => _activeChatId;
   set activeChatId(String? val) {
     _activeChatId = val;
-    unawaited(PushService.instance.updateNativeActiveChatId(val));
+    onActiveChatIdChanged?.call(val);
   }
 
   int _socketGeneration = 0;
@@ -440,6 +442,9 @@ class ServerChatManager {
     }
 
     try {
+      if (numericId > 0) {
+        unawaited(ServerApiService.instance.markDeliveredREST(chatId: numericId));
+      }
       final pageRes = await ServerApiService.instance.getMessagesPage(
         numericId,
         page: page,
@@ -508,13 +513,8 @@ class ServerChatManager {
           fileName: (sm.fileName != null && sm.fileName!.trim().isNotEmpty)
               ? sm.fileName
               : cachedMessage?.fileName,
-          isRead: isMe ? (sm.isRead || cachedMessage?.isRead == true) : true,
-          isDelivered: isMe
-              ? (sm.isDelivered ||
-                    sm.isRead ||
-                    cachedMessage?.isDelivered == true ||
-                    cachedMessage?.isRead == true)
-              : true,
+          isRead: isMe ? sm.isRead : true,
+          isDelivered: isMe ? (sm.isDelivered || sm.isRead) : true,
           isEdited: sm.isEdited,
           isDeleted: sm.isDeleted,
           isSaved: sm.isSaved,
@@ -676,8 +676,8 @@ class ServerChatManager {
       type: fileType ?? (filePath != null ? 'image' : 'text'),
       mediaUrl: filePath,
       fileName: fileName,
-      isRead: false,
-      isDelivered: serverMessage != null,
+      isRead: serverMessage?.isRead ?? false,
+      isDelivered: serverMessage?.isDelivered ?? false,
       isEdited: serverMessage?.isEdited ?? false,
       replyToId: serverMessage?.replyToId ?? replyToId,
     );
@@ -1025,7 +1025,7 @@ class ServerChatManager {
               ? sm.fileName
               : null,
           isRead: isMe ? sm.isRead : false,
-          isDelivered: true,
+          isDelivered: isMe ? (sm.isDelivered || sm.isRead) : true,
           isEdited: sm.isEdited,
           isDeleted: sm.isDeleted,
           isSaved: sm.isSaved,
@@ -1061,6 +1061,10 @@ class ServerChatManager {
 
         if (activeChatId == incomingChatId) {
           await LocalChatStorage.instance.markAsRead(incomingChatId);
+        }
+
+        if (!isMe && sm.chatHeadId > 0) {
+          unawaited(ServerApiService.instance.markDeliveredREST(chatId: sm.chatHeadId));
         }
 
         // If thread is brand new or has placeholder name, resolve chat details in background

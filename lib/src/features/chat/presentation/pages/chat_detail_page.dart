@@ -908,16 +908,26 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     if (data['message'] is Map) {
       data = Map<String, dynamic>.from(data['message'] as Map);
     }
-    final messageId = (data['id'] ?? data['message_id'])?.toString();
+    final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])?.toString();
     if (messageId == null || !mounted) return;
     final index = _messages.indexWhere((message) => message.id == messageId);
     if (index < 0) return;
+    final updated = _messages[index].copyWith(
+      content: 'This message was deleted',
+      isDeleted: true,
+    );
     setState(() {
-      _messages[index] = _messages[index].copyWith(
-        content: 'This message was deleted',
-        isDeleted: true,
-      );
+      _messages[index] = updated;
     });
+    unawaited(
+      LocalChatStorage.instance.saveMessage(
+        deviceId: widget.conversation.id,
+        peerName: _chatName,
+        message: updated,
+        markUnread: false,
+        peerUserId: widget.conversation.peerUserId,
+      ),
+    );
   }
 
   void _handleReactionMessage(Map<String, dynamic> event) {
@@ -1980,6 +1990,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       }
       return;
     }
+    SocketChatService.instance.deleteMessage(messageId: messageId);
     final updated = message.copyWith(
       content: 'This message was deleted',
       isDeleted: true,

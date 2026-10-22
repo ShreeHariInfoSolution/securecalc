@@ -9,11 +9,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/server_models.dart';
 import 'e2e_crypto_service.dart';
 import 'local_chat_storage.dart';
-import 'push_service.dart';
-import 'server_chat_manager.dart';
+import 'package:securecalc/src/features/chat/domain/services/push_service.dart';
+import 'package:securecalc/src/features/chat/domain/services/server_chat_manager.dart';
 import 'socket_chat_service.dart';
 
 import 'package:securecalc/src/core/config/app_preferences.dart';
+import 'package:securecalc/src/core/constants/api_constants.dart';
 import 'package:securecalc/src/features/calling/domain/services/device_identity_service.dart';
 
 /// Central REST API Service connecting Flutter client to https://synqerp.com/calculatorchat/api/
@@ -345,6 +346,38 @@ class ServerApiService {
       debugPrint('[API] Get Profile Error: $e');
     }
     return null;
+  }
+
+  /// Updates notification sound preference on server.
+  /// PUT /auth/notification-sound
+  Future<bool> updateNotificationSoundREST(String soundFileName) async {
+    try {
+      // Ensure file name ends with .wav
+      String formattedFileName = soundFileName;
+      if (!formattedFileName.endsWith('.wav')) {
+        final dotIndex = formattedFileName.lastIndexOf('.');
+        if (dotIndex != -1) {
+          formattedFileName =
+              '${formattedFileName.substring(0, dotIndex)}.wav';
+        } else {
+          formattedFileName = '$formattedFileName.wav';
+        }
+      }
+
+      final body = {'sound': formattedFileName};
+      final res = await http.put(
+        Uri.parse('$baseUrl${ApiConstants.notificationSound}'),
+        headers: _headers(),
+        body: jsonEncode(body),
+      );
+      debugPrint(
+        '[API] Notification sound update response (${res.statusCode}): ${res.body}',
+      );
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('[API] Notification sound update REST Error: $e');
+      return false;
+    }
   }
 
   /// Updates user profile on the server (`PUT /api/users/me`).
@@ -1065,6 +1098,40 @@ class ServerApiService {
       return null;
     } catch (e) {
       debugPrint('[API] Disappear REST Error: $e');
+      return null;
+    }
+  }
+
+  /// Marks messages as delivered for a specific chat head.
+  /// POST /chats/delivered
+  Future<List<int>?> markDeliveredREST({required int chatId}) async {
+    try {
+      final body = {'chat_head_id': chatId};
+      final res = await http.post(
+        Uri.parse('$baseUrl${ApiConstants.delivered}'),
+        headers: _headers(),
+        body: jsonEncode(body),
+      );
+      debugPrint(
+        '[API] Mark Delivered Response (${res.statusCode}): ${res.body}',
+      );
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final json = jsonDecode(res.body);
+        if (json is Map<String, dynamic>) {
+          final data = json['data'];
+          if (data is Map<String, dynamic> && data['delivered'] is List) {
+            final list = (data['delivered'] as List)
+                .map((e) => int.tryParse(e.toString()) ?? 0)
+                .where((id) => id > 0)
+                .toList();
+            return list;
+          }
+        }
+        return [];
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[API] Mark Delivered REST Error: $e');
       return null;
     }
   }

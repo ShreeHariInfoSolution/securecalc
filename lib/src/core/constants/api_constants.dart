@@ -19,11 +19,13 @@ class ApiConstants {
   static const String register = '/auth/register';
   static const String refreshToken = '/auth/refresh';
   static const String profile = '/auth/profile';
+  static const String notificationSound = '/auth/notification-sound';
 
   // Chat Endpoints
   static const String rooms = '/chat/rooms';
   static const String messages = '/chat/messages';
   static const String sendMessage = '/chat/send';
+  static const String delivered = '/chats/delivered';
 
   // Headers
   static const String contentTypeHeader = 'Content-Type';

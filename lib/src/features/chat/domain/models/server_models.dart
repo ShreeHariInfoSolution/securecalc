@@ -736,11 +736,7 @@ class ServerMessageModel {
             rawDelivered != '0' &&
             rawDelivered != 'false' &&
             rawDelivered != 'null') ||
-        rawStatus == 'delivered' ||
-        rawStatus == 'sent' ||
-        rawStatus == 'read' ||
-        rawStatus == 'seen' ||
-        (rawId is int ? rawId > 0 : (int.tryParse(rawId?.toString() ?? '') ?? 0) > 0);
+        rawStatus == 'delivered';
 
     final String statusVal = isReadVal
         ? 'read'

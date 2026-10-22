@@ -15,12 +15,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:securecalc/src/features/chat/domain/entities/chat_conversation.dart';
 
 import '../../../../core/config/app_preferences.dart';
-import '../../../../core/ui/vault_page_route.dart';
 import '../../../../../firebase_options.dart';
-import '../../presentation/pages/chat_detail_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'local_chat_storage.dart';
-import 'server_api_service.dart';
-import 'server_chat_manager.dart';
+import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
+import 'package:securecalc/src/features/chat/domain/services/server_chat_manager.dart';
 
 final FlutterLocalNotificationsPlugin _local =
     FlutterLocalNotificationsPlugin();
@@ -301,6 +300,47 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     debugPrint('[Push Diagnostic BACKGROUND] LocalChatStorage init exception: $e');
   }
 
+  // Automatically report message as delivered via REST API in background
+  try {
+    final d = message.data;
+    final chatId = int.tryParse(
+      '${d['chat_head_id'] ?? d['chat_id'] ?? d['chatId'] ?? d['chatHeadId'] ?? d['id'] ?? ''}',
+    );
+    final senderId = (d['sender_id'] ??
+            d['senderId'] ??
+            d['sender_user_id'] ??
+            d['from_id'] ??
+            d['fromId'] ??
+            d['user_id'] ??
+            d['userId'])
+        ?.toString();
+
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('PREF_SERVER_AUTH_TOKEN');
+    final currentUserId = prefs.getInt('PREF_SERVER_USER_ID')?.toString();
+
+    if (chatId != null &&
+        token != null &&
+        token.isNotEmpty &&
+        (currentUserId == null || senderId == null || currentUserId != senderId)) {
+      final url = 'https://synqerp.com/calculatorchat/api/chats/delivered';
+      final res = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'chat_head_id': chatId}),
+      );
+      debugPrint(
+        '[Push Diagnostic BACKGROUND] Delivery API status (${res.statusCode}): ${res.body}',
+      );
+    }
+  } catch (e) {
+    debugPrint('[Push Diagnostic BACKGROUND] Delivery status update exception: $e');
+  }
+
   // If message has a notification payload, OS handles it natively when app is killed/background
   if (message.notification != null) {
     debugPrint('[Push Diagnostic BACKGROUND] Message has notification payload. Handled natively by OS.');
@@ -321,6 +361,7 @@ class PushService {
   Future<String?> Function()? getAuthToken;
   void Function(int chatId)? onOpenChat;
   bool Function(int chatId)? isChatOpen;
+  String? Function()? getActiveChatId;
 
   bool _isVaultReady = false;
   BuildContext? _vaultContext;
@@ -383,6 +424,8 @@ class PushService {
     this.getAuthToken = getAuthToken;
     this.onOpenChat = onOpenChat;
     this.isChatOpen = isChatOpen;
+    ServerChatManager.instance.onActiveChatIdChanged =
+        (val) => unawaited(updateNativeActiveChatId(val));
 
     debugPrint('[Push Diagnostic] Initializing PushService...');
 
@@ -391,7 +434,7 @@ class PushService {
         ServerApiService.instance.currentUserId?.toString(),
       );
       await updateNativeActiveChatId(
-        ServerChatManager.instance.activeChatId,
+        getActiveChatId?.call(),
       );
 
       if (Platform.isAndroid) {
@@ -437,6 +480,16 @@ class PushService {
                 d['userId'])
             ?.toString();
 
+        final chatId = int.tryParse(
+          '${d['chat_id'] ?? d['chatId'] ?? d['chat_head_id'] ?? d['chatHeadId'] ?? d['id'] ?? ''}',
+        );
+
+        // Report message as delivered to server
+        if (chatId != null &&
+            (currentUserId == null || senderId == null || currentUserId != senderId)) {
+          unawaited(ServerApiService.instance.markDeliveredREST(chatId: chatId));
+        }
+
         if (currentUserId != null &&
             senderId != null &&
             currentUserId == senderId) {
@@ -446,9 +499,6 @@ class PushService {
           return;
         }
 
-        final chatId = int.tryParse(
-          '${d['chat_id'] ?? d['chatId'] ?? d['chat_head_id'] ?? d['chatHeadId'] ?? d['id'] ?? ''}',
-        );
         if (chatId != null && (this.isChatOpen?.call(chatId) ?? false)) {
           debugPrint(
             '[Push Diagnostic FOREGROUND] User is already inside chat $chatId. Suppressing notification banner.',
@@ -671,6 +721,12 @@ class PushService {
   Future<void> updateNotificationSound(String soundKey) async {
     try {
       debugPrint('[Push Diagnostic] Updating device notification sound to: $soundKey');
+      final soundFileName = AppPreferences.getNotificationSoundFileName(soundKey);
+
+      // 1. Send update request to PUT /auth/notification-sound REST API
+      await ServerApiService.instance.updateNotificationSoundREST(soundFileName);
+
+      // 2. Re-register FCM token with updated sound preference
       final t = _token ?? await _safeGetFcmToken();
       if (t != null) {
         await _register(t);
@@ -785,11 +841,7 @@ class PushService {
       }
 
       if (targetConv != null && context.mounted) {
-        Navigator.of(context).push(
-          VaultPageRoute(
-            builder: (_) => ChatDetailPage(conversation: targetConv!),
-          ),
-        );
+        onOpenChat?.call(chatId);
       }
     } catch (e) {
       debugPrint('[Push] Error opening chat $chatId: $e');

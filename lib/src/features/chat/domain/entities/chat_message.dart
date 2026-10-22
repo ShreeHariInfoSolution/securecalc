@@ -198,7 +198,6 @@ bool isMessageExpired(
   bool keepReadSessionMessages = false,
 }) {
   if (msg.isSaved) return false;
-  if (msg.isDeleted) return true;
 
   if (msg.expiresAt != null && DateTime.now().isAfter(msg.expiresAt!)) {
     return true;
