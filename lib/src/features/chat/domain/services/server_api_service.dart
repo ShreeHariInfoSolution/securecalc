@@ -40,6 +40,9 @@ class ServerApiService {
     final prefs = await SharedPreferences.getInstance();
     _authToken = prefs.getString(_authTokenKey);
     _currentUserId = prefs.getInt(_authUserIdKey);
+    unawaited(
+      PushService.instance.updateNativeCurrentUserId(_currentUserId?.toString()),
+    );
     LocalChatStorage.instance.setAccountId(_currentUserId);
     final savedUser = prefs.getString(_authUserKey);
     if (savedUser != null) {
@@ -74,6 +77,9 @@ class ServerApiService {
 
     _authToken = token;
     _currentUserId = userId;
+    unawaited(
+      PushService.instance.updateNativeCurrentUserId(userId.toString()),
+    );
     _currentUser = user ?? _currentUser;
     LocalChatStorage.instance.setAccountId(userId);
     await prefs.setString(_authTokenKey, token);
@@ -95,6 +101,7 @@ class ServerApiService {
     await PushService.instance.unregisterOnLogout();
     _authToken = null;
     _currentUserId = null;
+    unawaited(PushService.instance.updateNativeCurrentUserId(null));
     _currentUser = null;
     LocalChatStorage.instance.setAccountId(null);
     final prefs = await SharedPreferences.getInstance();

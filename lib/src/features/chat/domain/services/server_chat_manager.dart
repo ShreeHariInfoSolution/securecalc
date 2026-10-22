@@ -37,7 +37,13 @@ class ServerChatManager {
 
   static final ServerChatManager instance = ServerChatManager._();
 
-  String? activeChatId;
+  String? _activeChatId;
+  String? get activeChatId => _activeChatId;
+  set activeChatId(String? val) {
+    _activeChatId = val;
+    unawaited(PushService.instance.updateNativeActiveChatId(val));
+  }
+
   int _socketGeneration = 0;
 
   final List<StreamSubscription> _socketSubscriptions = [];

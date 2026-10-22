@@ -8,6 +8,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
@@ -19,6 +20,7 @@ import '../../../../../firebase_options.dart';
 import '../../presentation/pages/chat_detail_page.dart';
 import 'local_chat_storage.dart';
 import 'server_api_service.dart';
+import 'server_chat_manager.dart';
 
 final FlutterLocalNotificationsPlugin _local =
     FlutterLocalNotificationsPlugin();
@@ -313,6 +315,8 @@ class PushService {
   PushService._();
   static final instance = PushService._();
 
+  static const _securityChannel = MethodChannel('com.shis.securecalc/security');
+
   String baseUrl = 'https://synqerp.com/calculatorchat/api';
   Future<String?> Function()? getAuthToken;
   void Function(int chatId)? onOpenChat;
@@ -326,6 +330,30 @@ class PushService {
   String? _token;
 
   String? get token => _token;
+
+  Future<void> updateNativeActiveChatId(String? chatId) async {
+    if (!Platform.isIOS) return;
+    try {
+      await _securityChannel.invokeMethod('updateActiveChatId', {
+        'activeChatId': chatId,
+      });
+      debugPrint('[Push Diagnostic] Updated native iOS activeChatId: $chatId');
+    } catch (e) {
+      debugPrint('[Push Diagnostic ERROR] Failed to update native activeChatId: $e');
+    }
+  }
+
+  Future<void> updateNativeCurrentUserId(String? userId) async {
+    if (!Platform.isIOS) return;
+    try {
+      await _securityChannel.invokeMethod('updateCurrentUserId', {
+        'currentUserId': userId,
+      });
+      debugPrint('[Push Diagnostic] Updated native iOS currentUserId: $userId');
+    } catch (e) {
+      debugPrint('[Push Diagnostic ERROR] Failed to update native currentUserId: $e');
+    }
+  }
 
   /// Call this when the vault is fully unlocked and authenticated (e.g. in VaultHomePage).
   void initVault(BuildContext context) {
@@ -359,6 +387,13 @@ class PushService {
     debugPrint('[Push Diagnostic] Initializing PushService...');
 
     try {
+      await updateNativeCurrentUserId(
+        ServerApiService.instance.currentUserId?.toString(),
+      );
+      await updateNativeActiveChatId(
+        ServerChatManager.instance.activeChatId,
+      );
+
       if (Platform.isAndroid) {
         final permStatus = await Permission.notification.request();
         debugPrint(
@@ -575,6 +610,9 @@ class PushService {
   Future<void> registerAfterLogin() async {
     try {
       debugPrint('[Push Diagnostic] registerAfterLogin called.');
+      await updateNativeCurrentUserId(
+        ServerApiService.instance.currentUserId?.toString(),
+      );
       _token ??= await _safeGetFcmToken();
       if (_token != null) {
         await _register(_token!);
@@ -606,6 +644,8 @@ class PushService {
   Future<void> unregisterOnLogout() async {
     try {
       debugPrint('[Push Diagnostic] unregisterOnLogout called.');
+      await updateNativeCurrentUserId(null);
+      await updateNativeActiveChatId(null);
       final t = _token ?? await _safeGetFcmToken();
       if (t != null) {
         final jwt = await getAuthToken?.call();
