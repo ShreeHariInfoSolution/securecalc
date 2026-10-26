@@ -9,6 +9,7 @@ import '../entities/chat_conversation.dart';
 import '../entities/chat_message.dart';
 import '../models/server_models.dart';
 import 'bot_assistant_service.dart';
+import 'presence_store.dart';
 
 /// Local persistent storage manager for P2P messages and conversations.
 class LocalChatStorage {
@@ -31,6 +32,27 @@ class LocalChatStorage {
   String _messageKey(String chatId) => _accountKey('PREF_MSG_$chatId');
   String _historyKey(String chatId) =>
       _accountKey('PREF_HISTORY_CACHED_$chatId');
+  String _draftKey(String chatId) => _accountKey('PREF_DRAFT_$chatId');
+
+  String? getDraft(String chatId) {
+    if (_prefs == null || chatId.isEmpty) return null;
+    return _prefs!.getString(_draftKey(chatId));
+  }
+
+  Future<void> saveDraft(String chatId, String text) async {
+    if (_prefs == null || chatId.isEmpty) return;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      await _prefs!.remove(_draftKey(chatId));
+    } else {
+      await _prefs!.setString(_draftKey(chatId), text);
+    }
+  }
+
+  Future<void> clearDraft(String chatId) async {
+    if (_prefs == null || chatId.isEmpty) return;
+    await _prefs!.remove(_draftKey(chatId));
+  }
 
   void setAccountId(int? accountId) {
     if (_accountId == accountId) return;
@@ -243,6 +265,14 @@ class LocalChatStorage {
     final listWithBot = await _ensureBotIncluded(
       List<ChatConversation>.from(conversations),
     );
+    for (final c in listWithBot) {
+      if (!c.isGroup) {
+        final pId = c.peerUserId ?? int.tryParse(c.id);
+        if (pId != null && pId > 0) {
+          PresenceStore.instance.bindChatUser(c.id, pId);
+        }
+      }
+    }
     final snapshot = List<ChatConversation>.unmodifiable(listWithBot);
     conversationsNotifier.value = snapshot;
     final jsonList = snapshot
@@ -317,6 +347,12 @@ class LocalChatStorage {
           isRead: (m['isRead'] as bool?) ?? false,
           isDelivered:
               (m['isDelivered'] as bool?) ?? ((m['isRead'] as bool?) ?? false),
+          status: (m['status'] as String?) ??
+              ((m['isRead'] as bool? ?? false)
+                  ? 'read'
+                  : ((m['isDelivered'] as bool? ?? false)
+                      ? 'delivered'
+                      : 'sent')),
           isEdited: (m['isEdited'] as bool?) ?? false,
           isDeleted: (m['isDeleted'] as bool?) ?? false,
           isSaved: (m['isSaved'] as bool?) ?? false,
@@ -327,6 +363,11 @@ class LocalChatStorage {
               : null,
           reaction: normalizeChatReaction(m['reaction']),
           replyToId: int.tryParse(m['replyToId']?.toString() ?? ''),
+          msgType: m['msgType'] as String?,
+          callId: m['callId'] as int?,
+          callType: m['callType'] as String?,
+          callStatus: m['callStatus'] as String?,
+          callDuration: m['callDuration'] as int?,
         );
         if (!isMessageExpired(
           msg,
@@ -380,6 +421,11 @@ class LocalChatStorage {
             'expiresAt': message.expiresAt?.toIso8601String(),
             'reaction': message.reaction,
             'replyToId': message.replyToId,
+            'msgType': message.msgType,
+            'callId': message.callId,
+            'callType': message.callType,
+            'callStatus': message.callStatus,
+            'callDuration': message.callDuration,
           },
         )
         .toList();
@@ -445,12 +491,29 @@ class LocalChatStorage {
     // 1. Save Message
     final messages = await loadMessages(deviceId);
     if (epoch != _accountEpoch) return;
-    final existingIdx = messages.indexWhere(
-      (m) =>
-          m.id == message.id ||
-          (m.senderId == message.senderId &&
-              m.timestamp.difference(message.timestamp).inSeconds.abs() <= 5),
-    );
+    final existingIdx = messages.indexWhere((m) {
+      if (m.id == message.id) return true;
+      final isLocalId = m.id.startsWith('local_') ||
+          m.id.startsWith('fwd_') ||
+          message.id.startsWith('local_');
+      final isMediaMsg = m.hasMedia ||
+          message.hasMedia ||
+          m.type == 'image/gif' ||
+          message.type == 'image/gif';
+
+      if (isMediaMsg) {
+        return isLocalId &&
+            m.senderId == message.senderId &&
+            m.mediaUrl != null &&
+            m.mediaUrl!.isNotEmpty &&
+            m.mediaUrl == message.mediaUrl;
+      }
+
+      return isLocalId &&
+          m.senderId == message.senderId &&
+          m.content.trim() == message.content.trim() &&
+          m.timestamp.difference(message.timestamp).inSeconds.abs() <= 3;
+    });
     final isNewMessage = existingIdx < 0;
     if (existingIdx >= 0) {
       final existing = messages[existingIdx];
@@ -461,12 +524,14 @@ class LocalChatStorage {
           ? existing.content
           : message.content;
 
-      final effectiveMediaUrl =
-          (message.mediaUrl == null || message.mediaUrl!.isEmpty) &&
+      final isTextMsg = message.type == 'text' || message.type == 'text/plain';
+      final effectiveMediaUrl = isTextMsg
+          ? null
+          : ((message.mediaUrl == null || message.mediaUrl!.isEmpty) &&
                   existing.mediaUrl != null &&
                   existing.mediaUrl!.isNotEmpty
               ? existing.mediaUrl
-              : message.mediaUrl;
+              : message.mediaUrl);
 
       messages[existingIdx] = message.copyWith(
         content: effectiveContent,
@@ -564,7 +629,7 @@ class LocalChatStorage {
 
     for (var i = 0; i < messages.length; i++) {
       if (messages[i].senderId == 'user' && !messages[i].isDelivered) {
-        messages[i] = messages[i].copyWith(isDelivered: true);
+        messages[i] = messages[i].copyWith(isDelivered: true, status: 'delivered');
         updated = true;
       }
     }
@@ -581,6 +646,7 @@ class LocalChatStorage {
           'fileName': m.fileName,
           'isRead': m.isRead,
           'isDelivered': m.isDelivered,
+          'status': m.status,
           'isEdited': m.isEdited,
           'isDeleted': m.isDeleted,
           'reaction': m.reaction,
@@ -744,6 +810,37 @@ class LocalChatStorage {
     if (epoch != _accountEpoch) return;
     conversations.removeWhere((c) => c.id == chatId);
     _persistConversations(conversations);
+  }
+
+  Future<void> deleteLocalMessage(String deviceId, String messageId) async {
+    final epoch = _accountEpoch;
+    _prefs ??= await SharedPreferences.getInstance();
+    if (epoch != _accountEpoch) return;
+
+    final cached = await loadMessages(deviceId);
+    cached.removeWhere((m) => m.id == messageId);
+    await cacheMessages(deviceId, cached);
+
+    final conversations = await _currentConversations();
+    if (epoch != _accountEpoch) return;
+    final index = conversations.indexWhere((c) => c.id == deviceId);
+    if (index >= 0) {
+      final existing = conversations[index];
+      final latestMessage = cached.isNotEmpty ? cached.last : null;
+      if (latestMessage != null) {
+        conversations[index] = existing.copyWith(
+          lastMessage: latestMessage.previewText.isNotEmpty
+              ? latestMessage.previewText
+              : 'Message',
+          lastActivityAt: latestMessage.timestamp,
+        );
+      } else {
+        conversations[index] = existing.copyWith(
+          lastMessage: '',
+        );
+      }
+      _persistConversations(conversations);
+    }
   }
 
   Future<void> createOrGetConversation({

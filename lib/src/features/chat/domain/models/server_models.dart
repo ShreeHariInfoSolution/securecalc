@@ -385,6 +385,7 @@ class ServerChatModel {
   final List<UserModel> members;
   final String? updatedAt;
   final String? createdAt;
+  final String? deletedAt;
   final int? createdBy;
   final int? totalMembers;
   final int mediaTotal;
@@ -408,6 +409,7 @@ class ServerChatModel {
     required this.members,
     this.updatedAt,
     this.createdAt,
+    this.deletedAt,
     this.createdBy,
     this.totalMembers,
     this.mediaTotal = 0,
@@ -615,6 +617,7 @@ class ServerChatModel {
       members: membersList,
       updatedAt: (json['updated_at'] ?? json['updatedAt'])?.toString(),
       createdAt: (json['created_at'] ?? json['createdAt'])?.toString(),
+      deletedAt: (json['deleted_at'] ?? json['deletedAt'])?.toString(),
       createdBy: json['created_by'] is int
           ? json['created_by'] as int
           : int.tryParse(
@@ -657,6 +660,11 @@ class ServerMessageModel {
   final String? expiresAt;
   final String createdAt;
   final String? updatedAt;
+  final String? msgType;
+  final int? callId;
+  final String? callType;
+  final String? callStatus;
+  final int? callDuration;
 
   ServerMessageModel({
     required this.id,
@@ -681,6 +689,11 @@ class ServerMessageModel {
     this.expiresAt,
     required this.createdAt,
     this.updatedAt,
+    this.msgType,
+    this.callId,
+    this.callType,
+    this.callStatus,
+    this.callDuration,
   });
 
   factory ServerMessageModel.fromJson(Map<String, dynamic> json) {
@@ -744,6 +757,22 @@ class ServerMessageModel {
             ? 'delivered'
             : (rawStatus?.isNotEmpty == true ? rawStatus! : 'sent'));
 
+    final rawMsgType = (json['msg_type'] ?? json['msgType'])?.toString();
+    final rawCallId = json['call_id'] ?? json['callId'];
+    final rawCallType = (json['call_type'] ?? json['callType'])?.toString();
+    final rawCallStatus = (json['call_status'] ?? json['callStatus'])?.toString();
+    final rawCallDuration = json['call_duration'] ?? json['callDuration'];
+
+    final parsedCallId = rawCallId is int
+        ? rawCallId
+        : int.tryParse(rawCallId?.toString() ?? '');
+    final parsedCallDuration = rawCallDuration is int
+        ? rawCallDuration
+        : int.tryParse(rawCallDuration?.toString() ?? '');
+
+    final String? finalMsgType = rawMsgType ??
+        ((parsedCallId != null || rawCallStatus != null) ? 'call' : null);
+
     return ServerMessageModel(
       id: rawId is int ? rawId : int.tryParse(rawId?.toString() ?? '') ?? 0,
       chatHeadId: json['chat_head_id'] is int
@@ -785,6 +814,11 @@ class ServerMessageModel {
           (json['created_at'] ?? json['createdAt'])?.toString() ??
           DateTime.now().toIso8601String(),
       updatedAt: (json['updated_at'] ?? json['updatedAt'])?.toString(),
+      msgType: finalMsgType,
+      callId: parsedCallId,
+      callType: rawCallType,
+      callStatus: rawCallStatus,
+      callDuration: parsedCallDuration,
     );
   }
 
@@ -1199,3 +1233,207 @@ class ServerMessagesPageModel {
     );
   }
 }
+
+/// Represents a call history record from GET /calls/history
+class CallHistoryModel {
+  final int id;
+  final int callerId;
+  final int calleeId;
+  final String callType; // 'video' | 'voice'
+  final String status; // 'ended' | 'rejected' | 'missed' | 'declined' | 'cancelled' | 'active' | 'busy'
+  final String createdAt;
+  final String? answeredAt;
+  final String? endedAt;
+  final int? chatHeadId;
+  final String? callerName;
+  final String? calleeName;
+  final String? callerAvatar;
+  final String? calleeAvatar;
+  final bool? isOutgoingRaw;
+  final int? otherUserIdRaw;
+
+  CallHistoryModel({
+    required this.id,
+    required this.callerId,
+    required this.calleeId,
+    required this.callType,
+    required this.status,
+    required this.createdAt,
+    this.answeredAt,
+    this.endedAt,
+    this.chatHeadId,
+    this.callerName,
+    this.calleeName,
+    this.callerAvatar,
+    this.calleeAvatar,
+    this.isOutgoingRaw,
+    this.otherUserIdRaw,
+  });
+
+  factory CallHistoryModel.fromJson(Map<String, dynamic> json) {
+    final callerMap = json['caller'] is Map ? json['caller'] as Map : null;
+    final calleeMap = json['callee'] is Map ? json['callee'] as Map : null;
+
+    final rawChatHeadId = json['chat_head_id'] ?? json['chatHeadId'];
+    final parsedChatHeadId = rawChatHeadId is int
+        ? rawChatHeadId
+        : int.tryParse(rawChatHeadId?.toString() ?? '');
+
+    final isOutgoingJson = json['is_outgoing'] is bool ? json['is_outgoing'] as bool : null;
+    final otherUserIdJson = json['other_user_id'] is int
+        ? json['other_user_id'] as int
+        : int.tryParse(json['other_user_id']?.toString() ?? '');
+
+    return CallHistoryModel(
+      id: json['id'] is int
+          ? json['id'] as int
+          : int.tryParse(json['id']?.toString() ?? '0') ?? 0,
+      callerId: json['caller_id'] is int
+          ? json['caller_id'] as int
+          : int.tryParse(json['caller_id']?.toString() ?? '0') ?? 0,
+      calleeId: json['callee_id'] is int
+          ? json['callee_id'] as int
+          : int.tryParse(json['callee_id']?.toString() ?? '0') ?? 0,
+      callType: (json['call_type'] ?? json['callType'] ?? 'voice').toString(),
+      status: (json['status'] ?? 'ended').toString(),
+      createdAt: (json['created_at'] ?? json['createdAt'] ?? DateTime.now().toIso8601String()).toString(),
+      answeredAt: json['answered_at']?.toString() ?? json['answeredAt']?.toString(),
+      endedAt: json['ended_at']?.toString() ?? json['endedAt']?.toString(),
+      chatHeadId: parsedChatHeadId,
+      callerName: callerMap != null
+          ? (callerMap['name'] ?? callerMap['username'])?.toString()
+          : (json['caller_name'] ?? json['callerName'])?.toString(),
+      calleeName: calleeMap != null
+          ? (calleeMap['name'] ?? calleeMap['username'])?.toString()
+          : (json['callee_name'] ?? json['calleeName'])?.toString(),
+      callerAvatar: callerMap != null
+          ? callerMap['avatar']?.toString()
+          : (json['caller_avatar'] ?? json['callerAvatar'])?.toString(),
+      calleeAvatar: calleeMap != null
+          ? calleeMap['avatar']?.toString()
+          : (json['callee_avatar'] ?? json['calleeAvatar'])?.toString(),
+      isOutgoingRaw: isOutgoingJson,
+      otherUserIdRaw: otherUserIdJson,
+    );
+  }
+
+  bool isOutgoing(int? currentUserId) {
+    if (isOutgoingRaw != null) return isOutgoingRaw!;
+    return callerId == currentUserId;
+  }
+
+  int getPeerUserId(int? currentUserId) {
+    if (otherUserIdRaw != null && otherUserIdRaw! > 0) return otherUserIdRaw!;
+    return isOutgoing(currentUserId) ? calleeId : callerId;
+  }
+
+  bool get isMissed {
+    final s = status.toLowerCase().trim();
+    if (s == 'missed' ||
+        s == 'rejected' ||
+        s == 'declined' ||
+        s == 'cancelled' ||
+        s == 'busy' ||
+        s == 'no answer') {
+      return true;
+    }
+    if (s == 'ended' && answeredAt == null) {
+      return true;
+    }
+    return false;
+  }
+
+  String get formattedDuration {
+    if (answeredAt != null && endedAt != null) {
+      try {
+        final start = DateTime.parse(answeredAt!).toLocal();
+        final end = DateTime.parse(endedAt!).toLocal();
+        final diff = end.difference(start);
+        if (diff.inSeconds <= 0) return '0s';
+        if (diff.inSeconds < 60) return '${diff.inSeconds}s';
+        final minutes = diff.inMinutes;
+        final seconds = diff.inSeconds % 60;
+        if (seconds == 0) return '${minutes}m';
+        return '${minutes}m ${seconds}s';
+      } catch (_) {}
+    }
+    final s = status.toLowerCase().trim();
+    if (s == 'rejected') return 'Rejected';
+    if (s == 'missed') return 'Missed';
+    if (s == 'declined') return 'Declined';
+    if (s == 'cancelled') return 'Cancelled';
+    return s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : 'Ended';
+  }
+
+  DateTime get createdDateTime {
+    try {
+      return DateTime.parse(createdAt).toLocal();
+    } catch (_) {
+      return DateTime.now();
+    }
+  }
+}
+
+/// Paginated call history response wrapper
+class CallHistoryPaginatedResponse {
+  final List<CallHistoryModel> items;
+  final int page;
+  final int limit;
+  final int total;
+  final int totalPages;
+  final bool hasMore;
+
+  CallHistoryPaginatedResponse({
+    required this.items,
+    required this.page,
+    required this.limit,
+    required this.total,
+    required this.totalPages,
+    required this.hasMore,
+  });
+
+  factory CallHistoryPaginatedResponse.fromJson(Map<String, dynamic> json) {
+    final data = json['data'] is Map<String, dynamic>
+        ? json['data'] as Map<String, dynamic>
+        : (json['data'] is Map ? Map<String, dynamic>.from(json['data'] as Map) : <String, dynamic>{});
+
+    final itemsRaw = data['items'] is List
+        ? data['items'] as List
+        : (json['items'] is List ? json['items'] as List : []);
+
+    final items = itemsRaw
+        .whereType<Map>()
+        .map((e) => CallHistoryModel.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+
+    final page = data['page'] is int
+        ? data['page'] as int
+        : int.tryParse(data['page']?.toString() ?? '1') ?? 1;
+
+    final limit = data['limit'] is int
+        ? data['limit'] as int
+        : int.tryParse(data['limit']?.toString() ?? '20') ?? 20;
+
+    final total = data['total'] is int
+        ? data['total'] as int
+        : int.tryParse(data['total']?.toString() ?? '0') ?? items.length;
+
+    final totalPages = data['total_pages'] is int
+        ? data['total_pages'] as int
+        : int.tryParse(data['total_pages']?.toString() ?? '1') ?? 1;
+
+    final hasMore = data['has_more'] is bool
+        ? data['has_more'] as bool
+        : (page < totalPages);
+
+    return CallHistoryPaginatedResponse(
+      items: items,
+      page: page,
+      limit: limit,
+      total: total,
+      totalPages: totalPages,
+      hasMore: hasMore,
+    );
+  }
+}
+

@@ -7,10 +7,12 @@ import 'core/theme/app_theme.dart';
 import 'core/theme/font_size_controller.dart';
 import 'core/theme/theme_controller.dart';
 import 'features/calculator/presentation/pages/calculator_page.dart';
+import 'features/chat/domain/services/call_service.dart';
 import 'features/chat/domain/services/push_service.dart';
 import 'features/chat/domain/services/server_api_service.dart';
 import 'features/chat/domain/services/server_chat_manager.dart';
 import 'features/chat/domain/services/socket_chat_service.dart';
+import 'features/chat/presentation/widgets/global_call_overlay.dart';
 
 /// Global key to access root navigator state from lifecycle events.
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -32,8 +34,9 @@ class _SynqChatAppState extends State<SynqChatApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (AppPreferences.isPickerActive || AppPreferences.isChangingSettings)
+    if (AppPreferences.isPickerActive || AppPreferences.isChangingSettings) {
       return;
+    }
 
     if (state == AppLifecycleState.resumed) {
       unawaited(PushService.instance.clearBadge());
@@ -44,14 +47,21 @@ class _SynqChatAppState extends State<SynqChatApp> with WidgetsBindingObserver {
     }
 
     // Lock back to Calculator when app is minimized, sent to background, inactive, or in Recents App switcher
+    // Note: Do NOT lock or cut calls if an active or ringing call is currently in progress
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
-      _lockToCalculator();
+      if (CallService.instance.state == CallState.idle) {
+        _lockToCalculator();
+      }
     }
   }
 
   void _lockToCalculator() {
+    if (CallService.instance.state != CallState.idle) {
+      return;
+    }
+    CallService.instance.hangUp();
     final nav = navigatorKey.currentState;
     if (nav != null) {
       nav.pushAndRemoveUntil(
@@ -69,6 +79,7 @@ class _SynqChatAppState extends State<SynqChatApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    CallService.instance.hangUp();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -92,7 +103,7 @@ class _SynqChatAppState extends State<SynqChatApp> with WidgetsBindingObserver {
                 return MediaQuery(
                   data: MediaQuery.of(context)
                       .copyWith(textScaler: TextScaler.linear(fontScale)),
-                  child: child!,
+                  child: GlobalCallOverlay(child: child!),
                 );
               },
               home: const CalculatorPage(),

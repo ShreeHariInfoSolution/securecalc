@@ -113,18 +113,19 @@ class AttachmentCacheService {
   String? resolveLocalPathSync(String? mediaUrl) {
     if (mediaUrl == null || mediaUrl.isEmpty) return null;
     if (_urlToPathCache.containsKey(mediaUrl)) {
-      final cachedPath = _urlToPathCache[mediaUrl];
-      if (cachedPath != null && File(cachedPath).existsSync()) {
-        return cachedPath;
-      }
+      return _urlToPathCache[mediaUrl];
     }
     if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
-      if (File(mediaUrl).existsSync()) {
-        _urlToPathCache[mediaUrl] = mediaUrl;
-        return mediaUrl;
-      }
+      return mediaUrl;
     }
     return null;
+  }
+
+  bool isCachedInMemory(String? mediaUrl) {
+    if (mediaUrl == null || mediaUrl.isEmpty) return false;
+    if (_urlToPathCache.containsKey(mediaUrl)) return true;
+    if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) return true;
+    return false;
   }
 
   void updateCache(String mediaUrl, String localPath) {

@@ -8,6 +8,7 @@ import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/services/bot_assistant_service.dart';
 import '../../domain/services/local_chat_storage.dart';
+import '../widgets/chat_typing_indicator.dart';
 import '../widgets/chat_wallpaper_widget.dart';
 
 class BotChatDetailPage extends StatefulWidget {
@@ -40,6 +41,7 @@ class _BotChatDetailPageState extends State<BotChatDetailPage> {
 
   List<ChatMessage> _messages = [];
   bool _isBotTyping = false;
+  bool _isSending = false;
 
   @override
   void initState() {
@@ -84,8 +86,9 @@ class _BotChatDetailPageState extends State<BotChatDetailPage> {
 
   Future<void> _handleUserSend(String text) async {
     final query = text.trim();
-    if (query.isEmpty) return;
+    if (query.isEmpty || _isSending || _isBotTyping) return;
 
+    _isSending = true;
     _inputController.clear();
 
     final userMessage = ChatMessage(
@@ -111,34 +114,38 @@ class _BotChatDetailPageState extends State<BotChatDetailPage> {
       markUnread: false,
     );
 
-    // Simulate natural AI thinking delay
-    await Future.delayed(const Duration(milliseconds: 650));
+    try {
+      // Simulate natural AI thinking delay
+      await Future.delayed(const Duration(milliseconds: 650));
 
-    final botAnswer = BotAssistantService.instance.getBotResponse(query);
+      final botAnswer = BotAssistantService.instance.getBotResponse(query);
 
-    final botMessage = ChatMessage(
-      id: 'bot_${DateTime.now().millisecondsSinceEpoch}',
-      senderId: BotAssistantService.botId,
-      content: botAnswer,
-      timestamp: DateTime.now(),
-      isRead: true,
-      isDelivered: true,
-    );
+      final botMessage = ChatMessage(
+        id: 'bot_${DateTime.now().millisecondsSinceEpoch}',
+        senderId: BotAssistantService.botId,
+        content: botAnswer,
+        timestamp: DateTime.now(),
+        isRead: true,
+        isDelivered: true,
+      );
 
-    if (mounted) {
-      setState(() {
-        _messages.add(botMessage);
-        _isBotTyping = false;
-      });
-      _scrollToBottom();
+      if (mounted) {
+        setState(() {
+          _messages.add(botMessage);
+          _isBotTyping = false;
+        });
+        _scrollToBottom();
+      }
+
+      await LocalChatStorage.instance.saveMessage(
+        deviceId: BotAssistantService.botId,
+        peerName: BotAssistantService.botName,
+        message: botMessage,
+        markUnread: false,
+      );
+    } finally {
+      _isSending = false;
     }
-
-    await LocalChatStorage.instance.saveMessage(
-      deviceId: BotAssistantService.botId,
-      peerName: BotAssistantService.botName,
-      message: botMessage,
-      markUnread: false,
-    );
   }
 
   @override
@@ -488,45 +495,11 @@ class _BotChatDetailPageState extends State<BotChatDetailPage> {
   Widget _buildBotTypingBubble(bool isDark, Color botBubbleColor) {
     return Align(
       alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: botBubbleColor,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(18),
-            topRight: Radius.circular(18),
-            bottomRight: Radius.circular(18),
-            bottomLeft: Radius.circular(4),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 4,
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF007AFF)),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Calnox AI is thinking...',
-              style: TextStyle(
-                fontSize: 13,
-                fontStyle: FontStyle.italic,
-                color: AppTheme.secondaryText(isDark),
-              ),
-            ),
-          ],
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 6, top: 4),
+        child: ChatTypingIndicator(
+          chatName: BotAssistantService.botName,
+          chatAvatar: '',
         ),
       ),
     );

@@ -284,7 +284,7 @@ class _PrivateFolderPageState extends State<PrivateFolderPage> {
     try {
       final XFile? file = await _imagePicker.pickImage(
         source: source,
-        imageQuality: 85,
+        imageQuality: source == ImageSource.camera ? null : 85,
       );
       if (file != null) {
         await _uploadFileToVault(File(file.path));

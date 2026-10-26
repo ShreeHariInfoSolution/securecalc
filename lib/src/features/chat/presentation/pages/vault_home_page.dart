@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/core/widgets/vault_edge_panel_wrapper.dart';
 import 'package:securecalc/src/features/calculator/presentation/pages/calculator_page.dart';
@@ -84,6 +85,9 @@ class _VaultHomePageState extends State<VaultHomePage> {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
+        FocusManager.instance.primaryFocus?.unfocus();
+        FocusScope.of(context).unfocus();
+        SystemChannels.textInput.invokeMethod('TextInput.hide');
         Navigator.of(context).pushAndRemoveUntil(
           PageRouteBuilder(
             transitionDuration: Duration.zero,

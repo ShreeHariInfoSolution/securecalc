@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/typing_dots.dart';
+import 'package:securecalc/src/features/chat/domain/services/local_chat_storage.dart';
 
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
@@ -30,16 +31,20 @@ class ConversationTile extends StatelessWidget {
     final showTyping = isTyping || conversation.isTyping;
     final hasUnread = conversation.unreadCount > 0;
 
+    final draftText = LocalChatStorage.instance.getDraft(conversation.id);
+    final hasDraft = draftText != null && draftText.trim().isNotEmpty;
+
     final lastMsg = conversation.messages.isNotEmpty
         ? conversation.messages.last
         : null;
+
     final isLastMsgFromMe = lastMsg != null && lastMsg.senderId == 'user';
 
     IconData? statusIcon;
     Color? statusColor;
 
     if (isLastMsgFromMe) {
-      final status = lastMsg!.messageStatus;
+      final status = lastMsg.messageStatus;
       if (status == MessageStatus.sending) {
         statusIcon = Icons.access_time_rounded;
         statusColor = AppTheme.secondaryText(isDark);
@@ -222,8 +227,7 @@ class ConversationTile extends StatelessWidget {
                                     )
                                   : Row(
                                       children: [
-                                        if (isLastMsgFromMe &&
-                                            statusIcon != null) ...[
+                                        if (!hasDraft && isLastMsgFromMe && statusIcon != null) ...[
                                           Icon(
                                             statusIcon,
                                             size: 16,
@@ -232,22 +236,47 @@ class ConversationTile extends StatelessWidget {
                                           const SizedBox(width: 4),
                                         ],
                                         Expanded(
-                                          child: Text(
-                                            conversation.lastMessage,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              color: hasUnread
-                                                  ? AppTheme.primaryText(isDark)
-                                                  : AppTheme.secondaryText(
-                                                    isDark,
+                                          child: hasDraft
+                                              ? RichText(
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  text: TextSpan(
+                                                    children: [
+                                                      const TextSpan(
+                                                        text: 'Draft: ',
+                                                        style: TextStyle(
+                                                          color: Color(0xFFFF3B30),
+                                                          fontWeight: FontWeight.bold,
+                                                          fontSize: 14,
+                                                        ),
+                                                      ),
+                                                      TextSpan(
+                                                        text: draftText.trim(),
+                                                        style: TextStyle(
+                                                          color: AppTheme.secondaryText(isDark),
+                                                          fontSize: 14,
+                                                          fontStyle: FontStyle.italic,
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
-                                              fontWeight: hasUnread
-                                                  ? FontWeight.w500
-                                                  : FontWeight.w400,
-                                            ),
-                                          ),
+                                                )
+                                              : Text(
+                                                  conversation.lastMessage,
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    fontSize: 14,
+                                                    color: hasUnread
+                                                        ? AppTheme.primaryText(isDark)
+                                                        : AppTheme.secondaryText(
+                                                          isDark,
+                                                        ),
+                                                    fontWeight: hasUnread
+                                                        ? FontWeight.w500
+                                                        : FontWeight.w400,
+                                                  ),
+                                                ),
                                         ),
                                       ],
                                     ),

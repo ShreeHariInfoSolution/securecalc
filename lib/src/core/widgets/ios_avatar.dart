@@ -352,6 +352,9 @@ class IosAvatar extends StatelessWidget {
     final hasLocalImage = resolvedImage != null && !hasNetworkImage;
 
     final baseColor = _getDeterministicColor(name);
+    final cleanName = name.trim();
+    final initials = _getInitials(cleanName);
+    final showPersonIcon = cleanName.isEmpty || initials == '?' || cleanName.startsWith('User #');
 
     final fallbackInitials = Container(
       width: size,
@@ -375,15 +378,21 @@ class IosAvatar extends StatelessWidget {
         ],
       ),
       alignment: Alignment.center,
-      child: Text(
-        _getInitials(name),
-        style: TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.bold,
-          fontSize: size * 0.36,
-          decoration: TextDecoration.none,
-        ),
-      ),
+      child: showPersonIcon
+          ? Icon(
+              Icons.person_rounded,
+              color: Colors.white,
+              size: size * 0.54,
+            )
+          : Text(
+              initials,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: size * 0.36,
+                decoration: TextDecoration.none,
+              ),
+            ),
     );
 
     final isBot = name.contains('Calnox AI') || name.contains('AI Assistant');

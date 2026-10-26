@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:securecalc/src/features/chat/domain/services/push_service.dart';
 
 import '../../../../core/config/app_preferences.dart';
 import '../entities/chat_conversation.dart';
@@ -330,7 +329,21 @@ class ServerChatManager {
       }
 
       // Transient WebSocket states (typing / presence / pin / mute / archive)
-      final isOnline = peer?.isOnline == true || (liveLocal?.isOnline ?? false);
+      final livePresence = peer != null ? PresenceStore.instance.getPresence(peer.id) : null;
+
+      if (peer != null && livePresence == null) {
+        PresenceStore.instance.updatePresence({
+          'user_id': peer.id,
+          'is_online': peer.isOnline,
+          'last_seen_at': peer.lastSeenAt,
+          'last_seen_text': peer.lastSeenText ?? (peer.isOnline ? 'online' : null),
+          'chat_head_id': chatIdStr,
+        });
+      }
+
+      final isOnline = livePresence != null
+          ? livePresence.isOnline
+          : (peer?.isOnline == true || (liveLocal?.isOnline ?? false));
       final peerLastSeen = peer?.lastSeenAt != null
           ? DateTime.tryParse(peer!.lastSeenAt!)?.toLocal()
           : null;
@@ -492,30 +505,75 @@ class ServerChatManager {
         }
 
         final cachedMessage = cachedById[sm.id.toString()];
+        final isSmCall = sm.msgType == 'call' || sm.callStatus != null || sm.callId != null;
+        final smFileType = sm.fileType?.toLowerCase().trim();
+        final rawFilePath = sm.filePath?.trim();
+        final rawFileName = sm.fileName?.trim();
+
+        final msgContent = sm.isDeleted
+            ? 'This message was deleted'
+            : (plaintext.isEmpty
+                ? (cachedMessage?.content.isNotEmpty == true
+                    ? cachedMessage!.content
+                    : (sm.message ?? ''))
+                : plaintext);
+
+        final msgText = msgContent.trim();
+        final isGifContent = smFileType == 'image/gif' ||
+            smFileType == 'gif' ||
+            (msgText.startsWith('http://') || msgText.startsWith('https://')) &&
+                (msgText.toLowerCase().contains('.gif') ||
+                    msgText.toLowerCase().contains('giphy.com') ||
+                    msgText.toLowerCase().contains('tenor.com'));
+
+        final isStickerContent = smFileType == 'sticker' || msgText.startsWith('stk_');
+
+        final isMediaContent = isGifContent ||
+            isStickerContent ||
+            (rawFilePath != null && rawFilePath.isNotEmpty) ||
+            (rawFileName != null && rawFileName.isNotEmpty);
+
+        final isSmText = !isSmCall &&
+            !isMediaContent &&
+            (smFileType == 'text' || smFileType == 'text/plain' || smFileType == null || smFileType.isEmpty);
+
+        final effectiveType = isSmCall
+            ? 'call'
+            : (isStickerContent
+                ? 'sticker'
+                : (isGifContent
+                    ? 'image/gif'
+                    : (isSmText
+                        ? 'text'
+                        : (inferAttachmentType(
+                              fileType: sm.fileType,
+                              fileName: sm.fileName,
+                              filePath: sm.filePath,
+                            ) ??
+                            cachedMessage?.type ??
+                            'application/octet-stream'))));
+
+        final effectiveMediaUrl = isSmText || isSmCall
+            ? null
+            : ((rawFilePath != null && rawFilePath.isNotEmpty)
+                ? rawFilePath
+                : (isGifContent ? msgText : cachedMessage?.mediaUrl));
+
         final msg = ChatMessage(
           id: sm.id.toString(),
           senderId: isMe ? 'user' : sm.senderId.toString(),
-          content: sm.isDeleted
-              ? 'This message was deleted'
-              : (plaintext.isEmpty ? cachedMessage?.content ?? '' : plaintext),
+          content: msgContent,
           timestamp: ts,
-          type:
-              inferAttachmentType(
-                fileType: sm.fileType,
-                fileName: sm.fileName,
-                filePath: sm.filePath,
-              ) ??
-              (sm.filePath != null && sm.filePath!.trim().isNotEmpty
-                  ? 'application/octet-stream'
-                  : cachedMessage?.type ?? 'text'),
-          mediaUrl: (sm.filePath != null && sm.filePath!.trim().isNotEmpty)
-              ? sm.filePath
-              : cachedMessage?.mediaUrl,
-          fileName: (sm.fileName != null && sm.fileName!.trim().isNotEmpty)
-              ? sm.fileName
-              : cachedMessage?.fileName,
+          type: effectiveType,
+          mediaUrl: effectiveMediaUrl,
+          fileName: isSmText || isSmCall
+              ? null
+              : ((sm.fileName != null && sm.fileName!.trim().isNotEmpty)
+                  ? sm.fileName
+                  : cachedMessage?.fileName),
           isRead: isMe ? sm.isRead : true,
           isDelivered: isMe ? (sm.isDelivered || sm.isRead) : true,
+          status: isMe ? sm.status : 'read',
           isEdited: sm.isEdited,
           isDeleted: sm.isDeleted,
           isSaved: sm.isSaved,
@@ -524,6 +582,11 @@ class ServerChatManager {
           updatedAt: DateTime.tryParse(sm.updatedAt ?? ''),
           reaction: sm.chatReact,
           replyToId: sm.replyToId,
+          msgType: sm.msgType ?? (isSmCall ? 'call' : null),
+          callId: sm.callId,
+          callType: sm.callType,
+          callStatus: sm.callStatus,
+          callDuration: sm.callDuration,
         );
 
         if (!isMessageExpired(
@@ -598,7 +661,7 @@ class ServerChatManager {
   }
 
   /// Sends a new message via REST API and Socket.IO
-  Future<bool> sendMessage({
+  Future<ChatMessage?> sendMessage({
     required String chatId,
     required String peerName,
     required String text,
@@ -648,10 +711,10 @@ class ServerChatManager {
               clientId: clientId,
             );
           } catch (_) {
-            return false;
+            return null;
           }
         } else {
-          return false;
+          return null;
         }
       }
     }
@@ -664,7 +727,7 @@ class ServerChatManager {
 
     if (requestUserId != ServerApiService.instance.currentUserId ||
         requestToken != ServerApiService.instance.authToken) {
-      return false;
+      return null;
     }
 
     final msg = ChatMessage(
@@ -679,6 +742,7 @@ class ServerChatManager {
       fileName: fileName,
       isRead: serverMessage?.isRead ?? false,
       isDelivered: serverMessage?.isDelivered ?? false,
+      status: serverMessage?.status ?? 'sent',
       isEdited: serverMessage?.isEdited ?? false,
       replyToId: serverMessage?.replyToId ?? replyToId,
     );
@@ -693,7 +757,7 @@ class ServerChatManager {
 
     unawaited(syncChats());
 
-    return true;
+    return msg;
   }
 
   /// Marks a chat as read via Socket.IO & REST API
@@ -806,6 +870,18 @@ class ServerChatManager {
             ?.toString();
     if (messageId == null || chatId == null) return;
 
+    final rawDeleteType = data['type'] ?? data['delete_type'];
+    final deleteType = rawDeleteType is int
+        ? rawDeleteType
+        : int.tryParse(rawDeleteType?.toString() ?? '1') ?? 1;
+
+    if (deleteType == 2) {
+      // Delete for me
+      await LocalChatStorage.instance.deleteLocalMessage(chatId, messageId);
+      return;
+    }
+
+    // Delete for everyone (deleteType == 1)
     final messages = await LocalChatStorage.instance.loadMessages(chatId);
     final index = messages.indexWhere((message) => message.id == messageId);
     if (index < 0) return;
@@ -914,14 +990,21 @@ class ServerChatManager {
   }
 
   Future<void> _handlePresenceEvent(Map<String, dynamic> event) async {
-    PresenceStore.instance.updatePresence(event);
-
     final data = event['data'] is Map
         ? Map<String, dynamic>.from(event['data'] as Map)
         : event;
     final userId = int.tryParse(
       (data['user_id'] ?? data['userId'] ?? data['id'])?.toString() ?? '',
     );
+
+    final myUserId = ServerApiService.instance.currentUserId;
+    if (myUserId != null && myUserId > 0 && userId != null && userId == myUserId) {
+      // Do not process presence events for myself
+      return;
+    }
+
+    PresenceStore.instance.updatePresence(event);
+
     final chatHeadId =
         (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'])
             ?.toString();
@@ -968,7 +1051,7 @@ class ServerChatManager {
           lastSeenAt:
               isOnline
                   ? null
-                  : (parsedLastSeen ?? conversation.lastSeenAt ?? DateTime.now()),
+                  : (parsedLastSeen ?? conversation.lastSeenAt),
         ),
       );
     }
@@ -992,41 +1075,84 @@ class ServerChatManager {
         final isMe = currentUserId != null && sm.senderId == currentUserId;
 
         final plaintext = sm.decryptedContent('chat_key_${sm.chatHeadId}');
+        final isSmCall = sm.msgType == 'call' || sm.callStatus != null || sm.callId != null;
 
         // Safety check: Ignore malformed socket message events that carry no valid message id, content, or media
         if (sm.id <= 0 ||
             (!sm.isDeleted &&
                 plaintext.trim().isEmpty &&
-                (sm.filePath == null || sm.filePath!.trim().isEmpty))) {
+                (sm.filePath == null || sm.filePath!.trim().isEmpty) &&
+                !isSmCall)) {
           debugPrint(
             '[SERVER CHAT] Ignoring malformed socket new_message event with empty content for id=${sm.id}',
           );
           return;
         }
 
+        final smFileType = sm.fileType?.toLowerCase().trim();
+        final rawFilePath = sm.filePath?.trim();
+        final rawFileName = sm.fileName?.trim();
+
+        final msgContent = sm.isDeleted
+            ? 'This message was deleted'
+            : (plaintext.isEmpty ? (sm.message ?? '') : plaintext);
+
+        final msgText = msgContent.trim();
+        final isGifContent = smFileType == 'image/gif' ||
+            smFileType == 'gif' ||
+            (msgText.startsWith('http://') || msgText.startsWith('https://')) &&
+                (msgText.toLowerCase().contains('.gif') ||
+                    msgText.toLowerCase().contains('giphy.com') ||
+                    msgText.toLowerCase().contains('tenor.com'));
+
+        final isStickerContent = smFileType == 'sticker' || msgText.startsWith('stk_');
+
+        final isMediaContent = isGifContent ||
+            isStickerContent ||
+            (rawFilePath != null && rawFilePath.isNotEmpty) ||
+            (rawFileName != null && rawFileName.isNotEmpty);
+
+        final isSmText = !isSmCall &&
+            !isMediaContent &&
+            (smFileType == 'text' || smFileType == 'text/plain' || smFileType == null || smFileType.isEmpty);
+
+        final effectiveType = isSmCall
+            ? 'call'
+            : (isStickerContent
+                ? 'sticker'
+                : (isGifContent
+                    ? 'image/gif'
+                    : (isSmText
+                        ? 'text'
+                        : (inferAttachmentType(
+                              fileType: sm.fileType,
+                              fileName: sm.fileName,
+                              filePath: sm.filePath,
+                            ) ??
+                            'application/octet-stream'))));
+
+        final effectiveMediaUrl = isSmText || isSmCall
+            ? null
+            : ((rawFilePath != null && rawFilePath.isNotEmpty)
+                ? rawFilePath
+                : (isGifContent ? msgText : null));
+
         final msg = ChatMessage(
           id: sm.id.toString(),
           senderId: isMe ? 'user' : sm.senderId.toString(),
-          content: sm.isDeleted ? 'This message was deleted' : plaintext,
+          content: msgContent,
           timestamp:
               DateTime.tryParse(sm.createdAt)?.toLocal() ?? DateTime.now(),
-          type:
-              inferAttachmentType(
-                fileType: sm.fileType,
-                fileName: sm.fileName,
-                filePath: sm.filePath,
-              ) ??
-              (sm.filePath != null && sm.filePath!.trim().isNotEmpty
-                  ? 'application/octet-stream'
-                  : 'text'),
-          mediaUrl: (sm.filePath != null && sm.filePath!.trim().isNotEmpty)
-              ? sm.filePath
-              : null,
-          fileName: (sm.fileName != null && sm.fileName!.trim().isNotEmpty)
-              ? sm.fileName
-              : null,
+          type: effectiveType,
+          mediaUrl: effectiveMediaUrl,
+          fileName: isSmText || isSmCall
+              ? null
+              : ((sm.fileName != null && sm.fileName!.trim().isNotEmpty)
+                  ? sm.fileName
+                  : null),
           isRead: isMe ? sm.isRead : false,
           isDelivered: isMe ? (sm.isDelivered || sm.isRead) : true,
+          status: isMe ? sm.status : 'delivered',
           isEdited: sm.isEdited,
           isDeleted: sm.isDeleted,
           isSaved: sm.isSaved,
@@ -1035,6 +1161,11 @@ class ServerChatManager {
           updatedAt: DateTime.tryParse(sm.updatedAt ?? ''),
           reaction: sm.chatReact,
           replyToId: sm.replyToId,
+          msgType: sm.msgType ?? (isSmCall ? 'call' : null),
+          callId: sm.callId,
+          callType: sm.callType,
+          callStatus: sm.callStatus,
+          callDuration: sm.callDuration,
         );
 
         final conversations =

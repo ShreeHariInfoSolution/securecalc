@@ -16,6 +16,14 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 subprojects {
+    plugins.withId("java") {
+        extensions.findByType<JavaPluginExtension>()?.toolchain {
+            languageVersion.set(JavaLanguageVersion.of(17))
+        }
+    }
+}
+
+subprojects {
     project.evaluationDependsOn(":app")
 }
 

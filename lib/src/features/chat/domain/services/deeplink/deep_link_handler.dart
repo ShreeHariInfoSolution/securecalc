@@ -6,6 +6,7 @@ import 'package:app_links/app_links.dart';
 import '../server_api_service.dart';
 import '../server_chat_manager.dart';
 import '../chat_invite_service.dart';
+import '../call_service.dart';
 import '../../../presentation/pages/chat_detail_page.dart';
 import '../../../../../core/ui/vault_page_route.dart';
 import '../../entities/chat_conversation.dart';
@@ -67,6 +68,11 @@ class DeepLinkHandler {
   }
 
   Future<void> _processLink(BuildContext context, Uri uri) async {
+    if (uri.scheme == 'securecalc' && uri.host == 'hangup') {
+      await CallService.instance.hangUp();
+      return;
+    }
+
     // Support both custom scheme and standard HTTPS fallback
     if (uri.scheme != 'securecalc' && uri.scheme != 'https') return;
     if (uri.scheme == 'https' && uri.host != 'realragnardev-dotcom.github.io')

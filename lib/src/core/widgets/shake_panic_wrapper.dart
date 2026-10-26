@@ -35,6 +35,10 @@ class _ShakePanicWrapperState extends State<ShakePanicWrapper> {
 
     HapticFeedback.heavyImpact();
 
+    FocusManager.instance.primaryFocus?.unfocus();
+    FocusScope.of(context).unfocus();
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+
     // Instantly navigate back to CalculatorPage clearing route history
     Navigator.of(context).pushAndRemoveUntil(
       PageRouteBuilder(

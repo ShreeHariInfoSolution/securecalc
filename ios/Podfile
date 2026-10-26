@@ -50,6 +50,8 @@ post_install do |installer|
         defs << 'PERMISSION_MICROPHONE=1'
         defs << 'PERMISSION_SENSORS=1'
         defs << 'PERMISSION_NOTIFICATIONS=1'
+        defs << 'PERMISSION_BLUETOOTH=1'
+        defs << 'PERMISSION_LOCATION=1'
       elsif defs.is_a?(String)
         config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = [
           defs,
@@ -58,6 +60,8 @@ post_install do |installer|
           'PERMISSION_MICROPHONE=1',
           'PERMISSION_SENSORS=1',
           'PERMISSION_NOTIFICATIONS=1',
+          'PERMISSION_BLUETOOTH=1',
+          'PERMISSION_LOCATION=1',
         ]
       else
         config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = [
@@ -67,6 +71,8 @@ post_install do |installer|
           'PERMISSION_MICROPHONE=1',
           'PERMISSION_SENSORS=1',
           'PERMISSION_NOTIFICATIONS=1',
+          'PERMISSION_BLUETOOTH=1',
+          'PERMISSION_LOCATION=1',
         ]
       end
     end

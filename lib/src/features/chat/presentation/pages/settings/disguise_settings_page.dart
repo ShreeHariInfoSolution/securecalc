@@ -39,6 +39,7 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
             ? AppTheme.darkBackground
             : AppTheme.lightBackground,
         body: SafeArea(
+          bottom: false,
           child: Column(
             children: [
               // Header matching Screenshot 4
@@ -47,10 +48,10 @@ class _DisguiseSettingsPageState extends State<DisguiseSettingsPage> {
               // Settings Items Card
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 8.0,
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
                   ),
+                  padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 100.0),
                   children: [
                     Container(
                       decoration: BoxDecoration(

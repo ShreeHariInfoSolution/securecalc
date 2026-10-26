@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_theme.dart';
@@ -8,9 +6,10 @@ import '../../domain/entities/chat_message.dart';
 import '../../domain/services/attachment_cache_service.dart';
 import '../../domain/services/server_api_service.dart';
 import 'chat_bubble.dart';
+import 'chat_typing_indicator.dart';
 import 'swipe_to_reply.dart';
 
-class ChatMessageList extends StatelessWidget {
+class ChatMessageList extends StatefulWidget {
   final List<ChatMessage> messages;
   final bool isLoadingMessages;
   final bool isLoadingMore;
@@ -37,6 +36,8 @@ class ChatMessageList extends StatelessWidget {
   final bool isSelectionMode;
   final Set<String> selectedMessageIds;
   final Function(ChatMessage)? onToggleSelectMessage;
+  final VoidCallback? onVoiceCallTap;
+  final VoidCallback? onVideoCallTap;
 
   const ChatMessageList({
     super.key,
@@ -66,7 +67,50 @@ class ChatMessageList extends StatelessWidget {
     this.isSelectionMode = false,
     this.selectedMessageIds = const <String>{},
     this.onToggleSelectMessage,
+    this.onVoiceCallTap,
+    this.onVideoCallTap,
   });
+
+  @override
+  State<ChatMessageList> createState() => _ChatMessageListState();
+}
+
+class _ChatMessageListState extends State<ChatMessageList> {
+  final Set<String> _animatedMessageIds = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    for (final m in widget.messages) {
+      _animatedMessageIds.add(m.id);
+    }
+  }
+
+  @override
+  void didUpdateWidget(ChatMessageList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_animatedMessageIds.isEmpty && widget.messages.isNotEmpty) {
+      for (final m in widget.messages) {
+        _animatedMessageIds.add(m.id);
+      }
+    }
+
+    // Map optimistic local IDs that transition to server IDs
+    for (final newMsg in widget.messages) {
+      if (!_animatedMessageIds.contains(newMsg.id)) {
+        final matchedOldLocal = oldWidget.messages.any(
+          (oldMsg) =>
+              (oldMsg.id.startsWith('local_') || oldMsg.id.startsWith('fwd_')) &&
+              _animatedMessageIds.contains(oldMsg.id) &&
+              oldMsg.senderId == newMsg.senderId &&
+              oldMsg.content.trim() == newMsg.content.trim(),
+        );
+        if (matchedOldLocal) {
+          _animatedMessageIds.add(newMsg.id);
+        }
+      }
+    }
+  }
 
   bool _sameDay(DateTime first, DateTime second) =>
       first.year == second.year &&
@@ -84,8 +128,9 @@ class ChatMessageList extends StatelessWidget {
     final timeStr = '$hour:$min $period';
 
     if (day == today) return 'Today at $timeStr';
-    if (day == today.subtract(const Duration(days: 1)))
+    if (day == today.subtract(const Duration(days: 1))) {
       return 'Yesterday at $timeStr';
+    }
     const months = [
       'Jan',
       'Feb',
@@ -104,24 +149,24 @@ class ChatMessageList extends StatelessWidget {
   }
 
   bool _isFirstUnreadPeerMessage(int targetIndex) {
-    if (initialUnreadCount <= 0 ||
+    if (widget.initialUnreadCount <= 0 ||
         targetIndex < 0 ||
-        targetIndex >= messages.length) {
+        targetIndex >= widget.messages.length) {
       return false;
     }
-    if (messages[targetIndex].senderId == 'user') return false;
+    if (widget.messages[targetIndex].senderId == 'user') return false;
 
     var peerCount = 0;
-    for (int i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].senderId != 'user') {
+    for (int i = widget.messages.length - 1; i >= 0; i--) {
+      if (widget.messages[i].senderId != 'user') {
         peerCount++;
-        if (peerCount == initialUnreadCount) {
+        if (peerCount == widget.initialUnreadCount) {
           return i == targetIndex;
         }
       }
     }
-    for (int i = 0; i < messages.length; i++) {
-      if (messages[i].senderId != 'user') return i == targetIndex;
+    for (int i = 0; i < widget.messages.length; i++) {
+      if (widget.messages[i].senderId != 'user') return i == targetIndex;
     }
     return false;
   }
@@ -143,31 +188,24 @@ class ChatMessageList extends StatelessWidget {
   bool _isImageDownloaded(ChatMessage msg) {
     final rawUrl = msg.mediaUrl;
     if (rawUrl == null || rawUrl.isEmpty) return false;
-    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
-      if (File(rawUrl).existsSync()) return true;
-    }
-    final cached = AttachmentCacheService.instance.resolveLocalPathSync(rawUrl);
-    if (cached != null && File(cached).existsSync()) return true;
-    return false;
+    return AttachmentCacheService.instance.isCachedInMemory(rawUrl);
   }
 
-  /// Groups consecutive image messages sent by the same sender into a single list.
-  /// ONLY groups images AFTER ALL images in the group are downloaded locally!
   List<ChatMessage>? _getGroupedImages(int messageIndex) {
-    final currentMsg = messages[messageIndex];
+    final currentMsg = widget.messages[messageIndex];
     if (!_isImageMessage(currentMsg)) return null;
 
-    if (messageIndex > 0 && _isImageMessage(messages[messageIndex - 1])) {
-      final prevMsg = messages[messageIndex - 1];
+    if (messageIndex > 0 && _isImageMessage(widget.messages[messageIndex - 1])) {
+      final prevMsg = widget.messages[messageIndex - 1];
       if (prevMsg.senderId == currentMsg.senderId &&
           currentMsg.timestamp.difference(prevMsg.timestamp).inMinutes.abs() <=
               15) {
         int firstIndex = messageIndex - 1;
         while (firstIndex > 0 &&
-            _isImageMessage(messages[firstIndex - 1]) &&
-            messages[firstIndex - 1].senderId == currentMsg.senderId &&
-            messages[firstIndex].timestamp
-                    .difference(messages[firstIndex - 1].timestamp)
+            _isImageMessage(widget.messages[firstIndex - 1]) &&
+            widget.messages[firstIndex - 1].senderId == currentMsg.senderId &&
+            widget.messages[firstIndex].timestamp
+                    .difference(widget.messages[firstIndex - 1].timestamp)
                     .inMinutes
                     .abs() <=
                 15) {
@@ -176,17 +214,17 @@ class ChatMessageList extends StatelessWidget {
 
         final fullGroup = <ChatMessage>[];
         int idx = firstIndex;
-        while (idx < messages.length &&
-            _isImageMessage(messages[idx]) &&
+        while (idx < widget.messages.length &&
+            _isImageMessage(widget.messages[idx]) &&
             (idx == firstIndex ||
-                messages[idx].senderId == messages[idx - 1].senderId) &&
+                widget.messages[idx].senderId == widget.messages[idx - 1].senderId) &&
             (idx == firstIndex ||
-                messages[idx].timestamp
-                        .difference(messages[idx - 1].timestamp)
+                widget.messages[idx].timestamp
+                        .difference(widget.messages[idx - 1].timestamp)
                         .inMinutes
                         .abs() <=
                     15)) {
-          fullGroup.add(messages[idx]);
+          fullGroup.add(widget.messages[idx]);
           idx++;
         }
 
@@ -206,8 +244,8 @@ class ChatMessageList extends StatelessWidget {
 
     final grouped = <ChatMessage>[currentMsg];
     int nextIndex = messageIndex + 1;
-    while (nextIndex < messages.length) {
-      final nextMsg = messages[nextIndex];
+    while (nextIndex < widget.messages.length) {
+      final nextMsg = widget.messages[nextIndex];
       if (_isImageMessage(nextMsg) &&
           nextMsg.senderId == currentMsg.senderId &&
           nextMsg.timestamp
@@ -273,7 +311,7 @@ class ChatMessageList extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              historyError == null
+              widget.historyError == null
                   ? Icons.chat_bubble_outline_rounded
                   : Icons.cloud_off_rounded,
               size: 42,
@@ -281,16 +319,16 @@ class ChatMessageList extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              historyError ?? 'No messages yet. Start the conversation.',
+              widget.historyError ?? 'No messages yet. Start the conversation.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: isDark ? Colors.white70 : AppTheme.subtitleGrey,
               ),
             ),
-            if (historyError != null) ...[
+            if (widget.historyError != null) ...[
               const SizedBox(height: 12),
               TextButton.icon(
-                onPressed: onReloadMessages,
+                onPressed: widget.onReloadMessages,
                 icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Try again'),
               ),
@@ -305,17 +343,17 @@ class ChatMessageList extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    if (isLoadingMessages && messages.isEmpty) {
+    if (widget.isLoadingMessages && widget.messages.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (messages.isEmpty) {
+    if (widget.messages.isEmpty) {
       return _buildEmptyHistory(isDark);
     }
 
-    final messagesById = {for (final message in messages) message.id: message};
+    final messagesById = {for (final message in widget.messages) message.id: message};
     String? latestOutgoingMessageId;
-    for (final message in messages.reversed) {
+    for (final message in widget.messages.reversed) {
       if (message.senderId == 'user' && !message.isDeleted) {
         latestOutgoingMessageId = message.id;
         break;
@@ -331,18 +369,45 @@ class ChatMessageList extends StatelessWidget {
           onTap: () => FocusScope.of(context).unfocus(),
           behavior: HitTestBehavior.translucent,
           child: ListView.builder(
-            controller: scrollController,
+            controller: widget.scrollController,
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             reverse: true,
             padding: EdgeInsets.fromLTRB(0, topInset, 0, bottomInset),
-            itemCount: messages.length + (isLoadingMore ? 1 : 0),
+            itemCount: widget.messages.length +
+                (widget.isPeerTyping ? 1 : 0) +
+                (widget.isLoadingMore ? 1 : 0),
             itemBuilder: (context, index) {
-              if (index >= messages.length) {
+              if (widget.isPeerTyping) {
+                if (index == 0) {
+                  return RepaintBoundary(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 6, top: 2),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: ChatTypingIndicator(
+                          key: const ValueKey('bottom_chat_typing_indicator'),
+                          chatName: widget.chatName,
+                          chatAvatar: widget.chatAvatar,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+              }
+
+              final adjustedIndex = widget.isPeerTyping ? index - 1 : index;
+
+              if (adjustedIndex >= widget.messages.length) {
                 return _buildTopLoadingShimmer(isDark);
               }
 
-              final messageIndex = messages.length - 1 - index;
-              final msg = messages[messageIndex];
+              final messageIndex = widget.messages.length - 1 - adjustedIndex;
+              final msg = widget.messages[messageIndex];
+
+              final bool shouldAnimate = !_animatedMessageIds.contains(msg.id);
+              if (shouldAnimate) {
+                _animatedMessageIds.add(msg.id);
+              }
 
               final groupedImages = _getGroupedImages(messageIndex);
               if (groupedImages != null && groupedImages.isEmpty) {
@@ -353,14 +418,14 @@ class ChatMessageList extends StatelessWidget {
               final showDateHeader =
                   messageIndex == 0 ||
                   !_sameDay(
-                    messages[messageIndex - 1].timestamp,
+                    widget.messages[messageIndex - 1].timestamp,
                     msg.timestamp,
                   );
               final previousSender = messageIndex > 0
-                  ? messages[messageIndex - 1].senderId
+                  ? widget.messages[messageIndex - 1].senderId
                   : null;
               final showGroupSender =
-                  conversation.isGroup && msg.senderId != previousSender;
+                  widget.conversation.isGroup && msg.senderId != previousSender;
               final senderId = msg.senderId == 'user'
                   ? ServerApiService.instance.currentUserId
                   : int.tryParse(msg.senderId);
@@ -371,9 +436,9 @@ class ChatMessageList extends StatelessWidget {
               return SwipeToReply(
                 enabled: int.tryParse(msg.id) != null,
                 isMe: msg.senderId == 'user',
-                onReply: () => onBeginReply(msg),
-                onInfo: onShowMessageInfo != null
-                    ? () => onShowMessageInfo!(msg)
+                onReply: () => widget.onBeginReply(msg),
+                onInfo: widget.onShowMessageInfo != null
+                    ? () => widget.onShowMessageInfo!(msg)
                     : null,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -394,7 +459,7 @@ class ChatMessageList extends StatelessWidget {
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: Text(
-                              '$initialUnreadCount UNREAD MESSAGES',
+                              '${widget.initialUnreadCount} UNREAD MESSAGES',
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
@@ -418,54 +483,68 @@ class ChatMessageList extends StatelessWidget {
                                       box?.localToGlobal(Offset.zero) ??
                                       details.globalPosition;
                                   final size = box?.size ?? const Size(240, 60);
-                                  onShowMessageActions(msg, globalPos, size);
+                                  widget.onShowMessageActions(msg, globalPos, size);
                                 }
                               : null,
-                          child: ChatBubble(
-                            key: ValueKey(msg.id),
-                            chatId: conversation.id,
-                            message: msg.content,
-                            isMe: msg.senderId == 'user',
-                            timestamp: msg.timestamp,
-                            type: msg.type,
-                            mediaUrl: msg.mediaUrl,
-                            fileName: msg.fileName,
-                            isRead: msg.isRead,
-                            isDelivered: msg.isDelivered,
-                            isEdited: msg.isEdited,
-                            isDeleted: msg.isDeleted,
-                            isSaved: msg.isSaved,
-                            isDecrypting: decryptingMessageIds.contains(msg.id),
-                            showDeliveryStatus:
-                                msg.id == latestOutgoingMessageId,
-                            groupedImages: groupedImages,
-                            senderName: showGroupSender && senderId != null
-                                ? groupMemberNames[senderId] ?? 'Member'
-                                : null,
-                            replyToId: msg.replyToId,
-                            repliedMessage: repliedMessage,
-                            replySender: repliedMessage == null
-                                ? null
-                                : repliedMessage.senderId == 'user'
-                                ? 'You'
-                                : conversation.isGroup
-                                ? groupMemberNames[int.tryParse(
-                                        repliedMessage.senderId,
-                                      )] ??
-                                      'Member'
-                                : chatName,
-                            replyText: repliedMessage?.previewText,
-                            onTapReply: onTapReply,
-                            isHighlighted: highlightedMessageId == msg.id,
-                            searchQuery: searchQuery,
-                            isForwarded: msg.isForwarded,
-                            isSelectionMode: isSelectionMode,
-                            isSelected: selectedMessageIds.contains(msg.id),
-                            onToggleSelect: () => onToggleSelectMessage?.call(msg),
-                            onShowMessageActions: onShowMessageActions,
-                            reactions: msg.reaction == null
-                                ? null
-                                : [msg.reaction!],
+                          child: RepaintBoundary(
+                            child: BouncyMessageEntryAnimation(
+                              key: ValueKey('anim_${msg.id}'),
+                              isMe: msg.senderId == 'user',
+                              animate: shouldAnimate,
+                              child: ChatBubble(
+                                key: ValueKey(msg.id),
+                                chatId: widget.conversation.id,
+                                message: msg.content,
+                                isMe: msg.senderId == 'user',
+                                timestamp: msg.timestamp,
+                                type: msg.type,
+                                mediaUrl: msg.mediaUrl,
+                                fileName: msg.fileName,
+                                isRead: msg.isRead,
+                                isDelivered: msg.isDelivered,
+                                isEdited: msg.isEdited,
+                                isDeleted: msg.isDeleted,
+                                isSaved: msg.isSaved,
+                                isDecrypting: widget.decryptingMessageIds.contains(msg.id),
+                                showDeliveryStatus:
+                                    msg.id == latestOutgoingMessageId,
+                                groupedImages: groupedImages,
+                                senderName: showGroupSender && senderId != null
+                                    ? widget.groupMemberNames[senderId] ?? 'Member'
+                                    : null,
+                                replyToId: msg.replyToId,
+                                repliedMessage: repliedMessage,
+                                replySender: repliedMessage == null
+                                    ? null
+                                    : repliedMessage.senderId == 'user'
+                                    ? 'You'
+                                    : widget.conversation.isGroup
+                                    ? widget.groupMemberNames[int.tryParse(
+                                            repliedMessage.senderId,
+                                          )] ??
+                                          'Member'
+                                    : widget.chatName,
+                                replyText: repliedMessage?.previewText,
+                                onTapReply: widget.onTapReply,
+                                isHighlighted: widget.highlightedMessageId == msg.id,
+                                searchQuery: widget.searchQuery,
+                                isForwarded: msg.isForwarded,
+                                isSelectionMode: widget.isSelectionMode,
+                                isSelected: widget.selectedMessageIds.contains(msg.id),
+                                onToggleSelect: () => widget.onToggleSelectMessage?.call(msg),
+                                onShowMessageActions: widget.onShowMessageActions,
+                                reactions: msg.reaction == null
+                                    ? null
+                                    : [msg.reaction!],
+                                msgType: msg.msgType,
+                                callId: msg.callId,
+                                callType: msg.callType,
+                                callStatus: msg.callStatus,
+                                callDuration: msg.callDuration,
+                                onVoiceCallTap: widget.onVoiceCallTap,
+                                onVideoCallTap: widget.onVideoCallTap,
+                              ),
+                            ),
                           ),
                         );
                       },
@@ -476,7 +555,7 @@ class ChatMessageList extends StatelessWidget {
             },
           ),
         ),
-        if (showJumpToLatest)
+        if (widget.showJumpToLatest)
           Positioned(
             right: 14,
             bottom: MediaQuery.paddingOf(context).bottom + 66.0,
@@ -488,12 +567,12 @@ class ChatMessageList extends StatelessWidget {
                 clipBehavior: Clip.none,
                 children: [
                   IconButton(
-                    onPressed: onJumpToLatest,
+                    onPressed: widget.onJumpToLatest,
                     tooltip: 'Jump to latest',
                     icon: const Icon(Icons.keyboard_arrow_down_rounded),
                     color: AppTheme.primaryColor,
                   ),
-                  if (newMessagesWhileAway > 0)
+                  if (widget.newMessagesWhileAway > 0)
                     Positioned(
                       right: -2,
                       top: -2,
@@ -504,7 +583,7 @@ class ChatMessageList extends StatelessWidget {
                           shape: BoxShape.circle,
                         ),
                         child: Text(
-                          '$newMessagesWhileAway',
+                          '${widget.newMessagesWhileAway}',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10,
@@ -523,22 +602,32 @@ class ChatMessageList extends StatelessWidget {
 }
 
 class DateLabel extends StatelessWidget {
-  const DateLabel(this.text, {super.key});
-
   final String text;
+
+  const DateLabel(this.text, {super.key});
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 12, 0, 13),
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: Color(0xFF8E8E93),
-          fontSize: 13,
-          fontWeight: FontWeight.w500,
-          letterSpacing: .1,
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.1)
+                : Colors.black.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.secondaryText(isDark),
+            ),
+          ),
         ),
       ),
     );

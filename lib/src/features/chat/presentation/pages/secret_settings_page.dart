@@ -10,13 +10,14 @@ import '../../domain/services/server_chat_manager.dart';
 import '../../domain/services/socket_chat_service.dart';
 import 'settings/appearance_settings_page.dart';
 import 'settings/disguise_settings_page.dart';
-import 'settings/emergency_settings_page.dart';
 import 'settings/help_support_page.dart';
 import 'settings/media_auto_download_settings_page.dart';
 import 'settings/personal_settings_page.dart';
 
 class SecretSettingsPage extends StatefulWidget {
-  const SecretSettingsPage({super.key});
+  final bool showBackButton;
+
+  const SecretSettingsPage({super.key, this.showBackButton = false});
 
   @override
   State<SecretSettingsPage> createState() => _SecretSettingsPageState();
@@ -36,21 +37,22 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
             ? AppTheme.darkBackground
             : AppTheme.lightBackground,
         body: SafeArea(
+          bottom: false,
           child: Column(
             children: [
               // Header
               CompactSettingsHeader(
                 title: 'Vault Settings',
-                showBackButton: Navigator.canPop(context),
+                showBackButton: widget.showBackButton && Navigator.canPop(context),
               ),
 
               // Content List
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 8.0,
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
                   ),
+                  padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 100.0),
                   children: [
                     // Profile Header Section (Screenshot 1)
                     _buildProfileHeader(isDark),

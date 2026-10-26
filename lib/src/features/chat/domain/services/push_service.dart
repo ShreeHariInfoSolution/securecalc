@@ -18,6 +18,7 @@ import '../../../../core/config/app_preferences.dart';
 import '../../../../../firebase_options.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'local_chat_storage.dart';
+import 'call_kit_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_chat_manager.dart';
 
@@ -42,6 +43,16 @@ Future<void> _updateBadge(int count) async {
     }
   } catch (e) {
     debugPrint('[Push Diagnostic ERROR] Badge update failed: $e');
+  }
+
+  if (Platform.isIOS) {
+    try {
+      const securityChannel = MethodChannel('com.shis.securecalc/security');
+      await securityChannel.invokeMethod('updateBadgeCount', {'count': _badgeCount});
+      debugPrint('[Push Diagnostic] Native iOS badge updated to $_badgeCount');
+    } catch (e) {
+      debugPrint('[Push Diagnostic ERROR] Native iOS badge update failed: $e');
+    }
   }
 }
 
@@ -271,6 +282,74 @@ Future<void> _showNotificationWithDetails({
   }
 }
 
+int? _extractChatIdFromData(Map<String, dynamic>? data) {
+  if (data == null) return null;
+
+  for (final key in ['chat_head_id', 'chat_id', 'chatId', 'chatHeadId', 'id']) {
+    final val = data[key];
+    if (val != null) {
+      final parsed = int.tryParse(val.toString());
+      if (parsed != null && parsed > 0) return parsed;
+    }
+  }
+
+  final nested = data['data'] ?? data['payload'];
+  if (nested is Map<String, dynamic>) {
+    return _extractChatIdFromData(nested);
+  } else if (nested is Map) {
+    return _extractChatIdFromData(Map<String, dynamic>.from(nested));
+  } else if (nested is String) {
+    try {
+      final decoded = jsonDecode(nested);
+      if (decoded is Map<String, dynamic>) {
+        return _extractChatIdFromData(decoded);
+      } else if (decoded is Map) {
+        return _extractChatIdFromData(Map<String, dynamic>.from(decoded));
+      }
+    } catch (_) {}
+  }
+
+  return null;
+}
+
+String? _extractSenderIdFromData(Map<String, dynamic>? data) {
+  if (data == null) return null;
+
+  for (final key in [
+    'sender_id',
+    'senderId',
+    'sender_user_id',
+    'from_id',
+    'fromId',
+    'user_id',
+    'userId'
+  ]) {
+    final val = data[key];
+    if (val != null) {
+      final str = val.toString().trim();
+      if (str.isNotEmpty) return str;
+    }
+  }
+
+  final nested = data['data'] ?? data['payload'];
+  if (nested is Map<String, dynamic>) {
+    return _extractSenderIdFromData(nested);
+  } else if (nested is Map) {
+    return _extractSenderIdFromData(Map<String, dynamic>.from(nested));
+  } else if (nested is String) {
+    try {
+      final decoded = jsonDecode(nested);
+      if (decoded is Map<String, dynamic>) {
+        return _extractSenderIdFromData(decoded);
+      } else if (decoded is Map) {
+        return _extractSenderIdFromData(Map<String, dynamic>.from(decoded));
+      }
+    } catch (_) {}
+  }
+
+  return null;
+}
+
 /// Runs in a separate isolate when the app is in background / killed.
 /// MUST be a top-level function.
 @pragma('vm:entry-point')
@@ -302,22 +381,14 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   // Automatically report message as delivered via REST API in background
   try {
-    final d = message.data;
-    final chatId = int.tryParse(
-      '${d['chat_head_id'] ?? d['chat_id'] ?? d['chatId'] ?? d['chatHeadId'] ?? d['id'] ?? ''}',
-    );
-    final senderId = (d['sender_id'] ??
-            d['senderId'] ??
-            d['sender_user_id'] ??
-            d['from_id'] ??
-            d['fromId'] ??
-            d['user_id'] ??
-            d['userId'])
-        ?.toString();
+    final chatId = _extractChatIdFromData(message.data);
+    final senderId = _extractSenderIdFromData(message.data);
 
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('PREF_SERVER_AUTH_TOKEN');
-    final currentUserId = prefs.getInt('PREF_SERVER_USER_ID')?.toString();
+    final currentUserId =
+        prefs.getInt('PREF_SERVER_USER_ID')?.toString() ??
+        prefs.getString('PREF_SERVER_USER_ID');
 
     if (chatId != null &&
         token != null &&
@@ -331,7 +402,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           'Accept': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({'chat_head_id': chatId}),
+        body: jsonEncode({
+          'chat_head_id': chatId,
+          'chat_id': chatId,
+          'chatId': chatId,
+        }),
       );
       debugPrint(
         '[Push Diagnostic BACKGROUND] Delivery API status (${res.statusCode}): ${res.body}',
@@ -339,6 +414,38 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     }
   } catch (e) {
     debugPrint('[Push Diagnostic BACKGROUND] Delivery status update exception: $e');
+  }
+
+  // Handle Call push notifications
+  final data = message.data;
+  final type = data['type']?.toString();
+  final rawCallId = data['call_id'] ?? data['callId'];
+  final callId = int.tryParse(rawCallId?.toString() ?? '');
+
+  if (type == 'incoming_call' || (callId != null && data['status'] == 'ringing')) {
+    final chatHeadId = int.tryParse((data['chat_head_id'] ?? data['chatId'])?.toString() ?? '0') ?? 0;
+    final callerId = int.tryParse((data['caller_id'] ?? data['sender_id'])?.toString() ?? '0') ?? 0;
+    final callerName = data['caller_name']?.toString() ?? 'Incoming Call';
+    final callType = data['call_type']?.toString() ?? 'voice';
+
+    await CallKitService.instance.showIncomingCall(
+      callId: callId!,
+      chatHeadId: chatHeadId,
+      callerId: callerId,
+      callerName: callerName,
+      callType: callType,
+    );
+    return;
+  }
+
+  if (type == 'call_ended' ||
+      ['ended', 'cancelled', 'rejected', 'missed', 'busy'].contains(data['status'])) {
+    if (callId != null) {
+      await CallKitService.instance.endCall(callId.toString());
+    } else {
+      await CallKitService.instance.clearAll();
+    }
+    return;
   }
 
   // If message has a notification payload, OS handles it natively when app is killed/background
@@ -454,7 +561,12 @@ class PushService {
         '[Push Diagnostic] Firebase Authorization Status: ${settings.authorizationStatus}',
       );
 
-      await _ensureLocalInit(onTap: (r) => _openFromPayload(r.payload));
+      await _ensureLocalInit(onTap: (r) {
+        clearAllNotifications();
+        _openFromPayload(r.payload);
+      });
+
+      CallKitService.instance.initListener();
 
       await _fm.setForegroundNotificationPresentationOptions(
         alert: true,
@@ -467,22 +579,16 @@ class PushService {
         debugPrint(
           '[Push Diagnostic FOREGROUND] Received FCM message: data=${m.data}, title=${m.notification?.title}',
         );
-        final d = m.data;
 
-        // Check if message was sent by current user
+        final msgType = m.data['type']?.toString();
+        if (msgType == 'incoming_call' || msgType == 'call_ended') {
+          debugPrint('[Push Diagnostic FOREGROUND] Call FCM event ($msgType). Handled by CallService/CallKit.');
+          return;
+        }
+
+        final chatId = _extractChatIdFromData(m.data);
+        final senderId = _extractSenderIdFromData(m.data);
         final currentUserId = ServerApiService.instance.currentUserId?.toString();
-        final senderId = (d['sender_id'] ??
-                d['senderId'] ??
-                d['sender_user_id'] ??
-                d['from_id'] ??
-                d['fromId'] ??
-                d['user_id'] ??
-                d['userId'])
-            ?.toString();
-
-        final chatId = int.tryParse(
-          '${d['chat_id'] ?? d['chatId'] ?? d['chat_head_id'] ?? d['chatHeadId'] ?? d['id'] ?? ''}',
-        );
 
         // Report message as delivered to server
         if (chatId != null &&
@@ -519,7 +625,7 @@ class PushService {
         debugPrint(
           '[Push Diagnostic] Notification tapped from background: ${m.data}',
         );
-        clearBadge();
+        clearAllNotifications();
         _openFromData(m.data);
       });
 
@@ -529,7 +635,7 @@ class PushService {
         debugPrint(
           '[Push Diagnostic] App launched from killed state by FCM notification: ${initial.data}',
         );
-        clearBadge();
+        clearAllNotifications();
         _openFromData(initial.data);
       }
 
@@ -539,7 +645,7 @@ class PushService {
         debugPrint(
           '[Push Diagnostic] App launched from local notification tap.',
         );
-        clearBadge();
+        clearAllNotifications();
         _openFromPayload(launch!.notificationResponse?.payload);
       }
 
@@ -610,9 +716,25 @@ class PushService {
     debugPrint('====================================================');
   }
 
+  /// Clears app icon notification count (badge) and cancels all delivered notifications in OS notification center.
+  Future<void> clearAllNotifications() async {
+    try {
+      await _local.cancelAll();
+      await _updateBadge(0);
+      debugPrint('[Push Diagnostic] Cleared all local notifications and badge count.');
+    } catch (e) {
+      debugPrint('[Push Diagnostic ERROR] Failed to clear all notifications: $e');
+    }
+  }
+
   /// Clears app icon notification count (badge) when app is opened or user views messages.
   Future<void> clearBadge() async {
-    await _updateBadge(0);
+    await clearAllNotifications();
+  }
+
+  /// Updates the app icon badge count directly to the total unread messages count.
+  Future<void> updateBadgeTo(int count) async {
+    await _updateBadge(count);
   }
 
   Future<String?> _safeGetFcmToken() async {

@@ -3,6 +3,8 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
@@ -24,9 +26,13 @@ import '../../domain/services/bot_assistant_service.dart';
 import 'archived_list_page.dart';
 import 'bot_chat_detail_page.dart';
 import 'chat_detail_page.dart';
+import 'deleted_chats_page.dart';
 import 'secret_settings_page.dart';
 import 'share/scan_qr_page.dart';
 import 'share/share_qr_page.dart';
+import '../../../calling/presentation/pages/call_history_view.dart';
+
+
 
 enum ConversationFilter { all, unread, favourites, groups }
 
@@ -43,10 +49,14 @@ class _ConversationListPageState extends State<ConversationListPage> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey<CallHistoryViewState> _callHistoryKey = GlobalKey<CallHistoryViewState>();
+  late final PageController _pageController;
 
   ConversationFilter _filter = ConversationFilter.all;
+  int _selectedTabIndex = 0;
   bool _showFilterChips = false;
   bool _isSyncing = false;
+
 
   int _currentChatPage = 1;
   bool _hasMoreChats = true;
@@ -55,6 +65,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
   @override
   void initState() {
     super.initState();
+    _pageController = PageController(initialPage: _selectedTabIndex);
     _scrollController.addListener(_onScroll);
     _searchController.addListener(_onSearchChanged);
     _searchFocusNode.addListener(_onSearchFocusChanged);
@@ -64,6 +75,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
 
   @override
   void dispose() {
+    _pageController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _searchFocusNode.removeListener(_onSearchFocusChanged);
@@ -210,6 +222,8 @@ class _ConversationListPageState extends State<ConversationListPage> {
                           InkWell(
                             onTap: () {
                               Navigator.of(dialogContext).pop();
+                              FocusManager.instance.primaryFocus?.unfocus();
+                              SystemChannels.textInput.invokeMethod('TextInput.hide');
                               Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (context) => const CalculatorPage(),
@@ -293,14 +307,15 @@ class _ConversationListPageState extends State<ConversationListPage> {
                                 : Colors.black.withValues(alpha: 0.08),
                           ),
 
-                          // Option 3: Secret Settings
+                          // Option 3: Deleted Chats
                           InkWell(
                             onTap: () {
                               Navigator.of(dialogContext).pop();
                               Navigator.of(context).push(
                                 MaterialPageRoute(
-                                  builder: (context) =>
-                                      const SecretSettingsPage(),
+                                  builder: (context) => DeletedChatsPage(
+                                    isDuressMode: widget.isDuressMode,
+                                  ),
                                 ),
                               );
                             },
@@ -312,13 +327,13 @@ class _ConversationListPageState extends State<ConversationListPage> {
                               child: Row(
                                 children: [
                                   Icon(
-                                    CupertinoIcons.lock_shield,
+                                    CupertinoIcons.trash,
                                     size: 18,
                                     color: AppTheme.primaryText(isDark),
                                   ),
                                   const SizedBox(width: 12),
                                   Text(
-                                    'Secret Settings',
+                                    'Deleted Chats',
                                     style: TextStyle(
                                       fontSize: 14.5,
                                       fontWeight: FontWeight.w500,
@@ -999,6 +1014,477 @@ class _ConversationListPageState extends State<ConversationListPage> {
     );
   }
 
+  Widget _buildFloatingGlassBottomBar(bool isDark, int unreadTotal) {
+    final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    final currentUser = ServerApiService.instance.currentUser;
+    final profileImage = currentUser?.avatarUrl ?? AppPreferences.getProfileImagePath();
+    final profileName = currentUser?.name ?? '';
+
+    return Positioned(
+      left: 18,
+      right: 18,
+      bottom: bottomPadding > 0 ? bottomPadding + 6 : 14,
+      child: Center(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(32),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+            child: Container(
+              height: 62,
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? const Color(0xDD1C1C1E)
+                    : Colors.white.withValues(alpha: 0.88),
+                borderRadius: BorderRadius.circular(32),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.16)
+                      : Colors.black.withValues(alpha: 0.10),
+                  width: 0.8,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(
+                      alpha: isDark ? 0.35 : 0.10,
+                    ),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildBottomBarNavItem(
+                      index: 0,
+                      icon: CupertinoIcons.chat_bubble_2_fill,
+                      inactiveIcon: CupertinoIcons.chat_bubble_2,
+                      label: 'Chats',
+                      badgeCount: unreadTotal,
+                      isDark: isDark,
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildBottomBarNavItem(
+                      index: 1,
+                      icon: CupertinoIcons.phone_fill,
+                      inactiveIcon: CupertinoIcons.phone,
+                      label: 'Calls',
+                      badgeCount: 0,
+                      isDark: isDark,
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildBottomBarNavItem(
+                      index: 2,
+                      icon: CupertinoIcons.person_crop_circle_fill,
+                      inactiveIcon: CupertinoIcons.person_crop_circle,
+                      label: 'Profile',
+                      badgeCount: 0,
+                      isDark: isDark,
+                      avatarPath: profileImage,
+                      userName: profileName,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomBarNavItem({
+    required int index,
+    required IconData icon,
+    required IconData inactiveIcon,
+    required String label,
+    required int badgeCount,
+    required bool isDark,
+    String? avatarPath,
+    String? userName,
+  }) {
+    final isSelected = _selectedTabIndex == index;
+    final hasAvatar = avatarPath != null && avatarPath.trim().isNotEmpty;
+
+    Widget iconWidget;
+    if (index == 2 && hasAvatar) {
+      iconWidget = Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: isSelected
+              ? Border.all(color: AppTheme.primaryColor, width: 2.0)
+              : null,
+        ),
+        child: IosAvatar(
+          name: userName ?? '',
+          imagePath: avatarPath,
+          size: 24,
+          showOnline: false,
+        ),
+      );
+    } else {
+      iconWidget = Icon(
+        isSelected ? icon : inactiveIcon,
+        size: 24,
+        color: isSelected
+            ? AppTheme.primaryColor
+            : AppTheme.secondaryText(isDark),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () {
+        if (_selectedTabIndex != index) {
+          setState(() {
+            _selectedTabIndex = index;
+          });
+          _pageController.animateToPage(
+            index,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+          );
+          if (index == 1) {
+            _callHistoryKey.currentState?.loadCallHistory();
+          }
+        }
+      },
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppTheme.primaryColor.withValues(alpha: isDark ? 0.20 : 0.12)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(24),
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                iconWidget,
+                if (badgeCount > 0)
+                  Positioned(
+                    top: -4,
+                    right: -8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF3B30),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        badgeCount > 99 ? '99+' : '$badgeCount',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                color: isSelected
+                    ? AppTheme.primaryColor
+                    : AppTheme.secondaryText(isDark),
+                letterSpacing: -0.1,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChatsView(
+    BuildContext context,
+    bool isDark,
+    List<ChatConversation> conversations,
+  ) {
+    final activeConversations = conversations
+        .where((c) => !c.isArchived)
+        .toList();
+    final archivedTotal = conversations
+        .where((c) => c.isArchived)
+        .length;
+    final archivedUnreadChatsCount = conversations
+        .where((c) => c.isArchived && c.unreadCount > 0)
+        .length;
+
+    final query = _searchController.text.trim().toLowerCase();
+    final filtered =
+        activeConversations.where((conv) {
+          final matchesQuery =
+              conv.name.toLowerCase().contains(query) ||
+              conv.lastMessage.toLowerCase().contains(query);
+
+          if (_filter == ConversationFilter.unread) {
+            return matchesQuery && conv.unreadCount > 0;
+          } else if (_filter == ConversationFilter.favourites) {
+            return matchesQuery && conv.isPinned;
+          } else if (_filter == ConversationFilter.groups) {
+            return matchesQuery && conv.isGroup;
+          }
+          return matchesQuery;
+        }).toList()..sort((a, b) {
+          if (a.isPinned != b.isPinned) {
+            return a.isPinned ? -1 : 1;
+          }
+          final aTime = a.lastActivityAt?.millisecondsSinceEpoch ?? 0;
+          final bTime = b.lastActivityAt?.millisecondsSinceEpoch ?? 0;
+          return bTime.compareTo(aTime);
+        });
+
+    final unreadTotal = conversations.fold<int>(
+      0,
+      (sum, c) => sum + c.unreadCount,
+    );
+    final groupTotal = conversations
+        .where((c) => c.isGroup && !c.isArchived)
+        .length;
+
+    final showFilterChips =
+        _showFilterChips ||
+        _filter != ConversationFilter.all ||
+        _searchFocusNode.hasFocus ||
+        _searchController.text.isNotEmpty;
+
+    return CustomScrollView(
+      controller: _scrollController,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      physics: const BouncingScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
+      slivers: [
+        // iOS Collapsing Large Title Header & Search/Filters
+        SliverPersistentHeader(
+          pinned: true,
+          delegate: _IosMessagesHeaderDelegate(
+            topPadding: MediaQuery.paddingOf(context).top,
+            isDark: isDark,
+            isSyncing: _isSyncing,
+            unreadTotal: unreadTotal,
+            groupTotal: groupTotal,
+            filter: _filter,
+            showFilterChips: showFilterChips,
+            searchController: _searchController,
+            searchFocusNode: _searchFocusNode,
+            onFilterSelected: (f) => setState(() => _filter = f),
+            onMoreTap: () => _showMoreOptionsMenu(context),
+            onNewChatTap: () => _showNewChatActionsSheet(),
+          ),
+        ),
+
+        // Cupertino Pull-to-Refresh
+        CupertinoSliverRefreshControl(onRefresh: _refreshServerChats),
+
+        // Conversation Tiles List + Archived Row
+        if (filtered.isEmpty && archivedTotal == 0)
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      CupertinoIcons.chat_bubble_2,
+                      size: 48,
+                      color: AppTheme.secondaryText(isDark),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      _searchController.text.isNotEmpty
+                          ? 'No results for "${_searchController.text}"'
+                          : 'No Conversations Yet',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.secondaryText(isDark),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Tap the + button above to search users and start messaging.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.secondaryText(isDark),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.only(bottom: 100),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  // Index 0: Archived Row
+                  if (index == 0) {
+                    return Column(
+                      children: [
+                        InkWell(
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) => ArchivedListPage(
+                                  isDuressMode: widget.isDuressMode,
+                                ),
+                              ),
+                            );
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16.0,
+                              vertical: 12.0,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  CupertinoIcons.archivebox,
+                                  size: 22,
+                                  color: AppTheme.secondaryText(isDark),
+                                ),
+                                const SizedBox(width: 16),
+                                Text(
+                                  'Archived',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.primaryText(isDark),
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (archivedUnreadChatsCount > 0) ...[
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 7,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.primaryColor,
+                                      borderRadius:
+                                          BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '$archivedUnreadChatsCount',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ] else if (archivedTotal > 0) ...[
+                                  Text(
+                                    '$archivedTotal',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                      color: AppTheme.secondaryText(
+                                        isDark,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                        Divider(
+                          height: 0.5,
+                          thickness: 0.5,
+                          color: AppTheme.listDivider(isDark),
+                          indent: 54,
+                        ),
+                      ],
+                    );
+                  }
+
+                  final convIndex = index - 1;
+                  if (convIndex == filtered.length) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 20),
+                      child: Center(
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              AppTheme.primaryColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  final conv = filtered[convIndex];
+                  return GestureDetector(
+                    onLongPress: () =>
+                        _showChatPeekPreview(context, conv),
+                    child: ConversationTile(
+                      conversation: conv,
+                      isTyping: conv.isTyping,
+                      showDivider: convIndex < filtered.length - 1,
+                      onTap: () {
+                        FocusScope.of(context).unfocus();
+                        if (conv.id == BotAssistantService.botId) {
+                          BotChatDetailPage.open(
+                            context,
+                            conversation: conv,
+                          );
+                          return;
+                        }
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => VaultEdgePanelWrapper(
+                              isDuressMode: widget.isDuressMode,
+                              child: ChatDetailPage(conversation: conv),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
+                childCount:
+                    1 + filtered.length + (_isLoadingMoreChats ? 1 : 0),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -1013,261 +1499,36 @@ class _ConversationListPageState extends State<ConversationListPage> {
                 ? <ChatConversation>[]
                 : rawConversations;
 
-            final activeConversations = conversations
-                .where((c) => !c.isArchived)
-                .toList();
-            final archivedTotal = conversations
-                .where((c) => c.isArchived)
-                .length;
-            final archivedUnreadChatsCount = conversations
-                .where((c) => c.isArchived && c.unreadCount > 0)
-                .length;
-
-            final query = _searchController.text.trim().toLowerCase();
-            final filtered =
-                activeConversations.where((conv) {
-                  final matchesQuery =
-                      conv.name.toLowerCase().contains(query) ||
-                      conv.lastMessage.toLowerCase().contains(query);
-
-                  if (_filter == ConversationFilter.unread) {
-                    return matchesQuery && conv.unreadCount > 0;
-                  } else if (_filter == ConversationFilter.favourites) {
-                    return matchesQuery && conv.isPinned;
-                  } else if (_filter == ConversationFilter.groups) {
-                    return matchesQuery && conv.isGroup;
-                  }
-                  return matchesQuery;
-                }).toList()..sort((a, b) {
-                  if (a.isPinned != b.isPinned) {
-                    return a.isPinned ? -1 : 1;
-                  }
-                  final aTime = a.lastActivityAt?.millisecondsSinceEpoch ?? 0;
-                  final bTime = b.lastActivityAt?.millisecondsSinceEpoch ?? 0;
-                  return bTime.compareTo(aTime);
-                });
-
             final unreadTotal = conversations.fold<int>(
               0,
               (sum, c) => sum + c.unreadCount,
             );
-            final groupTotal = conversations
-                .where((c) => c.isGroup && !c.isArchived)
-                .length;
 
-            final showFilterChips =
-                _showFilterChips ||
-                _filter != ConversationFilter.all ||
-                _searchFocusNode.hasFocus ||
-                _searchController.text.isNotEmpty;
-
-            return CustomScrollView(
-              controller: _scrollController,
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              physics: const BouncingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics(),
-              ),
-              slivers: [
-                // iOS Collapsing Large Title Header & Search/Filters
-                SliverPersistentHeader(
-                  pinned: true,
-                  delegate: _IosMessagesHeaderDelegate(
-                    topPadding: MediaQuery.paddingOf(context).top,
-                    isDark: isDark,
-                    isSyncing: _isSyncing,
-                    unreadTotal: unreadTotal,
-                    groupTotal: groupTotal,
-                    filter: _filter,
-                    showFilterChips: showFilterChips,
-                    searchController: _searchController,
-                    searchFocusNode: _searchFocusNode,
-                    onFilterSelected: (f) => setState(() => _filter = f),
-                    onMoreTap: () => _showMoreOptionsMenu(context),
-                    onNewChatTap: () => _showNewChatActionsSheet(),
-                  ),
+            return Stack(
+              children: [
+                PageView(
+                  controller: _pageController,
+                  physics: const BouncingScrollPhysics(),
+                  onPageChanged: (index) {
+                    if (_selectedTabIndex != index) {
+                      setState(() {
+                        _selectedTabIndex = index;
+                      });
+                      if (index == 1) {
+                        _callHistoryKey.currentState?.loadCallHistory();
+                      }
+                    }
+                  },
+                  children: [
+                    _buildChatsView(context, isDark, conversations),
+                    CallHistoryView(
+                      key: _callHistoryKey,
+                      isDuressMode: widget.isDuressMode,
+                    ),
+                    const SecretSettingsPage(showBackButton: false),
+                  ],
                 ),
-
-                // Cupertino Pull-to-Refresh
-                CupertinoSliverRefreshControl(onRefresh: _refreshServerChats),
-
-                // Conversation Tiles List + Archived Row
-                if (filtered.isEmpty && archivedTotal == 0)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(32.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              CupertinoIcons.chat_bubble_2,
-                              size: 48,
-                              color: AppTheme.secondaryText(isDark),
-                            ),
-                            const SizedBox(height: 14),
-                            Text(
-                              _searchController.text.isNotEmpty
-                                  ? 'No results for "${_searchController.text}"'
-                                  : 'No Conversations Yet',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.secondaryText(isDark),
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Tap the + button above to search users and start messaging.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: AppTheme.secondaryText(isDark),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  )
-                else
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        // Index 0: Archived Row
-                        if (index == 0) {
-                          return Column(
-                            children: [
-                              InkWell(
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (context) => ArchivedListPage(
-                                        isDuressMode: widget.isDuressMode,
-                                      ),
-                                    ),
-                                  );
-                                },
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16.0,
-                                    vertical: 12.0,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        CupertinoIcons.archivebox,
-                                        size: 22,
-                                        color: AppTheme.secondaryText(isDark),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Text(
-                                        'Archived',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          color: AppTheme.primaryText(isDark),
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      if (archivedUnreadChatsCount > 0) ...[
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 7,
-                                            vertical: 2,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: AppTheme.primaryColor,
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                          ),
-                                          child: Text(
-                                            '$archivedUnreadChatsCount',
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ] else if (archivedTotal > 0) ...[
-                                        Text(
-                                          '$archivedTotal',
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w500,
-                                            color: AppTheme.secondaryText(
-                                              isDark,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              Divider(
-                                height: 0.5,
-                                thickness: 0.5,
-                                color: AppTheme.listDivider(isDark),
-                                indent: 54,
-                              ),
-                            ],
-                          );
-                        }
-
-                        final convIndex = index - 1;
-                        if (convIndex == filtered.length) {
-                          return const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 20),
-                            child: Center(
-                              child: SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    AppTheme.primaryColor,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          );
-                        }
-
-                        final conv = filtered[convIndex];
-                        return GestureDetector(
-                          onLongPress: () =>
-                              _showChatPeekPreview(context, conv),
-                          child: ConversationTile(
-                            conversation: conv,
-                            isTyping: conv.isTyping,
-                            showDivider: convIndex < filtered.length - 1,
-                            onTap: () {
-                              FocusScope.of(context).unfocus();
-                              if (conv.id == BotAssistantService.botId) {
-                                BotChatDetailPage.open(
-                                  context,
-                                  conversation: conv,
-                                );
-                                return;
-                              }
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (context) => VaultEdgePanelWrapper(
-                                    isDuressMode: widget.isDuressMode,
-                                    child: ChatDetailPage(conversation: conv),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        );
-                      },
-                      childCount:
-                          1 + filtered.length + (_isLoadingMoreChats ? 1 : 0),
-                    ),
-                  ),
+                _buildFloatingGlassBottomBar(isDark, unreadTotal),
               ],
             );
           },

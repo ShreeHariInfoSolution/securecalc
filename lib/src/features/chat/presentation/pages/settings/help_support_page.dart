@@ -469,15 +469,16 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
             ? AppTheme.darkBackground
             : AppTheme.lightBackground,
         body: SafeArea(
+          bottom: false,
           child: Column(
             children: [
               const CompactSettingsHeader(title: 'Help & Support & Backup'),
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 12.0,
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
                   ),
+                  padding: const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 100.0),
                   children: [
                     // Backup & Restore Section
                     _buildSectionHeader('BACKUP & RESTORE DATA'),

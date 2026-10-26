@@ -32,23 +32,35 @@
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>This app requires Bluetooth access to connect and communicate with nearby secure devices and accessories.</string>
+	<string>This app requires Bluetooth access to connect, discover, and communicate with nearby secure devices.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>This app requires Bluetooth access to connect and communicate with nearby secure devices and accessories.</string>
+	<string>This app requires Bluetooth access to connect, discover, and communicate with nearby secure devices.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>This app requires camera access to capture photos and videos for your private vault storage and profile avatar.</string>
+	<string>This app requires camera access to capture photos and videos for your private vault storage, update profile avatars, participate in video calls, and scan QR codes.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app requires access to the local network to discover and establish direct connections with nearby devices on the same Wi-Fi network.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app requires location permission to discover nearby devices via Bluetooth and local network for secure P2P messaging.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app requires location permission to discover nearby devices via Bluetooth and local network for secure P2P messaging.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>This app requires microphone access to record voice messages in chat conversations.</string>
+	<string>This app requires microphone access to record voice messages in chat conversations and participate in voice and video calls.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>This app uses motion sensors to detect shake gestures to trigger emergency panic mode and quickly lock your vault.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>This app requires permission to save photos and videos from encrypted messages and your vault to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>This app requires access to your photo library to select photos, videos, and media files to send in encrypted chats or store in your vault.</string>
+	<string>This app requires access to your photo library to select photos, videos, and media files to send in encrypted chats or store in your private vault.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>NSUserNotificationUsageDescription</key>
-	<string>This app requires notification permissions to alert you about new encrypted messages and vault updates.</string>
+	<string>This app requires notification permissions to alert you about new encrypted messages, incoming calls, and vault updates.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -74,8 +86,10 @@
 	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>fetch</string>
 		<string>remote-notification</string>
+		<string>voip</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

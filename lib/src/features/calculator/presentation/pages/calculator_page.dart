@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../../core/config/app_preferences.dart';
 import '../../../auth/presentation/pages/privacy_consent_page.dart';
 import '../../domain/calculator_logic.dart';
@@ -24,8 +25,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
     // Turn off soft keyboard whenever entering the calculator
     WidgetsBinding.instance.addPostFrameCallback((_) {
       FocusManager.instance.primaryFocus?.unfocus();
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
     });
   }
+
 
   void _handleButton(String symbol) {
     if (_isNavigating) return;
@@ -72,9 +75,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (FocusManager.instance.primaryFocus?.hasFocus == true) {
-      FocusManager.instance.primaryFocus?.unfocus();
-    }
+    FocusManager.instance.primaryFocus?.unfocus();
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(

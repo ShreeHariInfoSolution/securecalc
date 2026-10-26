@@ -6,7 +6,7 @@ class ChatMessage {
   final String senderId;
   final String content;
   final DateTime timestamp;
-  final String type; // 'text', 'image', 'video'
+  final String type; // 'text', 'image', 'video', 'call'
   final String? mediaUrl;
   final String? fileName;
   final bool isRead;
@@ -22,6 +22,11 @@ class ChatMessage {
   final DateTime? updatedAt;
   final String? reaction;
   final int? replyToId;
+  final String? msgType;
+  final int? callId;
+  final String? callType;
+  final String? callStatus;
+  final int? callDuration;
 
   MessageStatus get messageStatus {
     final s = status.toLowerCase().trim();
@@ -33,11 +38,43 @@ class ChatMessage {
 
   bool get hasMedia {
     final t = type.toLowerCase().trim();
-    if (t == 'text' || t == 'text/plain') return false;
+    if (t == 'text' || t == 'text/plain' || t == 'call') return false;
     return mediaUrl != null && mediaUrl!.trim().isNotEmpty;
   }
 
+  bool get isMedia => hasMedia;
+
+  bool get isCallMessage =>
+      type == 'call' ||
+      msgType == 'call' ||
+      callStatus != null ||
+      callId != null;
+
+  bool get isMissedCall {
+    final s = (callStatus ?? '').toLowerCase().trim();
+    final text = content.toLowerCase().trim();
+    return s == 'missed' ||
+        s == 'rejected' ||
+        s == 'declined' ||
+        s == 'no answer' ||
+        s == 'cancelled' ||
+        text.contains('missed') ||
+        text.contains('declined') ||
+        text.contains('no answer') ||
+        text.contains('rejected');
+  }
+
   String get previewText {
+    if (isCallMessage) {
+      final isVideo = (callType ?? '').toLowerCase() == 'video' ||
+          content.toLowerCase().contains('video');
+      final callIcon = isVideo ? '📹' : '📞';
+      if (isMissedCall) {
+        return '$callIcon Missed ${isVideo ? 'video' : 'voice'} call';
+      }
+      return '$callIcon ${content.isNotEmpty ? content : (isVideo ? 'Video call' : 'Voice call')}';
+    }
+
     final attachmentType = type.toLowerCase().trim();
     final url = (mediaUrl ?? '').toLowerCase().trim();
     final name = (fileName ?? '').toLowerCase().trim();
@@ -69,18 +106,25 @@ class ChatMessage {
         !content.startsWith('uploads/') &&
         !content.startsWith('api/');
 
+    final cleanContent = content.trim();
+    final isDefaultCaption = cleanContent == 'Photo' ||
+        cleanContent == 'Video' ||
+        cleanContent == 'Sent a photo' ||
+        cleanContent == 'Sent a video' ||
+        cleanContent == 'Sent an attachment';
+
     if (isImage) {
-      final caption = hasCustomText ? ': $content' : '';
-      return '${prefix}📷 Photo$caption';
+      final caption = hasCustomText && !isDefaultCaption ? ': $content' : '';
+      return '$prefix📷 Photo$caption';
     }
 
     if (isVideo) {
-      final caption = hasCustomText ? ': $content' : '';
-      return '${prefix}🎥 Video$caption';
+      final caption = hasCustomText && !isDefaultCaption ? ': $content' : '';
+      return '$prefix🎥 Video$caption';
     }
 
     if (isAudio) {
-      return '${prefix}🎙️ Voice message';
+      return '$prefix🎙️ Voice message';
     }
 
     if (isDoc || (url.isNotEmpty && !hasCustomText)) {
@@ -118,6 +162,11 @@ class ChatMessage {
     this.updatedAt,
     this.reaction,
     this.replyToId,
+    this.msgType,
+    this.callId,
+    this.callType,
+    this.callStatus,
+    this.callDuration,
   });
 
   ChatMessage copyWith({
@@ -141,6 +190,11 @@ class ChatMessage {
     DateTime? updatedAt,
     String? reaction,
     int? replyToId,
+    String? msgType,
+    int? callId,
+    String? callType,
+    String? callStatus,
+    int? callDuration,
   }) {
     // Status can only move forward: sending (0) -> sent (1) -> delivered (2) -> read (3)
     final newStatusStr = status ?? this.status;
@@ -172,6 +226,11 @@ class ChatMessage {
       updatedAt: updatedAt ?? this.updatedAt,
       reaction: reaction ?? this.reaction,
       replyToId: replyToId ?? this.replyToId,
+      msgType: msgType ?? this.msgType,
+      callId: callId ?? this.callId,
+      callType: callType ?? this.callType,
+      callStatus: callStatus ?? this.callStatus,
+      callDuration: callDuration ?? this.callDuration,
     );
   }
 

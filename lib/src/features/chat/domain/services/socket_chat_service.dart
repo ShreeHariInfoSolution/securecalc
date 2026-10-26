@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
 import '../models/server_models.dart';
+import 'call_service.dart';
 import 'presence_store.dart';
 import 'server_api_service.dart';
 
@@ -14,6 +15,7 @@ class SocketChatService {
   static final SocketChatService instance = SocketChatService._();
 
   IO.Socket? _socket;
+  IO.Socket? get rawSocket => _socket;
 
   // Stream controllers for incoming server events
   final _messageStreamController =
@@ -70,8 +72,12 @@ class SocketChatService {
     if (_socket != null) {
       final currentSocketToken = _socket!.io.options?['auth']?['token'];
       if (currentSocketToken == token && _socket!.connected) {
-        debugPrint('[SOCKET] Already connected with active user token.');
+        debugPrint('[SOCKET] Already connected with active user token. Re-emitting presence...');
         connectionStateNotifier.value = true;
+        try {
+          _socket!.emit('presence', {'status': 'online', 'is_online': true});
+          _socket!.emit('user_online', {'is_online': true});
+        } catch (_) {}
         return;
       }
       debugPrint(
@@ -101,6 +107,9 @@ class SocketChatService {
         _socket!.emit('presence', {'status': 'online', 'is_online': true});
         _socket!.emit('user_online', {'is_online': true});
       } catch (_) {}
+      unawaited(CallService.instance.init().then((_) {
+        if (_socket != null) CallService.instance.attachSocket(_socket!);
+      }));
     });
 
     _socket!.onDisconnect((reason) {
@@ -250,6 +259,9 @@ class SocketChatService {
     _socket!.on('messages_delivered', handleDelivered);
     _socket!.on('message_delivered', handleDelivered);
     _socket!.on('delivered', handleDelivered);
+    _socket!.on('message:delivered', handleDelivered);
+    _socket!.on('messages:delivered', handleDelivered);
+    _socket!.on('delivery_status', handleDelivered);
 
     // 6. Typing Indicator
     _socket!.on('typing', (data) {
@@ -337,10 +349,15 @@ class SocketChatService {
   }
 
   /// delete_message: message_id
-  void deleteMessage({required int messageId}) {
+  void deleteMessage({required int messageId, int type = 1}) {
     if (!isConnected) return;
 
-    final payload = <String, dynamic>{'message_id': messageId, 'id': messageId};
+    final payload = <String, dynamic>{
+      'message_id': messageId,
+      'id': messageId,
+      'type': type,
+      'delete_type': type,
+    };
     debugPrint('[SOCKET] Emitting delete_message: $payload');
     _socket!.emit('delete_message', payload);
   }

@@ -699,6 +699,16 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
                                           ),
                                         );
                                         if (confirm == true) {
+                                          final chatId = int.tryParse(
+                                            widget.conversation.id,
+                                          );
+                                          if (chatId != null && chatId > 0) {
+                                            await ServerApiService.instance
+                                                .deleteChatREST(
+                                                  chatId,
+                                                  deleteChat: true,
+                                                );
+                                          }
                                           await LocalChatStorage.instance
                                               .deleteConversation(
                                                 widget.conversation.id,

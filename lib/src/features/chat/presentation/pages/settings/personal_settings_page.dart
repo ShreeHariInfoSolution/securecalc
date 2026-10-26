@@ -286,7 +286,10 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
         await [Permission.photos, Permission.storage].request();
       }
 
-      final picked = await _picker.pickImage(source: source, imageQuality: 95);
+      final picked = await _picker.pickImage(
+        source: source,
+        imageQuality: source == ImageSource.camera ? null : 95,
+      );
       if (picked != null) {
         if (!mounted) return;
         final croppedFile = await ProfileImageCropperDialog.cropImage(
@@ -554,8 +557,8 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     AppPreferences.setDuressPasscode(newDuress);
     _showToast(
       newDuress.isEmpty
-          ? 'Duress passcode cleared.'
-          : 'Duress decoy passcode set to "$newDuress="',
+          ? 'Fake decoy passcode cleared.'
+          : 'Fake decoy passcode set to "$newDuress="',
     );
   }
 
@@ -578,6 +581,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
             ? const Color(0xFF000000)
             : const Color(0xFFF2F2F7),
         body: SafeArea(
+          bottom: false,
           child: Column(
             children: [
               // iOS Style Header
@@ -586,10 +590,10 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
               // iOS Grouped Settings List
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 12.0,
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
                   ),
+                  padding: const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 100.0),
                   children: [
                     // Section 1: Profile
                     _buildSectionHeader('PROFILE'),
@@ -707,14 +711,14 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                     const SizedBox(height: 24),
 
                     // Section 2: Vault Passcode
-                    _buildSectionHeader('SECRET VAULT PASSCODE'),
+                    _buildSectionHeader('REAL VAULT PASSCODE'),
                     _buildGroupedCard(
                       isDark: isDark,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Type this code on the calculator and press "=" to unlock your secure vault.',
+                            'Type this code into the calculator and press "=" to unlock your real private vault.',
                             style: TextStyle(
                               fontSize: 12,
                               color: AppTheme.subtitleGrey,
@@ -725,7 +729,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                           _buildCustomTextField(
                             isDark: isDark,
                             controller: _passcodeController,
-                            label: 'Secret Passcode',
+                            label: 'Real Passcode',
                             hint: 'Enter numeric passcode',
                             icon: Icons.lock_rounded,
                             iconBgColor: AppTheme.primaryColor.withValues(alpha: 0.12),
@@ -752,7 +756,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                               onPressed: _savePasscode,
                               icon: const Icon(Icons.security_rounded, size: 18),
                               label: const Text(
-                                'Save Vault Passcode',
+                                'Save Real Passcode',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14,
@@ -766,15 +770,15 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
 
                     const SizedBox(height: 24),
 
-                    // Section 3: Duress / Decoy Passcode
-                    _buildSectionHeader('DURESS / DECOY PASSCODE'),
+                    // Section 3: Fake / Decoy Passcode
+                    _buildSectionHeader('FAKE / DECOY PASSCODE (EMERGENCY)'),
                     _buildGroupedCard(
                       isDark: isDark,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Entering this duress passcode (e.g. 4321=) into the calculator opens a decoy empty vault. This protects your actual private messages if forced to unlock the app.',
+                            'If someone forces you to unlock the app, enter this fake passcode (e.g. 4321=) into the calculator. It will open an empty fake vault, keeping your real private messages completely hidden.',
                             style: TextStyle(
                               fontSize: 12,
                               color: AppTheme.subtitleGrey,
@@ -785,8 +789,8 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                           _buildCustomTextField(
                             isDark: isDark,
                             controller: _duressPasscodeController,
-                            label: 'Duress Passcode (Default: 4321)',
-                            hint: 'Enter decoy passcode',
+                            label: 'Fake Passcode (Default: 4321)',
+                            hint: 'Enter fake passcode',
                             icon: Icons.shield_outlined,
                             iconBgColor: const Color(0xFFF59E0B).withValues(alpha: 0.15),
                             iconColor: const Color(0xFFF59E0B),
@@ -812,7 +816,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                               onPressed: _saveDuressCode,
                               icon: const Icon(Icons.shield_rounded, size: 18),
                               label: const Text(
-                                'Save Duress Passcode',
+                                'Save Fake Passcode',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14,
@@ -827,52 +831,52 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                     const SizedBox(height: 24),
 
                     // Section 4: Security
-                    _buildSectionHeader('CALCULATOR SETTINGS'),
-                    _buildGroupedCard(
-                      isDark: isDark,
-                      child: SwitchListTile(
-                        activeTrackColor: AppTheme.onlineGreen,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text(
-                          'Fake Calculator History',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: const Text(
-                          'Displays fake calculation entries when calculating',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppTheme.subtitleGrey,
-                          ),
-                        ),
-                        value: _fakeHistoryEnabled,
-                        onChanged: (val) {
-                          setState(() => _fakeHistoryEnabled = val);
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 24),
+                    // _buildSectionHeader('CALCULATOR SETTINGS'),
+                    // _buildGroupedCard(
+                    //   isDark: isDark,
+                    //   child: SwitchListTile(
+                    //     activeTrackColor: AppTheme.onlineGreen,
+                    //     contentPadding: EdgeInsets.zero,
+                    //     title: const Text(
+                    //       'Fake Calculator History',
+                    //       style: TextStyle(
+                    //         fontSize: 14,
+                    //         fontWeight: FontWeight.w600,
+                    //       ),
+                    //     ),
+                    //     subtitle: const Text(
+                    //       'Displays fake calculation entries when calculating',
+                    //       style: TextStyle(
+                    //         fontSize: 12,
+                    //         color: AppTheme.subtitleGrey,
+                    //       ),
+                    //     ),
+                    //     value: _fakeHistoryEnabled,
+                    //     onChanged: (val) {
+                    //       setState(() => _fakeHistoryEnabled = val);
+                    //     },
+                    //   ),
+                    // ),
+                    // const SizedBox(height: 24),
 
                     // Section 5: Account Deletion
-                    _buildSectionHeader('ACCOUNT & DATA PRIVACY'),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                        side: const BorderSide(color: Colors.red),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      icon: const Icon(Icons.delete_forever_rounded),
-                      label: const Text(
-                        'Delete Account & Server Data',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      onPressed: () => _confirmAccountDeletion(context),
-                    ),
+                    // _buildSectionHeader('ACCOUNT & DATA PRIVACY'),
+                    // OutlinedButton.icon(
+                    //   style: OutlinedButton.styleFrom(
+                    //     foregroundColor: Colors.red,
+                    //     side: const BorderSide(color: Colors.red),
+                    //     padding: const EdgeInsets.symmetric(vertical: 14),
+                    //     shape: RoundedRectangleBorder(
+                    //       borderRadius: BorderRadius.circular(12),
+                    //     ),
+                    //   ),
+                    //   icon: const Icon(Icons.delete_forever_rounded),
+                    //   label: const Text(
+                    //     'Delete Account & Server Data',
+                    //     style: TextStyle(fontWeight: FontWeight.bold),
+                    //   ),
+                    //   onPressed: () => _confirmAccountDeletion(context),
+                    // ),
                     const SizedBox(height: 32),
                   ],
                 ),

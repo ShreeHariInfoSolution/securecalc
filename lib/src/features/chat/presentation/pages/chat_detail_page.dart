@@ -19,8 +19,10 @@ import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/models/server_models.dart';
 import '../../domain/services/attachment_cache_service.dart';
+import '../../domain/services/call_service.dart';
 import '../../domain/services/e2e_crypto_service.dart';
 import '../../domain/services/local_chat_storage.dart';
+import '../../domain/services/presence_store.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
 import '../../domain/services/socket_chat_service.dart';
@@ -28,7 +30,8 @@ import '../widgets/chat_bubble.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/chat_detail_header.dart';
 import '../widgets/chat_message_list.dart';
-import '../widgets/chat_typing_indicator.dart';
+import '../widgets/gif_picker_panel.dart';
+import '../widgets/sticker_picker_panel.dart';
 import '../widgets/forward_chat_selection_dialog.dart';
 import 'message_info_page.dart';
 import '../widgets/chat_wallpaper_widget.dart';
@@ -78,6 +81,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   StreamSubscription<Map<String, dynamic>>? _typingSubscription;
   StreamSubscription<Map<String, dynamic>>? _presenceSubscription;
   StreamSubscription<Map<String, dynamic>>? _readSubscription;
+  StreamSubscription<Map<String, dynamic>>? _deliveredSubscription;
   StreamSubscription<Map<String, dynamic>>? _editedSubscription;
   StreamSubscription<Map<String, dynamic>>? _deletedSubscription;
   StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
@@ -114,6 +118,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     _readSubscription = SocketChatService.instance.onRead.listen(
       _handleReadEvent,
     );
+    _deliveredSubscription = SocketChatService.instance.onDelivered.listen(
+      _handleDeliveredEvent,
+    );
     _editedSubscription = SocketChatService.instance.onMessageEdited.listen(
       _handleEditedMessage,
     );
@@ -123,12 +130,27 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     _reactionSubscription = SocketChatService.instance.onMessageReaction.listen(
       _handleReactionMessage,
     );
+
+    final savedDraft = LocalChatStorage.instance.getDraft(widget.conversation.id);
+    if (savedDraft != null && savedDraft.isNotEmpty) {
+      _inputController.text = savedDraft;
+    }
+    _inputController.addListener(_onInputTextChanged);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _markChatRead();
       }
     });
   }
+
+  void _onInputTextChanged() {
+    LocalChatStorage.instance.saveDraft(
+      widget.conversation.id,
+      _inputController.text,
+    );
+  }
+
 
   Future<void> _warmAttachmentCache() async {
     await AttachmentCacheService.instance.warmUp();
@@ -231,15 +253,30 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         final peer = otherMembers.isNotEmpty ? otherMembers.first : null;
 
         if (peer != null) {
-          _isPeerOnline.value = peer.isOnline;
+          final livePresence = PresenceStore.instance.getPresence(peer.id);
+          final effectiveOnline = livePresence != null ? livePresence.isOnline : peer.isOnline;
+          _isPeerOnline.value = effectiveOnline;
+
           final peerLastSeen = peer.lastSeenAt != null
               ? DateTime.tryParse(peer.lastSeenAt!)?.toLocal()
               : null;
+
+          if (livePresence == null) {
+            PresenceStore.instance.updatePresence({
+              'user_id': peer.id,
+              'is_online': peer.isOnline,
+              'last_seen_at': peer.lastSeenAt,
+              'last_seen_text': peer.lastSeenText ?? (peer.isOnline ? 'online' : null),
+              'chat_head_id': widget.conversation.id,
+            });
+          }
+
           unawaited(
             LocalChatStorage.instance.updateConversation(
               widget.conversation.id,
               (c) => c.copyWith(
-                isOnline: peer.isOnline,
+                peerUserId: peer.id,
+                isOnline: effectiveOnline,
                 lastSeenAt: peerLastSeen,
               ),
             ),
@@ -344,6 +381,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         !_scrollController.hasClients ||
         _scrollController.position.pixels < 180;
     final currentUserId = ServerApiService.instance.currentUserId;
+
+    if (serverMessage.senderId != currentUserId && serverMessage.chatHeadId > 0) {
+      unawaited(ServerApiService.instance.markDeliveredREST(chatId: serverMessage.chatHeadId));
+    }
     final plaintext = serverMessage.decryptedContent(
       'chat_key_${serverMessage.chatHeadId}',
     );
@@ -353,36 +394,82 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     } catch (_) {
       timestamp = DateTime.now();
     }
+    final isSmCall = serverMessage.msgType == 'call' ||
+        serverMessage.callStatus != null ||
+        serverMessage.callId != null;
+    final smFileType = serverMessage.fileType?.toLowerCase().trim();
+    final rawFilePath = serverMessage.filePath?.trim();
+    final rawFileName = serverMessage.fileName?.trim();
+
+    final msgContent = serverMessage.isDeleted
+        ? 'This message was deleted'
+        : (plaintext.isEmpty ? (serverMessage.message ?? '') : plaintext);
+
+    final msgText = msgContent.trim();
+    final isGifContent = smFileType == 'image/gif' ||
+        smFileType == 'gif' ||
+        (msgText.startsWith('http://') || msgText.startsWith('https://')) &&
+            (msgText.toLowerCase().contains('.gif') ||
+                msgText.toLowerCase().contains('giphy.com') ||
+                msgText.toLowerCase().contains('tenor.com'));
+
+    final isStickerContent = smFileType == 'sticker' || msgText.startsWith('stk_');
+
+    final isMediaContent = isGifContent ||
+        isStickerContent ||
+        (rawFilePath != null && rawFilePath.isNotEmpty) ||
+        (rawFileName != null && rawFileName.isNotEmpty);
+
+    final isSmText = !isSmCall &&
+        !isMediaContent &&
+        (smFileType == 'text' || smFileType == 'text/plain' || smFileType == null || smFileType.isEmpty);
+
+    final effectiveType = isSmCall
+        ? 'call'
+        : (isStickerContent
+            ? 'sticker'
+            : (isGifContent
+                ? 'image/gif'
+                : (isSmText
+                    ? 'text'
+                    : (inferAttachmentType(
+                          fileType: serverMessage.fileType,
+                          fileName: serverMessage.fileName,
+                          filePath: serverMessage.filePath,
+                        ) ??
+                        'application/octet-stream'))));
+
+    final effectiveMediaUrl = isSmText || isSmCall
+        ? null
+        : ((rawFilePath != null && rawFilePath.isNotEmpty)
+            ? rawFilePath
+            : (isGifContent ? msgText : null));
+
     final incoming = ChatMessage(
       id: serverMessage.id.toString(),
       senderId: serverMessage.senderId == currentUserId
           ? 'user'
           : serverMessage.senderId.toString(),
-      content: serverMessage.isDeleted ? 'This message was deleted' : plaintext,
+      content: msgContent,
       timestamp: timestamp,
-      type:
-          inferAttachmentType(
-            fileType: serverMessage.fileType,
-            fileName: serverMessage.fileName,
-            filePath: serverMessage.filePath,
-          ) ??
-          (serverMessage.filePath != null &&
-                  serverMessage.filePath!.trim().isNotEmpty
-              ? 'application/octet-stream'
-              : 'text'),
-      mediaUrl: (serverMessage.filePath != null &&
-              serverMessage.filePath!.trim().isNotEmpty)
-          ? serverMessage.filePath
-          : null,
-      fileName: (serverMessage.fileName != null &&
-              serverMessage.fileName!.trim().isNotEmpty)
-          ? serverMessage.fileName
-          : null,
+      type: effectiveType,
+      mediaUrl: effectiveMediaUrl,
+      fileName: isSmText || isSmCall
+          ? null
+          : ((serverMessage.fileName != null &&
+                  serverMessage.fileName!.trim().isNotEmpty)
+              ? serverMessage.fileName
+              : null),
       isRead: true,
       isEdited: serverMessage.isEdited,
       isDeleted: serverMessage.isDeleted,
       reaction: serverMessage.chatReact,
       replyToId: serverMessage.replyToId,
+      msgType: serverMessage.msgType ?? (isSmCall ? 'call' : null),
+      callId: serverMessage.callId,
+      callType: serverMessage.callType,
+      callStatus: serverMessage.callStatus,
+      callDuration: serverMessage.callDuration,
     );
     if (_isLoadingMessages) {
       _messagesReceivedWhileLoading[incoming.id] = incoming;
@@ -392,17 +479,17 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final existingIndex = _messages.indexWhere(
       (message) =>
           message.id == incoming.id ||
-          (message.id.startsWith('local_') &&
+          ((message.id.startsWith('local_') || message.id.startsWith('fwd_')) &&
               incoming.senderId == 'user' &&
-              message.content == incoming.content) ||
+              message.content.trim() == incoming.content.trim()) ||
           (incoming.senderId == 'user' &&
               message.senderId == 'user' &&
-              message.content == incoming.content &&
+              message.content.trim() == incoming.content.trim() &&
               incoming.timestamp
                       .difference(message.timestamp)
                       .inSeconds
                       .abs() <=
-                  5),
+                  10),
     );
 
     if (existingIndex >= 0) {
@@ -464,6 +551,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         _peerTypingTimer = Timer(const Duration(seconds: 4), () {
           if (mounted) _isPeerTyping.value = false;
         });
+        if (!_scrollController.hasClients ||
+            _scrollController.position.pixels < 220) {
+          _scrollToBottom();
+        }
       }
     }
   }
@@ -474,12 +565,20 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         ? Map<String, dynamic>.from(event['data'] as Map)
         : event;
 
-    final directPeerId = widget.conversation.peerUserId ??
-        (widget.conversation.isGroup ? null : int.tryParse(widget.conversation.id));
-
     final userId = int.tryParse(
       (data['user_id'] ?? data['userId'] ?? data['id'])?.toString() ?? '',
     );
+
+    final myUserId = ServerApiService.instance.currentUserId;
+    if (myUserId != null && myUserId > 0 && userId != null && userId == myUserId) {
+      // Ignore presence events for myself
+      return;
+    }
+
+    final directPeerId = widget.conversation.peerUserId ??
+        PresenceStore.instance.getUserIdForChat(widget.conversation.id) ??
+        (widget.conversation.isGroup ? null : int.tryParse(widget.conversation.id));
+
     final chatHeadId =
         (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'])
             ?.toString();
@@ -521,7 +620,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
             lastSeenAt:
                 isOnline
                     ? null
-                    : (parsedLastSeen ?? c.lastSeenAt ?? DateTime.now()),
+                    : (parsedLastSeen ?? c.lastSeenAt),
           ),
         ),
       );
@@ -559,6 +658,38 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       }
       return message;
     }).toList();
+    if (!changed) return;
+
+    setState(() => _messages = updatedMessages);
+    unawaited(
+      LocalChatStorage.instance.cacheMessages(
+        widget.conversation.id,
+        updatedMessages,
+        chatDisappearType: _disappearType,
+        keepReadSessionMessages: true,
+      ),
+    );
+  }
+
+  void _handleDeliveredEvent(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final eventChatId =
+        (data['chat_head_id'] ??
+                data['chat_id'] ??
+                data['chatHeadId'] ??
+                data['chatId'])
+            ?.toString();
+    if (eventChatId != widget.conversation.id) return;
+
+    var changed = false;
+    final updatedMessages = _messages.map((message) {
+      if (message.senderId == 'user' && !message.isDelivered) {
+        changed = true;
+        return message.copyWith(isDelivered: true, status: 'delivered');
+      }
+      return message;
+    }).toList();
+
     if (!changed) return;
 
     setState(() => _messages = updatedMessages);
@@ -815,12 +946,29 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   Future<void> _showCachedMessages() async {
     final cached = await _loadPlainCachedMessages();
     if (!mounted) return;
-    final messagesById = <String, ChatMessage>{
-      for (final message in _messages) message.id: message,
-      for (final message in cached) message.id: message,
-    };
-    final messages = messagesById.values.toList()..sort(_compareChatMessages);
-    setState(() => _messages = messages);
+
+    final mergedList = <ChatMessage>[..._messages];
+
+    for (final cachedMsg in cached) {
+      final idx = mergedList.indexWhere(
+        (m) =>
+            m.id == cachedMsg.id ||
+            ((m.id.startsWith('local_') || m.id.startsWith('fwd_')) &&
+                m.senderId == cachedMsg.senderId &&
+                m.content.trim() == cachedMsg.content.trim()) ||
+            (m.senderId == cachedMsg.senderId &&
+                m.content.trim() == cachedMsg.content.trim() &&
+                m.timestamp.difference(cachedMsg.timestamp).inSeconds.abs() <= 10),
+      );
+      if (idx >= 0) {
+        mergedList[idx] = cachedMsg;
+      } else {
+        mergedList.add(cachedMsg);
+      }
+    }
+
+    mergedList.sort(_compareChatMessages);
+    setState(() => _messages = mergedList);
     _scrollToBottom();
   }
 
@@ -910,8 +1058,31 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     }
     final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])?.toString();
     if (messageId == null || !mounted) return;
+
+    final rawDeleteType = data['type'] ?? data['delete_type'];
+    final deleteType = rawDeleteType is int
+        ? rawDeleteType
+        : int.tryParse(rawDeleteType?.toString() ?? '2') ?? 2;
+
     final index = _messages.indexWhere((message) => message.id == messageId);
     if (index < 0) return;
+
+    if (deleteType == 2) {
+      // Delete for me
+      setState(() {
+        _messages.removeAt(index);
+        if (_editingMessage?.id == messageId) _editingMessage = null;
+      });
+      unawaited(
+        LocalChatStorage.instance.deleteLocalMessage(
+          widget.conversation.id,
+          messageId,
+        ),
+      );
+      return;
+    }
+
+    // Delete for everyone (deleteType == 1)
     final updated = _messages[index].copyWith(
       content: 'This message was deleted',
       isDeleted: true,
@@ -1245,7 +1416,16 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     Offset globalPosition,
     Size bubbleSize,
   ) async {
-    if (message.isDeleted) return;
+    if (message.isDeleted) {
+      final deleteType = await _showDeleteMessageBottomSheet(
+        canDeleteForEveryone: false,
+      );
+      if (deleteType != null && mounted) {
+        _deleteMessage(message);
+      }
+      return;
+    }
+
     final messageId = int.tryParse(message.id);
     final isMine = message.senderId == 'user';
     final screen = MediaQuery.sizeOf(context);
@@ -1257,8 +1437,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final isExpired = minutesSinceSent >= 15;
     final canEdit =
         isMine && messageId != null && message.type == 'text' && !isExpired;
-    final canDelete =
-        isMine && messageId != null && !message.isRead && !isExpired;
+    final canDelete = messageId != null && !message.isDeleted;
 
     const emojiHeight = 50.0;
     const menuWidth = 220.0;
@@ -1650,9 +1829,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           ],
         ),
       );
-  },
-);
-  }
+    },
+  );
+}
 
   Future<void> _showMoreReactions(ChatMessage message) async {
     const emojis = [
@@ -1957,58 +2136,191 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     );
   }
 
-  Future<void> _deleteMessage(ChatMessage message) async {
-    final confirmed = await showDialog<bool>(
+  Future<int?> _showDeleteMessageBottomSheet({
+    required bool canDeleteForEveryone,
+  }) async {
+    return showModalBottomSheet<int>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete message?'),
-        content: const Text('Are you sure you want to delete this message?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
+
+        final sheetBg = isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7);
+        final cardBg = isDark ? const Color(0xFF2C2C2E) : Colors.white;
+        final textColor = isDark ? Colors.white : Colors.black;
+        final redColor = isDark ? const Color(0xFFFF453A) : const Color(0xFFFF3B30);
+        final closeBg = isDark ? const Color(0xFF3A3A3C) : const Color(0xFFE5E5EA);
+        final closeIconColor = isDark ? Colors.white : Colors.black87;
+        final dividerColor = isDark ? const Color(0xFF38383A) : const Color(0xFFE5E5EA);
+
+        return Container(
+          decoration: BoxDecoration(
+            color: sheetBg,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete'),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  Center(
+                    child: Text(
+                      'Delete message?',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        color: textColor,
+                      ),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: GestureDetector(
+                      onTap: () => Navigator.pop(ctx, null),
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: closeBg,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.close_rounded,
+                          size: 20,
+                          color: closeIconColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Container(
+                decoration: BoxDecoration(
+                  color: cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (canDeleteForEveryone) ...[
+                      InkWell(
+                        onTap: () => Navigator.pop(ctx, 1),
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                          child: Text(
+                            'Delete for everyone',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w400,
+                              color: redColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Divider(height: 1, thickness: 0.5, color: dividerColor),
+                    ],
+                    InkWell(
+                      onTap: () => Navigator.pop(ctx, 2),
+                      borderRadius: BorderRadius.circular(canDeleteForEveryone ? 0 : 16)
+                          .copyWith(
+                            bottomLeft: const Radius.circular(16),
+                            bottomRight: const Radius.circular(16),
+                          ),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                        child: Text(
+                          'Delete for me',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w400,
+                            color: redColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
-    if (confirmed != true || !mounted) return;
+  }
+
+  Future<void> _deleteMessage(ChatMessage message) async {
     final messageId = int.tryParse(message.id);
     if (messageId == null) return;
-    final deleted = await ServerApiService.instance.deleteMessageREST(
-      messageId,
+
+    final isMine = message.senderId == 'user';
+    final minutesSinceSent = DateTime.now().difference(message.timestamp).inMinutes;
+    final canDeleteForEveryone = isMine && minutesSinceSent <= 60 && !message.isDeleted;
+
+    final deleteType = await _showDeleteMessageBottomSheet(
+      canDeleteForEveryone: canDeleteForEveryone,
     );
-    if (!deleted) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Message could not be deleted.')),
-        );
+
+    if (deleteType == null || !mounted) return;
+
+    if (deleteType == 1) {
+      // Delete for everyone
+      final deleted = await ServerApiService.instance.deleteMessageREST(
+        messageId,
+        type: 1,
+      );
+      if (!deleted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Message could not be deleted.')),
+          );
+        }
+        return;
       }
-      return;
+      SocketChatService.instance.deleteMessage(messageId: messageId, type: 1);
+      final updated = message.copyWith(
+        content: 'This message was deleted',
+        isDeleted: true,
+      );
+      if (mounted) {
+        setState(() {
+          final index = _messages.indexWhere((item) => item.id == message.id);
+          if (index >= 0) _messages[index] = updated;
+          if (_editingMessage?.id == message.id) _editingMessage = null;
+        });
+      }
+      await LocalChatStorage.instance.saveMessage(
+        deviceId: widget.conversation.id,
+        peerName: _chatName,
+        message: updated,
+        markUnread: false,
+        peerUserId: widget.conversation.peerUserId,
+      );
+    } else if (deleteType == 2) {
+      // Delete for me
+      unawaited(
+        ServerApiService.instance.deleteMessageREST(messageId, type: 2),
+      );
+      SocketChatService.instance.deleteMessage(messageId: messageId, type: 2);
+
+      if (mounted) {
+        setState(() {
+          _messages.removeWhere((item) => item.id == message.id);
+          if (_editingMessage?.id == message.id) _editingMessage = null;
+        });
+      }
+
+      await LocalChatStorage.instance.deleteLocalMessage(
+        widget.conversation.id,
+        message.id,
+      );
     }
-    SocketChatService.instance.deleteMessage(messageId: messageId);
-    final updated = message.copyWith(
-      content: 'This message was deleted',
-      isDeleted: true,
-    );
-    if (mounted) {
-      setState(() {
-        final index = _messages.indexWhere((item) => item.id == message.id);
-        if (index >= 0) _messages[index] = updated;
-        if (_editingMessage?.id == message.id) _editingMessage = null;
-      });
-    }
-    await LocalChatStorage.instance.saveMessage(
-      deviceId: widget.conversation.id,
-      peerName: _chatName,
-      message: updated,
-      markUnread: false,
-      peerUserId: widget.conversation.peerUserId,
-    );
   }
 
   void _beginEditingMessage(ChatMessage message) {
@@ -2075,12 +2387,15 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   Future<void> _sendMessage() async {
+    if (_isSending) return;
     if (_editingMessage != null) {
       await _saveEditedMessage();
       return;
     }
     final text = _inputController.text.trim();
-    if (text.isEmpty || _isSending) return;
+    if (text.isEmpty) return;
+
+    _isSending = true;
 
     final localMsgId = 'local_${DateTime.now().millisecondsSinceEpoch}';
     final optimisticMsg = ChatMessage(
@@ -2099,9 +2414,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         : int.tryParse(_replyingMessage!.id);
 
     _inputController.clear();
+    unawaited(LocalChatStorage.instance.clearDraft(widget.conversation.id));
     setState(() {
       _messages = [..._messages, optimisticMsg];
-      _isSending = true;
     });
     _scrollToBottom();
 
@@ -2115,14 +2430,14 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     }
 
     try {
-      final sent = await ServerChatManager.instance.sendMessage(
+      final sentMsg = await ServerChatManager.instance.sendMessage(
         chatId: widget.conversation.id,
         peerName: _chatName,
         text: text,
         peerUserId: widget.conversation.peerUserId,
         replyToId: replyToId,
       );
-      if (!sent) {
+      if (sentMsg == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -2139,11 +2454,27 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
       if (mounted) {
         setState(() {
-          _messages = _messages.where((m) => m.id != localMsgId).toList();
+          final idx = _messages.indexWhere(
+            (m) =>
+                m.id == localMsgId ||
+                (m.id.startsWith('local_') && m.content.trim() == text.trim()),
+          );
+          if (idx >= 0) {
+            _messages[idx] = sentMsg;
+          } else {
+            final existingIdx = _messages.indexWhere((m) => m.id == sentMsg.id);
+            if (existingIdx >= 0) {
+              _messages[existingIdx] = sentMsg;
+            } else {
+              _messages.add(sentMsg);
+            }
+          }
+          _messages.sort(_compareChatMessages);
           _replyingMessage = null;
         });
       }
       await _showCachedMessages();
+      _scrollToBottom();
     } finally {
       if (mounted) setState(() => _isSending = false);
     }
@@ -2207,7 +2538,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           filename: fileName,
         );
         if (uploadedPath != null && uploadedPath.isNotEmpty) {
-          final sent = await ServerChatManager.instance.sendMessage(
+          final sentMsg = await ServerChatManager.instance.sendMessage(
             chatId: widget.conversation.id,
             peerName: _chatName,
             text: messageText,
@@ -2219,7 +2550,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                 ? null
                 : int.tryParse(_replyingMessage!.id),
           );
-          if (!sent) throw Exception('The file message could not be sent.');
+          if (sentMsg == null) {
+            throw Exception('The file message could not be sent.');
+          }
         }
       } finally {
         try {
@@ -2270,6 +2603,79 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     }
   }
 
+  Future<void> _sendSticker(StickerItem sticker) async {
+    final sentMsg = await ServerChatManager.instance.sendMessage(
+      chatId: widget.conversation.id,
+      peerName: _chatName,
+      text: sticker.id,
+      fileType: 'sticker',
+      filePath: sticker.id,
+      peerUserId: widget.conversation.peerUserId,
+    );
+    if (sentMsg != null) {
+      if (mounted) {
+        setState(() {
+          _messages.add(sentMsg);
+          _messages.sort(_compareChatMessages);
+        });
+        _scrollToBottom();
+      }
+    }
+  }
+
+  Future<void> _sendGif(GifItem gif) async {
+    if (_isSending) return;
+    setState(() => _isSending = true);
+
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final attachmentDir = Directory('${docsDir.path}${Platform.pathSeparator}chat_attachments');
+      if (!await attachmentDir.exists()) {
+        await attachmentDir.create(recursive: true);
+      }
+      final safeGifId = gif.id.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      final gifFileName = 'gif_${safeGifId}_${DateTime.now().millisecondsSinceEpoch}.gif';
+      final localGifFile = File('${attachmentDir.path}${Platform.pathSeparator}$gifFileName');
+
+      if (!await localGifFile.exists()) {
+        final res = await http.get(Uri.parse(gif.gifUrl)).timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200) {
+          await localGifFile.writeAsBytes(res.bodyBytes);
+        }
+      }
+
+      if (await localGifFile.exists()) {
+        await _uploadAndSendAttachment(
+          file: localGifFile,
+          fileName: gifFileName,
+          fileType: 'image/gif',
+          caption: 'GIF',
+        );
+        return;
+      }
+    } catch (e) {
+      debugPrint('[SEND GIF FILE ERROR] $e');
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+
+    final sentMsg = await ServerChatManager.instance.sendMessage(
+      chatId: widget.conversation.id,
+      peerName: _chatName,
+      text: gif.gifUrl,
+      fileType: 'image/gif',
+      filePath: gif.gifUrl,
+      peerUserId: widget.conversation.peerUserId,
+    );
+    if (sentMsg != null && mounted) {
+      setState(() {
+        _messages.add(sentMsg);
+        _messages.sort(_compareChatMessages);
+      });
+      _scrollToBottom();
+    }
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -2280,6 +2686,46 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         );
       }
     });
+  }
+
+  void _startVoiceCall() {
+    final chatId = int.tryParse(widget.conversation.id);
+    if (chatId == null) return;
+    try {
+      CallService.instance.startCall(
+        chatHeadId: chatId,
+        type: CallType.voice,
+        name: _chatName,
+        avatar: _chatAvatar,
+        peerUserId: widget.conversation.peerUserId,
+      ).catchError((e) {
+        if (mounted) {
+          AppToast.show(AppToast.userFriendlyMessage('$e'), isError: true);
+        }
+      });
+    } catch (e) {
+      AppToast.show(AppToast.userFriendlyMessage('$e'), isError: true);
+    }
+  }
+
+  void _startVideoCall() {
+    final chatId = int.tryParse(widget.conversation.id);
+    if (chatId == null) return;
+    try {
+      CallService.instance.startCall(
+        chatHeadId: chatId,
+        type: CallType.video,
+        name: _chatName,
+        avatar: _chatAvatar,
+        peerUserId: widget.conversation.peerUserId,
+      ).catchError((e) {
+        if (mounted) {
+          AppToast.show(AppToast.userFriendlyMessage('$e'), isError: true);
+        }
+      });
+    } catch (e) {
+      AppToast.show(AppToast.userFriendlyMessage('$e'), isError: true);
+    }
   }
 
   Future<void> _openChatInfo() async {
@@ -2667,6 +3113,11 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _inputController.removeListener(_onInputTextChanged);
+    LocalChatStorage.instance.saveDraft(
+      widget.conversation.id,
+      _inputController.text,
+    );
     _purgeSeenMessagesOnExit();
     _messageSearchController.dispose();
     _messageSearchFocusNode.dispose();
@@ -2678,6 +3129,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     _typingSubscription?.cancel();
     _presenceSubscription?.cancel();
     _readSubscription?.cancel();
+    _deliveredSubscription?.cancel();
     _editedSubscription?.cancel();
     _deletedSubscription?.cancel();
     _reactionSubscription?.cancel();
@@ -2698,9 +3150,12 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     return PopScope(
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) {
+          FocusManager.instance.primaryFocus?.unfocus();
+          SystemChannels.textInput.invokeMethod('TextInput.hide');
           _purgeSeenMessagesOnExit();
         }
       },
+
       child: ShakePanicWrapper(
         child: Scaffold(
           backgroundColor: AppTheme.chatCanvas(isDark),
@@ -2722,68 +3177,44 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                       ),
                       // Messages List (paints full screen behind header and composer)
                       Positioned.fill(
-                        child: ChatMessageList(
-                          messages: _messages,
-                          isLoadingMessages: _isLoadingMessages,
-                          isLoadingMore: _isLoadingMore,
-                          isPeerTyping: false,
-                          showJumpToLatest: _showJumpToLatest,
-                          newMessagesWhileAway: _newMessagesWhileAway,
-                          historyError: _historyError,
-                          scrollController: _scrollController,
-                          conversation: widget.conversation,
-                          groupMemberNames: _groupMemberNames,
-                          chatName: _chatName,
-                          chatAvatar: _chatAvatar,
-                          onShowMessageActions: _showMessageActions,
-                          onShowMessageInfo: _showMessageInfo,
-                          onBeginReply: _beginReply,
-                          onTapReply: _scrollToMessage,
-                          highlightedMessageId: _effectiveHighlightedMessageId,
-                          searchQuery: _isSearchingMessages
-                              ? _messageSearchController.text.trim()
-                              : null,
-                          decryptingMessageIds: _decryptingEditedMessageIds,
-                          onJumpToLatest: _jumpToLatest,
-                          onReloadMessages: _reloadMessages,
-                          sessionStartTime: _sessionStartTime,
-                          initialUnreadCount: _initialUnreadCount,
-                          isSelectionMode: _isSelectionMode,
-                          selectedMessageIds: _selectedMessageIds,
-                          onToggleSelectMessage: _toggleSelectMessage,
-                        ),
-                      ),
-
-                      // Floating Typing Indicator Bubble above Composer (Commented out)
-                      /*
-                      Positioned(
-                        left: 12,
-                        bottom:
-                            (_replyingMessage != null || _editingMessage != null
-                                ? 118.0
-                                : 66.0) +
-                            MediaQuery.viewInsetsOf(context).bottom,
                         child: ValueListenableBuilder<bool>(
                           valueListenable: _isPeerTyping,
                           builder: (context, isTyping, _) {
-                            return AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 220),
-                              switchInCurve: Curves.easeOutCubic,
-                              switchOutCurve: Curves.easeInCubic,
-                              child: isTyping
-                                  ? ChatTypingIndicator(
-                                      key: const ValueKey('floating_typing'),
-                                      chatName: _chatName,
-                                      chatAvatar: _chatAvatar,
-                                    )
-                                  : const SizedBox.shrink(
-                                      key: ValueKey('floating_empty'),
-                                    ),
+                            return ChatMessageList(
+                              messages: _messages,
+                              isLoadingMessages: _isLoadingMessages,
+                              isLoadingMore: _isLoadingMore,
+                              isPeerTyping: isTyping,
+                              showJumpToLatest: _showJumpToLatest,
+                              newMessagesWhileAway: _newMessagesWhileAway,
+                              historyError: _historyError,
+                              scrollController: _scrollController,
+                              conversation: widget.conversation,
+                              groupMemberNames: _groupMemberNames,
+                              chatName: _chatName,
+                              chatAvatar: _chatAvatar,
+                              onShowMessageActions: _showMessageActions,
+                              onShowMessageInfo: _showMessageInfo,
+                              onBeginReply: _beginReply,
+                              onTapReply: _scrollToMessage,
+                              highlightedMessageId: _effectiveHighlightedMessageId,
+                              searchQuery: _isSearchingMessages
+                                  ? _messageSearchController.text.trim()
+                                  : null,
+                              decryptingMessageIds: _decryptingEditedMessageIds,
+                              onJumpToLatest: _jumpToLatest,
+                              onReloadMessages: _reloadMessages,
+                              sessionStartTime: _sessionStartTime,
+                              initialUnreadCount: _initialUnreadCount,
+                              isSelectionMode: _isSelectionMode,
+                              selectedMessageIds: _selectedMessageIds,
+                              onToggleSelectMessage: _toggleSelectMessage,
+                              onVoiceCallTap: _startVoiceCall,
+                              onVideoCallTap: _startVideoCall,
                             );
                           },
                         ),
                       ),
-                      */
 
                       // Floating Frosted Header / Selection Header
                       Positioned(
@@ -2800,6 +3231,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                                 isPeerTyping: _isPeerTyping,
                                 onOpenChatInfo: _openChatInfo,
                                 onSearchMessages: _toggleMessageSearch,
+                                onVoiceCallTap: _startVoiceCall,
+                                onVideoCallTap: _startVideoCall,
                               ),
                       ),
 
@@ -2874,23 +3307,25 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                         right: 0,
                         bottom: 0,
                         child: ChatComposer(
-                          inputController: _inputController,
-                          inputFocusNode: _inputFocusNode,
-                          editingMessage: _editingMessage,
-                          replyingMessage: _replyingMessage,
-                          conversation: widget.conversation.copyWith(
-                            disappearType: _disappearType,
+                            inputController: _inputController,
+                            inputFocusNode: _inputFocusNode,
+                            editingMessage: _editingMessage,
+                            replyingMessage: _replyingMessage,
+                            conversation: widget.conversation.copyWith(
+                              disappearType: _disappearType,
+                            ),
+                            chatName: _chatName,
+                            groupMemberNames: _groupMemberNames,
+                            isSending: _isSending,
+                            onCancelEditing: _cancelEditingMessage,
+                            onCancelReply: _cancelReply,
+                            onTypingChanged: _onTypingChanged,
+                            onSendText: _sendMessage,
+                            onSendAttachment: _uploadAndSendAttachment,
+                            onSendSticker: _sendSticker,
+                            onSendGif: _sendGif,
+                            onDisappearingTap: _showDisappearingMessagesPicker,
                           ),
-                          chatName: _chatName,
-                          groupMemberNames: _groupMemberNames,
-                          isSending: _isSending,
-                          onCancelEditing: _cancelEditingMessage,
-                          onCancelReply: _cancelReply,
-                          onTypingChanged: _onTypingChanged,
-                          onSendText: _sendMessage,
-                          onSendAttachment: _uploadAndSendAttachment,
-                          onDisappearingTap: _showDisappearingMessagesPicker,
-                        ),
                       ),
                     ],
                   );

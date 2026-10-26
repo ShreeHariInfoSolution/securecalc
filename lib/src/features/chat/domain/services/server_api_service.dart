@@ -150,6 +150,97 @@ class ServerApiService {
     }
   }
 
+  // ─── ICE Servers ───────────────────────────────────────────────────────────
+
+  Future<List<dynamic>> getIceServers() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/calls/ice'),
+        headers: _headers(requiresAuth: true),
+      );
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        if (body is Map && body['data'] is Map) {
+          final iceServers = body['data']['ice_servers'];
+          if (iceServers is List && iceServers.isNotEmpty) {
+            return iceServers;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[API] Error fetching ICE servers: $e');
+    }
+    return [
+      {'urls': 'stun:stun.l.google.com:19302'},
+    ];
+  }
+
+  /// Reject call via REST API (for background/killed state when socket is not open)
+  Future<bool> rejectCallREST(int callId) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$baseUrl/calls/$callId/reject'),
+        headers: _headers(requiresAuth: true),
+      );
+      debugPrint('[API] Reject call REST status (${res.statusCode}): ${res.body}');
+      return res.statusCode == 200 || res.statusCode == 204;
+    } catch (e) {
+      debugPrint('[API] Reject call REST error: $e');
+      return false;
+    }
+  }
+
+  // ─── Call History ──────────────────────────────────────────────────────────
+
+  Future<CallHistoryPaginatedResponse> getCallHistoryPaginated({
+    int? chatHeadId,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final queryParams = <String, String>{
+        if (chatHeadId != null && chatHeadId > 0) 'chat_head_id': chatHeadId.toString(),
+        'page': page.toString(),
+        'limit': limit.toString(),
+      };
+      final uri = Uri.parse('$baseUrl/calls/history').replace(
+        queryParameters: queryParams.isNotEmpty ? queryParams : null,
+      );
+      final res = await http.get(uri, headers: _headers());
+      if (res.statusCode == 200) {
+        final json = jsonDecode(res.body);
+        if (json is Map) {
+          return CallHistoryPaginatedResponse.fromJson(Map<String, dynamic>.from(json));
+        }
+      } else {
+        debugPrint('[API] Get Call History Failed (${res.statusCode}): ${res.body}');
+      }
+    } catch (e) {
+      debugPrint('[API] Get Call History Error: $e');
+    }
+    return CallHistoryPaginatedResponse(
+      items: [],
+      page: page,
+      limit: limit,
+      total: 0,
+      totalPages: 0,
+      hasMore: false,
+    );
+  }
+
+  Future<List<CallHistoryModel>> getCallHistory({
+    int? chatHeadId,
+    int page = 1,
+    int limit = 30,
+  }) async {
+    final paginated = await getCallHistoryPaginated(
+      chatHeadId: chatHeadId,
+      page: page,
+      limit: limit,
+    );
+    return paginated.items;
+  }
+
   // ─── Auth Endpoints ────────────────────────────────────────────────────────
 
   Future<AuthResponseModel> register({
@@ -626,6 +717,52 @@ class ServerApiService {
     }
   }
 
+  Future<ServerChatListPageModel> getDeletedChatsPage({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/chats/deleted')
+          .replace(queryParameters: {'page': '$page', 'limit': '$limit'});
+      debugPrint('[API] GET $uri');
+      final res = await http.get(uri, headers: _headers());
+      debugPrint('[API] GET $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map<String, dynamic>) {
+          return ServerChatListPageModel.fromJson(decoded);
+        } else if (decoded is Map) {
+          return ServerChatListPageModel.fromJson(
+            Map<String, dynamic>.from(decoded),
+          );
+        }
+      }
+      throw Exception('Unable to load deleted chats.');
+    } catch (e) {
+      debugPrint('[API] Get Deleted Chats Error: $e');
+      rethrow;
+    }
+  }
+
+  Future<bool> recoverChat(int chatId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/chats/$chatId/recover');
+      debugPrint('[API] POST $uri');
+      final res = await http.post(uri, headers: _headers());
+      debugPrint('[API] POST $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        unawaited(ServerChatManager.instance.syncChats());
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[API] Recover Chat Error ($chatId): $e');
+      return false;
+    }
+  }
+
   Future<int> getUnreadCount() async {
     try {
       final res = await http.get(
@@ -1009,17 +1146,24 @@ class ServerApiService {
     return null;
   }
 
-  Future<bool> clearChatREST(int chatId) async {
+  Future<bool> deleteChatREST(int chatId, {bool deleteChat = true}) async {
     try {
+      final uri = Uri.parse('$baseUrl/chats/$chatId/messages').replace(
+        queryParameters: deleteChat ? {'delete_chat': 'true'} : null,
+      );
       final res = await http.delete(
-        Uri.parse('$baseUrl/chats/$chatId/messages'),
+        uri,
         headers: _headers(),
       );
       return res.statusCode == 200 || res.statusCode == 204;
     } catch (e) {
-      debugPrint('[API] Clear Chat REST Error: $e');
+      debugPrint('[API] Delete Chat REST Error: $e');
       return false;
     }
+  }
+
+  Future<bool> clearChatREST(int chatId, {bool deleteChat = false}) async {
+    return deleteChatREST(chatId, deleteChat: deleteChat);
   }
 
   Future<bool> editMessageREST({
@@ -1040,11 +1184,13 @@ class ServerApiService {
     }
   }
 
-  Future<bool> deleteMessageREST(int messageId) async {
+  Future<bool> deleteMessageREST(int messageId, {int type = 1}) async {
     try {
+      final uri = Uri.parse('$baseUrl/messages/$messageId?type=$type&delete_type=$type');
       final res = await http.delete(
-        Uri.parse('$baseUrl/messages/$messageId'),
+        uri,
         headers: _headers(),
+        body: jsonEncode({'type': type, 'delete_type': type}),
       );
       return res.statusCode == 200 || res.statusCode == 204;
     } catch (e) {
@@ -1106,7 +1252,11 @@ class ServerApiService {
   /// POST /chats/delivered
   Future<List<int>?> markDeliveredREST({required int chatId}) async {
     try {
-      final body = {'chat_head_id': chatId};
+      final body = {
+        'chat_head_id': chatId,
+        'chat_id': chatId,
+        'chatId': chatId,
+      };
       final res = await http.post(
         Uri.parse('$baseUrl${ApiConstants.delivered}'),
         headers: _headers(),

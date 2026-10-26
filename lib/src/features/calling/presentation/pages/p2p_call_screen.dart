@@ -20,6 +20,7 @@ class P2pCallScreen extends StatefulWidget {
 class _P2pCallScreenState extends State<P2pCallScreen> {
   bool _isMuted = false;
   bool _isSpeaker = true;
+  bool _isPopping = false;
 
   @override
   void initState() {
@@ -44,7 +45,8 @@ class _P2pCallScreenState extends State<P2pCallScreen> {
             builder: (context, state, _) {
               if (state == CallState.ended) {
                 WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (Navigator.canPop(context)) {
+                  if (Navigator.canPop(context) && !_isPopping) {
+                    _isPopping = true;
                     Navigator.pop(context);
                   }
                 });
@@ -169,9 +171,6 @@ class _P2pCallScreenState extends State<P2pCallScreen> {
                         GestureDetector(
                           onTap: () {
                             P2pCallService.instance.endCall();
-                            if (Navigator.canPop(context)) {
-                              Navigator.pop(context);
-                            }
                           },
                           child: CircleAvatar(
                             radius: 34,

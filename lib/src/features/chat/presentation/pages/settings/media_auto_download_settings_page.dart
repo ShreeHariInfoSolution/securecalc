@@ -44,12 +44,16 @@ class _MediaAutoDownloadSettingsPageState
           ? AppTheme.darkBackground
           : AppTheme.lightBackground,
       body: SafeArea(
+        bottom: false,
         child: Column(
           children: [
             const CompactSettingsHeader(title: 'Media Auto-Download'),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 100.0),
                 children: [
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),

@@ -66,6 +66,13 @@ class KeychainHelper {
 
     if #available(iOS 10.0, *) {
       UNUserNotificationCenter.current().delegate = self as UNUserNotificationCenterDelegate
+      UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+        if let error = error {
+          print("[Push iOS] Authorization error: \(error.localizedDescription)")
+        } else {
+          print("[Push iOS] Authorization granted: \(granted)")
+        }
+      }
     }
     application.registerForRemoteNotifications()
 
@@ -210,6 +217,29 @@ class KeychainHelper {
           AppDelegate.currentUserId = nil
         }
         print("[Push iOS] Native currentUserId updated to: \(AppDelegate.currentUserId ?? "nil")")
+        result(true)
+
+      case "updateBadgeCount":
+        let count: Int
+        if let args = call.arguments as? [String: Any], let c = args["count"] as? Int {
+          count = c
+        } else if let c = call.arguments as? Int {
+          count = c
+        } else {
+          count = 0
+        }
+        DispatchQueue.main.async {
+          if #available(iOS 16.0, *) {
+            UNUserNotificationCenter.current().setBadgeCount(count) { error in
+              if let error = error {
+                print("[Push iOS] Failed to set badge count: \(error.localizedDescription)")
+              }
+            }
+          } else {
+            UIApplication.shared.applicationIconBadgeNumber = count
+          }
+        }
+        print("[Push iOS] Native badge updated to: \(count)")
         result(true)
 
       default:

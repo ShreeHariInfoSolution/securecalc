@@ -25,6 +25,7 @@ class AppearanceSettingsPage extends StatelessWidget {
             ? AppTheme.darkBackground
             : AppTheme.lightBackground,
         body: SafeArea(
+          bottom: false,
           child: Column(
             children: [
               // Header matching Screenshot 3
@@ -33,10 +34,10 @@ class AppearanceSettingsPage extends StatelessWidget {
               // Content List
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 8.0,
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
                   ),
+                  padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 100.0),
                   children: [
                     _buildSectionHeader('THEME MODE (3 PHONES)', isDark),
                     const SizedBox(height: 8),

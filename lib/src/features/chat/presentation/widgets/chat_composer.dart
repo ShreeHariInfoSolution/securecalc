@@ -18,6 +18,8 @@ import '../../domain/entities/chat_message.dart';
 import '../../domain/models/server_models.dart';
 import 'chat_detail_header.dart';
 import 'chat_reply_banner.dart';
+import 'gif_picker_panel.dart';
+import 'sticker_picker_panel.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../pages/image_preview_editor_page.dart';
 
@@ -41,6 +43,8 @@ class ChatComposer extends StatefulWidget {
     String? caption,
   })
   onSendAttachment;
+  final Function(StickerItem sticker)? onSendSticker;
+  final Function(GifItem gif)? onSendGif;
   final VoidCallback? onDisappearingTap;
 
   const ChatComposer({
@@ -58,6 +62,8 @@ class ChatComposer extends StatefulWidget {
     required this.onTypingChanged,
     required this.onSendText,
     required this.onSendAttachment,
+    this.onSendSticker,
+    this.onSendGif,
     this.onDisappearingTap,
   });
 
@@ -68,6 +74,7 @@ class ChatComposer extends StatefulWidget {
 class _ChatComposerState extends State<ChatComposer> {
   final ImagePicker _picker = ImagePicker();
   final AudioRecorder _audioRecorder = AudioRecorder();
+  bool _showGifPicker = false;
 
   AudioPlayer? _previewPlayer;
   StreamSubscription<PlayerState>? _previewStateSub;
@@ -170,9 +177,9 @@ class _ChatComposerState extends State<ChatComposer> {
         final hasPermission = await _checkCameraPermission();
         if (!hasPermission || !mounted) return;
 
-        final currentContext = context;
+        if (!mounted) return;
         final cameraChoice = await showCupertinoModalPopup<String>(
-          context: currentContext,
+          context: context,
           builder: (ctx) => CupertinoActionSheet(
             title: const Text('Camera'),
             message: const Text('Choose camera mode'),
@@ -213,7 +220,6 @@ class _ChatComposerState extends State<ChatComposer> {
         if (cameraChoice == 'photo') {
           final picked = await _picker.pickImage(
             source: ImageSource.camera,
-            imageQuality: 90,
           );
           if (picked == null) return;
           pickedFiles.add(File(picked.path));
@@ -230,21 +236,30 @@ class _ChatComposerState extends State<ChatComposer> {
 
       if (pickedFiles.isEmpty || !mounted) return;
 
+      final existingText = widget.inputController.text.trim();
+
       // Open Image Editor Preview (WhatsApp Style)
       final editorResult = await Navigator.of(context).push<ImageEditorResult>(
         MaterialPageRoute(
-          builder: (_) => ImagePreviewEditorPage(imageFiles: pickedFiles),
+          builder: (_) => ImagePreviewEditorPage(
+            imageFiles: pickedFiles,
+            initialCaption: existingText,
+          ),
         ),
       );
 
       if (editorResult == null || editorResult.images.isEmpty) return;
+
+      if (existingText.isNotEmpty) {
+        widget.inputController.clear();
+      }
 
       for (int i = 0; i < editorResult.images.length; i++) {
         final file = editorResult.images[i];
         final fileName = file.path.split(Platform.pathSeparator).last;
         final caption = (i == 0 && editorResult.caption.isNotEmpty)
             ? editorResult.caption
-            : null;
+            : (i == 0 && existingText.isNotEmpty ? existingText : null);
         await widget.onSendAttachment(
           file: file,
           fileName: fileName,
@@ -273,10 +288,15 @@ class _ChatComposerState extends State<ChatComposer> {
     try {
       final picked = await _picker.pickVideo(source: ImageSource.gallery);
       if (picked == null) return;
+      final caption = widget.inputController.text.trim();
+      if (caption.isNotEmpty) {
+        widget.inputController.clear();
+      }
       await widget.onSendAttachment(
         file: File(picked.path),
         fileName: picked.name,
         fileType: _attachmentType(picked.name),
+        caption: caption.isNotEmpty ? caption : null,
       );
     } catch (error) {
       debugPrint('[VIDEO PICK ERROR] $error');
@@ -299,6 +319,10 @@ class _ChatComposerState extends State<ChatComposer> {
     try {
       final files = await FilePicker.pickFiles(type: FileType.any);
       if (files.isEmpty) return;
+      final caption = widget.inputController.text.trim();
+      if (caption.isNotEmpty) {
+        widget.inputController.clear();
+      }
       for (final picked in files) {
         var path = picked.path;
         if (path == null || path.isEmpty) {
@@ -313,6 +337,7 @@ class _ChatComposerState extends State<ChatComposer> {
           file: File(path),
           fileName: picked.name,
           fileType: _attachmentType(picked.name),
+          caption: caption.isNotEmpty ? caption : null,
         );
       }
     } catch (error) {
@@ -486,11 +511,18 @@ class _ChatComposerState extends State<ChatComposer> {
       });
     }
 
+    final caption = widget.inputController.text.trim();
+    if (caption.isNotEmpty) {
+      widget.inputController.clear();
+    }
+
     await widget.onSendAttachment(
       file: File(path),
       fileName: 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
       fileType: 'audio/mp4',
+      caption: caption.isNotEmpty ? caption : null,
     );
+
   }
 
   Future<void> _cancelVoiceRecording() async {
@@ -725,11 +757,26 @@ class _ChatComposerState extends State<ChatComposer> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    final isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+    final bottomPadding = isKeyboardOpen ? 0.0 : MediaQuery.paddingOf(context).bottom;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (_showGifPicker)
+          GifPickerPanel(
+            onGifSelected: (gif) {
+              setState(() {
+                _showGifPicker = false;
+              });
+              widget.onSendGif?.call(gif);
+            },
+            onClose: () {
+              setState(() {
+                _showGifPicker = false;
+              });
+            },
+          ),
         if (widget.editingMessage != null)
           Container(
             width: double.infinity,
@@ -788,28 +835,38 @@ class _ChatComposerState extends State<ChatComposer> {
             groupMemberNames: widget.groupMemberNames,
             onCancel: widget.onCancelReply,
           ),
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
+        Padding(
           padding: EdgeInsets.fromLTRB(
             10,
-            7,
+            4,
             10,
-            bottomPadding > 0 ? bottomPadding + 4 : 8,
+            isKeyboardOpen ? 6 : (bottomPadding > 0 ? bottomPadding : 6),
           ),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
-            border: Border(
-              top: BorderSide(
-                color: isDark
-                    ? const Color(0xFF2C2C2E)
-                    : const Color(0xFFE5E5EA),
-                width: 0.8,
-              ),
-            ),
-          ),
-          child: Row(
-            children: [
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(26),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xEE2C2C2E)
+                      : Colors.white.withValues(alpha: 0.94),
+                  borderRadius: BorderRadius.circular(26),
+                  border: Border.all(
+                    color: AppTheme.glassBorder(isDark),
+                    width: 0.8,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                      blurRadius: 12,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
               // Plus Attachment Button (38x38)
               GlassButton(
                 width: 38,
@@ -823,7 +880,46 @@ class _ChatComposerState extends State<ChatComposer> {
                   color: isDark ? Colors.white : Colors.black87,
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
+
+              // GIF Button (38x38)
+              GlassButton(
+                width: 38,
+                height: 38,
+                radius: 19,
+                isDark: isDark,
+                onTap: () {
+                  setState(() {
+                    _showGifPicker = !_showGifPicker;
+                  });
+                  if (_showGifPicker) {
+                    widget.inputFocusNode.unfocus();
+                  }
+                },
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: _showGifPicker
+                          ? const Color(0xFF007AFF)
+                          : (isDark ? Colors.white24 : Colors.black12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'GIF',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                        color: _showGifPicker
+                            ? Colors.white
+                            : (isDark ? Colors.white : Colors.black87),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
 
               // Adaptive Input Surface (expandable height up to 145 for 5-line big messages)
               Expanded(
@@ -1019,7 +1115,7 @@ class _ChatComposerState extends State<ChatComposer> {
                                 keyboardType: TextInputType.multiline,
                                 textCapitalization:
                                     TextCapitalization.sentences,
-                                textInputAction: TextInputAction.send,
+                                textInputAction: TextInputAction.newline,
                                 autocorrect: true,
                                 enableSuggestions: true,
                                 style: TextStyle(
@@ -1042,7 +1138,6 @@ class _ChatComposerState extends State<ChatComposer> {
                                     letterSpacing: -0.2,
                                   ),
                                 ),
-                                onSubmitted: (_) => widget.onSendText(),
                               ),
                             ),
                             const SizedBox(width: 4),
@@ -1097,8 +1192,11 @@ class _ChatComposerState extends State<ChatComposer> {
             ],
           ),
         ),
-      ],
-    );
+      ),
+    ),
+  ),
+],
+);
   }
 }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'server_api_service.dart';
 
 class PresenceState {
   final int userId;
@@ -45,70 +46,64 @@ class PresenceState {
     );
   }
 
-  /// Formats last seen text dynamically using device local time according to
-  /// backend spec rules.
   String formattedLastSeen() {
     if (isOnline) return 'online';
+    return formatLastSeenTime(lastSeenAt, lastSeenText: lastSeenText);
+  }
+}
 
-    if (lastSeenAt == null) {
-      return (lastSeenText != null && lastSeenText!.trim().isNotEmpty)
-          ? lastSeenText!
-          : 'offline';
-    }
-
-    final now = DateTime.now();
-    final localTime = lastSeenAt!.toLocal();
-    final diff = now.difference(localTime);
-
-    if (diff.inSeconds < 60 && diff.inSeconds >= 0) {
-      return 'last seen just now';
-    }
-
-    final sameDay = now.year == localTime.year &&
-        now.month == localTime.month &&
-        now.day == localTime.day;
-
-    final timeStr = _format12HourTime(localTime);
-
-    if (sameDay) {
-      return 'last seen today at $timeStr';
-    }
-
-    final yesterday = now.subtract(const Duration(days: 1));
-    final isYesterday = yesterday.year == localTime.year &&
-        yesterday.month == localTime.month &&
-        yesterday.day == localTime.day;
-
-    if (isYesterday) {
-      return 'last seen yesterday at $timeStr';
-    }
-
-    if (diff.inDays >= 2 && diff.inDays < 7) {
-      final weekday = _getWeekdayName(localTime.weekday);
-      return 'last seen $weekday at $timeStr';
-    }
-
-    final dayStr = localTime.day.toString().padLeft(2, '0');
-    final monthStr = _getMonthShort(localTime.month);
-    return 'last seen $dayStr $monthStr ${localTime.year}';
+String formatLastSeenTime(DateTime? lastSeenAt, {String? lastSeenText}) {
+  if (lastSeenText != null &&
+      lastSeenText.trim().isNotEmpty &&
+      lastSeenText.trim().toLowerCase() != 'online' &&
+      lastSeenText.trim().toLowerCase() != 'offline') {
+    return lastSeenText.trim();
   }
 
-  static String _format12HourTime(DateTime dt) {
-    final hour12 = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
-    final minStr = dt.minute.toString().padLeft(2, '0');
-    final period = dt.hour >= 12 ? 'PM' : 'AM';
-    return '$hour12:$minStr $period';
+  if (lastSeenAt == null) return '';
+
+  final now = DateTime.now();
+  final localTime = lastSeenAt.toLocal();
+  final diff = now.difference(localTime);
+
+  if (diff.inSeconds < 60 && diff.inSeconds >= 0) {
+    return 'last seen just now';
   }
 
-  static String _getWeekdayName(int weekday) {
+  final sameDay = now.year == localTime.year &&
+      now.month == localTime.month &&
+      now.day == localTime.day;
+
+  final hour12 = localTime.hour > 12
+      ? localTime.hour - 12
+      : (localTime.hour == 0 ? 12 : localTime.hour);
+  final minStr = localTime.minute.toString().padLeft(2, '0');
+  final period = localTime.hour >= 12 ? 'PM' : 'AM';
+  final timeStr = '$hour12:$minStr $period';
+
+  if (sameDay) {
+    return 'last seen today at $timeStr';
+  }
+
+  final yesterday = now.subtract(const Duration(days: 1));
+  final isYesterday = yesterday.year == localTime.year &&
+      yesterday.month == localTime.month &&
+      yesterday.day == localTime.day;
+
+  if (isYesterday) {
+    return 'last seen yesterday at $timeStr';
+  }
+
+  if (diff.inDays >= 2 && diff.inDays < 7) {
     const days = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    return (weekday >= 1 && weekday <= 7) ? days[weekday] : '';
+    final weekday = (localTime.weekday >= 1 && localTime.weekday <= 7) ? days[localTime.weekday] : '';
+    return 'last seen $weekday at $timeStr';
   }
 
-  static String _getMonthShort(int month) {
-    const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return (month >= 1 && month <= 12) ? months[month] : '';
-  }
+  final dayStr = localTime.day.toString().padLeft(2, '0');
+  const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  final monthStr = (localTime.month >= 1 && localTime.month <= 12) ? months[localTime.month] : '';
+  return 'last seen $dayStr $monthStr ${localTime.year}';
 }
 
 class PresenceStore {
@@ -124,7 +119,7 @@ class PresenceStore {
 
   void startTimer() {
     _minuteTimer?.cancel();
-    _minuteTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    _minuteTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       presenceNotifier.value = Map.from(presenceNotifier.value);
     });
   }
@@ -140,9 +135,31 @@ class PresenceStore {
     }
   }
 
+  int? getUserIdForChat(String chatId) {
+    return _chatIdToUserIdMap[chatId];
+  }
+
   void updatePresence(Map<String, dynamic> data) {
-    final state = PresenceState.fromMap(data);
+    final rawData = data['data'] is Map ? Map<String, dynamic>.from(data['data'] as Map) : data;
+    final state = PresenceState.fromMap(rawData);
     if (state.userId <= 0) return;
+
+    final myUserId = ServerApiService.instance.currentUserId;
+    if (myUserId != null && myUserId > 0 && state.userId == myUserId) {
+      // Do not store or update presence for my own user ID
+      return;
+    }
+
+    final chatHeadId = (rawData['chat_head_id'] ??
+            rawData['chat_id'] ??
+            rawData['chatHeadId'] ??
+            data['chat_head_id'] ??
+            data['chat_id'])
+        ?.toString();
+
+    if (chatHeadId != null && chatHeadId.isNotEmpty && chatHeadId != '0') {
+      bindChatUser(chatHeadId, state.userId);
+    }
 
     final currentMap = Map<int, PresenceState>.from(presenceNotifier.value);
     currentMap[state.userId] = state;
@@ -161,13 +178,14 @@ class PresenceStore {
   }) {
     if (isGroup) return null;
 
-    int? targetUserId = peerUserId;
-    targetUserId ??= int.tryParse(chatId);
-    targetUserId ??= _chatIdToUserIdMap[chatId];
+    final targetUserId = (peerUserId != null && peerUserId > 0)
+        ? peerUserId
+        : (_chatIdToUserIdMap[chatId] ?? int.tryParse(chatId));
 
     if (targetUserId != null && targetUserId > 0) {
       return presenceNotifier.value[targetUserId];
     }
+
     return null;
   }
 }

@@ -32,8 +32,13 @@ class DrawingStroke {
 
 class ImagePreviewEditorPage extends StatefulWidget {
   final List<File> imageFiles;
+  final String? initialCaption;
 
-  const ImagePreviewEditorPage({super.key, required this.imageFiles});
+  const ImagePreviewEditorPage({
+    super.key,
+    required this.imageFiles,
+    this.initialCaption,
+  });
 
   @override
   State<ImagePreviewEditorPage> createState() => _ImagePreviewEditorPageState();
@@ -66,7 +71,11 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialCaption != null && widget.initialCaption!.isNotEmpty) {
+      _captionController.text = widget.initialCaption!;
+    }
     _files = List.from(widget.imageFiles);
+
     _strokesPerImage = {
       for (int i = 0; i < _files.length; i++) i: <DrawingStroke>[],
     };
@@ -114,6 +123,53 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
       });
     }
   }
+
+  void _discardFile(int index) {
+    if (index < 0 || index >= _files.length) return;
+
+    setState(() {
+      _files.removeAt(index);
+      _imageSizes.remove(index);
+
+      final newStrokes = <int, List<DrawingStroke>>{};
+      final newSizes = <int, Size>{};
+      int newIdx = 0;
+      for (int i = 0; i < _files.length + 1; i++) {
+        if (i == index) continue;
+        if (_strokesPerImage.containsKey(i)) {
+          newStrokes[newIdx] = _strokesPerImage[i]!;
+        } else {
+          newStrokes[newIdx] = <DrawingStroke>[];
+        }
+        if (_imageSizes.containsKey(i)) {
+          newSizes[newIdx] = _imageSizes[i]!;
+        }
+        newIdx++;
+      }
+      _strokesPerImage = newStrokes;
+      _imageSizes
+        ..clear()
+        ..addAll(newSizes);
+
+      if (_files.isEmpty) {
+        Navigator.pop(context);
+        return;
+      }
+
+      if (_currentIndex >= _files.length) {
+        _currentIndex = _files.length - 1;
+      }
+    });
+
+    if (_files.isNotEmpty && _pageController.hasClients) {
+      _pageController.animateToPage(
+        _currentIndex,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
 
   Future<void> _addMoreMedia() async {
     final choice = await showCupertinoModalPopup<String>(
@@ -171,7 +227,6 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
       if (choice == 'camera_photo') {
         final picked = await _picker.pickImage(
           source: ImageSource.camera,
-          imageQuality: 90,
         );
         if (picked != null) {
           _addNewFile(File(picked.path));
@@ -343,6 +398,17 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
                     onPressed: _addMoreMedia,
                     tooltip: 'Add photo or video',
                   ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(
+                      CupertinoIcons.trash,
+                      color: Colors.redAccent,
+                      size: 22,
+                    ),
+                    onPressed: () => _discardFile(_currentIndex),
+                    tooltip: 'Discard image',
+                  ),
+
                   if (!isCurrentVideo) ...[
                     const SizedBox(width: 8),
                     if (_isDrawingMode) ...[
@@ -604,9 +670,29 @@ class _ImagePreviewEditorPageState extends State<ImagePreviewEditorPage> {
                                 height: 50,
                                 fit: BoxFit.cover,
                               ),
+                            Positioned(
+                              top: 2,
+                              right: 2,
+                              child: GestureDetector(
+                                onTap: () => _discardFile(index),
+                                child: Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.black87,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    CupertinoIcons.xmark,
+                                    color: Colors.white,
+                                    size: 10,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
+
                     ),
                   );
                 },

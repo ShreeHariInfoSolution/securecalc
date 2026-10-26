@@ -9,6 +9,154 @@ import '../../domain/entities/chat_conversation.dart';
 import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/presence_store.dart';
 
+class GlassMenuItem {
+  final IconData icon;
+  final String title;
+  final Color? iconColor;
+  final VoidCallback onTap;
+
+  GlassMenuItem({
+    required this.icon,
+    required this.title,
+    this.iconColor,
+    required this.onTap,
+  });
+}
+
+void showGlassDropdownMenu({
+  required BuildContext context,
+  required Offset offset,
+  required List<GlassMenuItem> items,
+  bool isDark = false,
+}) {
+  HapticFeedback.lightImpact();
+  final screenSize = MediaQuery.of(context).size;
+  final top = (offset.dy + 10).clamp(0.0, screenSize.height - 140);
+  final right = (screenSize.width - offset.dx - 10).clamp(10.0, screenSize.width - 220);
+
+  showGeneralDialog(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'GlassMenu',
+    barrierColor: Colors.black.withValues(alpha: 0.22),
+    transitionDuration: const Duration(milliseconds: 200),
+    pageBuilder: (dialogContext, anim1, anim2) {
+      return Stack(
+        children: [
+          Positioned(
+            top: top,
+            right: right,
+            child: Material(
+              color: Colors.transparent,
+              type: MaterialType.transparency,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+                  child: Container(
+                    width: 210,
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xF21C1C1E)
+                          : Colors.white.withValues(alpha: 0.90),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.22)
+                            : Colors.black.withValues(alpha: 0.12),
+                        width: 0.8,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.28),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: List.generate(items.length, (index) {
+                        final item = items[index];
+                        final isLast = index == items.length - 1;
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            InkWell(
+                              onTap: () {
+                                Navigator.of(dialogContext).pop();
+                                item.onTap();
+                              },
+                              borderRadius: BorderRadius.vertical(
+                                top: index == 0 ? const Radius.circular(20) : Radius.zero,
+                                bottom: isLast ? const Radius.circular(20) : Radius.zero,
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      item.icon,
+                                      size: 20,
+                                      color: item.iconColor ??
+                                          (isDark ? Colors.white : Colors.black87),
+                                    ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Text(
+                                        item.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                          color: isDark ? Colors.white : Colors.black87,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            if (!isLast)
+                              Divider(
+                                height: 1,
+                                thickness: 0.5,
+                                color: isDark
+                                    ? Colors.white.withValues(alpha: 0.12)
+                                    : Colors.black.withValues(alpha: 0.08),
+                              ),
+                          ],
+                        );
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+    transitionBuilder: (context, anim1, anim2, child) {
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: anim1, curve: Curves.easeOut),
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.88, end: 1.0).animate(
+            CurvedAnimation(parent: anim1, curve: Curves.easeOutCubic),
+          ),
+          alignment: Alignment.topRight,
+          child: child,
+        ),
+      );
+    },
+  );
+}
+
 class ChatDetailHeader extends StatelessWidget {
   final ChatConversation conversation;
   final String chatName;
@@ -18,6 +166,8 @@ class ChatDetailHeader extends StatelessWidget {
   final VoidCallback onOpenChatInfo;
   final VoidCallback? onSearchMessages;
   final VoidCallback? onCallTap;
+  final VoidCallback? onVoiceCallTap;
+  final VoidCallback? onVideoCallTap;
 
   const ChatDetailHeader({
     super.key,
@@ -29,31 +179,9 @@ class ChatDetailHeader extends StatelessWidget {
     required this.onOpenChatInfo,
     this.onSearchMessages,
     this.onCallTap,
+    this.onVoiceCallTap,
+    this.onVideoCallTap,
   });
-
-  static String _formatHeaderLastSeen(DateTime? dateTime) {
-    if (dateTime == null) return 'Offline';
-    final now = DateTime.now();
-    final local = dateTime.toLocal();
-    final today = DateTime(now.year, now.month, now.day);
-    final targetDay = DateTime(local.year, local.month, local.day);
-
-    final hour24 = local.hour;
-    final hour = hour24 > 12 ? hour24 - 12 : (hour24 == 0 ? 12 : hour24);
-    final min = local.minute.toString().padLeft(2, '0');
-    final period = hour24 >= 12 ? 'PM' : 'AM';
-    final timeStr = '$hour:$min $period';
-
-    if (targetDay == today) {
-      return 'Last seen today at $timeStr';
-    } else if (targetDay == today.subtract(const Duration(days: 1))) {
-      return 'Last seen yesterday at $timeStr';
-    } else {
-      final dayStr = local.day.toString().padLeft(2, '0');
-      final monthStr = local.month.toString().padLeft(2, '0');
-      return 'Last seen $dayStr/$monthStr/${local.year} at $timeStr';
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -259,21 +387,17 @@ class ChatDetailHeader extends StatelessWidget {
                                               textColor = const Color(0xFF007AFF);
                                               dotColor = const Color(0xFF007AFF);
                                             } else if (isOnline) {
-                                              statusText = 'online';
+                                              statusText = presence?.lastSeenText?.trim().isNotEmpty == true
+                                                  ? presence!.lastSeenText!.trim()
+                                                  : 'online';
                                               textColor = const Color(0xFF34C759);
                                               dotColor = const Color(0xFF34C759);
                                             } else {
-                                              if (presence != null) {
+                                              if (presence != null && presence.formattedLastSeen().isNotEmpty) {
                                                 statusText = presence.formattedLastSeen();
                                               } else {
-                                                final lastSeenTime =
-                                                    liveConv?.lastSeenAt ??
-                                                    liveConv?.lastActivityAt ??
-                                                    conversation.lastSeenAt ??
-                                                    conversation.lastActivityAt;
-                                                statusText = _formatHeaderLastSeen(
-                                                  lastSeenTime,
-                                                );
+                                                final savedLastSeenAt = liveConv?.lastSeenAt ?? conversation.lastSeenAt;
+                                                statusText = formatLastSeenTime(savedLastSeenAt);
                                               }
                                               textColor = isDark
                                                   ? const Color(0xFFEBEBF5)
@@ -323,38 +447,92 @@ class ChatDetailHeader extends StatelessWidget {
 
                   const SizedBox(width: 6),
 
-                  // 3. Right Action Buttons: Search + Info
-                  if (onSearchMessages != null) ...[
-                    GlassButton(
-                      width: 38,
-                      height: 38,
-                      radius: 19,
-                      isDark: isDark,
-                      onTap: onSearchMessages,
-                      child: Center(
-                        child: Icon(
-                          CupertinoIcons.search,
-                          size: 18,
-                          color: isDark ? Colors.white : Colors.black,
-                        ),
-                      ),
+                  // 3. Right Action Buttons: Call Dropdown Button + Details Dropdown Button
+                  if (!conversation.isGroup &&
+                      (onVoiceCallTap != null || onVideoCallTap != null || onCallTap != null)) ...[
+                    Builder(
+                      builder: (btnContext) {
+                        return GlassButton(
+                          width: 38,
+                          height: 38,
+                          radius: 19,
+                          isDark: isDark,
+                          onTap: () {
+                            final box = btnContext.findRenderObject() as RenderBox?;
+                            final pos = box?.localToGlobal(Offset.zero) ?? const Offset(200, 100);
+                            final size = box?.size ?? const Size(38, 38);
+                            showGlassDropdownMenu(
+                              context: context,
+                              offset: Offset(pos.dx + size.width / 2, pos.dy + size.height),
+                              isDark: isDark,
+                              items: [
+                                GlassMenuItem(
+                                  icon: CupertinoIcons.phone_fill,
+                                  title: 'Voice Call',
+                                  iconColor: const Color(0xFF34C759),
+                                  onTap: () => (onVoiceCallTap ?? onCallTap)?.call(),
+                                ),
+                                GlassMenuItem(
+                                  icon: CupertinoIcons.videocam_fill,
+                                  title: 'Video Call',
+                                  iconColor: const Color(0xFF007AFF),
+                                  onTap: () => onVideoCallTap?.call(),
+                                ),
+                              ],
+                            );
+                          },
+                          child: Center(
+                            child: Icon(
+                              CupertinoIcons.phone_fill,
+                              size: 18,
+                              color: isDark ? Colors.white : Colors.black,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                     const SizedBox(width: 6),
                   ],
 
-                  GlassButton(
-                    width: 38,
-                    height: 38,
-                    radius: 19,
-                    isDark: isDark,
-                    onTap: onOpenChatInfo,
-                    child: Center(
-                      child: Icon(
-                        CupertinoIcons.info,
-                        size: 19,
-                        color: isDark ? Colors.white : Colors.black,
-                      ),
-                    ),
+                  Builder(
+                    builder: (btnContext) {
+                      return GlassButton(
+                        width: 38,
+                        height: 38,
+                        radius: 19,
+                        isDark: isDark,
+                        onTap: () {
+                          final box = btnContext.findRenderObject() as RenderBox?;
+                          final pos = box?.localToGlobal(Offset.zero) ?? const Offset(300, 100);
+                          final size = box?.size ?? const Size(38, 38);
+                          showGlassDropdownMenu(
+                            context: context,
+                            offset: Offset(pos.dx + size.width / 2, pos.dy + size.height),
+                            isDark: isDark,
+                            items: [
+                              if (onSearchMessages != null)
+                                GlassMenuItem(
+                                  icon: CupertinoIcons.search,
+                                  title: 'Search Messages',
+                                  onTap: () => onSearchMessages?.call(),
+                                ),
+                              GlassMenuItem(
+                                icon: CupertinoIcons.info,
+                                title: 'Chat Details',
+                                onTap: () => onOpenChatInfo(),
+                              ),
+                            ],
+                          );
+                        },
+                        child: Center(
+                          child: Icon(
+                            CupertinoIcons.ellipsis,
+                            size: 19,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
