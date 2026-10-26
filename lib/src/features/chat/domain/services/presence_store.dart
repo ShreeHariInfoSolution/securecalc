@@ -70,6 +70,11 @@ String formatLastSeenTime(DateTime? lastSeenAt, {String? lastSeenText}) {
     return 'last seen just now';
   }
 
+  if (diff.inMinutes < 60 && diff.inMinutes >= 1) {
+    final mins = diff.inMinutes;
+    return 'last seen $mins ${mins == 1 ? 'min' : 'mins'} ago';
+  }
+
   final sameDay = now.year == localTime.year &&
       now.month == localTime.month &&
       now.day == localTime.day;
@@ -94,7 +99,7 @@ String formatLastSeenTime(DateTime? lastSeenAt, {String? lastSeenText}) {
     return 'last seen yesterday at $timeStr';
   }
 
-  if (diff.inDays >= 2 && diff.inDays < 7) {
+  if (diff.inDays >= 1 && diff.inDays < 7) {
     const days = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     final weekday = (localTime.weekday >= 1 && localTime.weekday <= 7) ? days[localTime.weekday] : '';
     return 'last seen $weekday at $timeStr';
@@ -103,7 +108,10 @@ String formatLastSeenTime(DateTime? lastSeenAt, {String? lastSeenText}) {
   final dayStr = localTime.day.toString().padLeft(2, '0');
   const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   final monthStr = (localTime.month >= 1 && localTime.month <= 12) ? months[localTime.month] : '';
-  return 'last seen $dayStr $monthStr ${localTime.year}';
+  if (now.year == localTime.year) {
+    return 'last seen $dayStr $monthStr at $timeStr';
+  }
+  return 'last seen $dayStr $monthStr ${localTime.year} at $timeStr';
 }
 
 class PresenceStore {

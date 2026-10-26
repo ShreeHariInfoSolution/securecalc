@@ -168,6 +168,9 @@ class ChatDetailHeader extends StatelessWidget {
   final VoidCallback? onCallTap;
   final VoidCallback? onVoiceCallTap;
   final VoidCallback? onVideoCallTap;
+  final bool isBlocked;
+  final VoidCallback? onBlockTap;
+  final VoidCallback? onUnblockTap;
 
   const ChatDetailHeader({
     super.key,
@@ -181,6 +184,9 @@ class ChatDetailHeader extends StatelessWidget {
     this.onCallTap,
     this.onVoiceCallTap,
     this.onVideoCallTap,
+    this.isBlocked = false,
+    this.onBlockTap,
+    this.onUnblockTap,
   });
 
   @override
@@ -521,6 +527,22 @@ class ChatDetailHeader extends StatelessWidget {
                                 title: 'Chat Details',
                                 onTap: () => onOpenChatInfo(),
                               ),
+                              if (!conversation.isGroup)
+                                GlassMenuItem(
+                                  icon: (liveConv?.isBlocked ?? isBlocked)
+                                      ? CupertinoIcons.lock_open
+                                      : CupertinoIcons.slash_circle,
+                                  title: (liveConv?.isBlocked ?? isBlocked)
+                                      ? 'Unblock User'
+                                      : 'Block User',
+                                  iconColor: (liveConv?.isBlocked ?? isBlocked)
+                                      ? const Color(0xFF007AFF)
+                                      : const Color(0xFFFF3B30),
+                                  onTap: () => ((liveConv?.isBlocked ?? isBlocked)
+                                          ? onUnblockTap
+                                          : onBlockTap)
+                                      ?.call(),
+                                ),
                             ],
                           );
                         },

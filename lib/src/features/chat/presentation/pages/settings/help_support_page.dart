@@ -12,8 +12,10 @@ import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/features/calling/domain/services/device_identity_service.dart';
+import 'package:securecalc/src/features/chat/domain/services/bot_assistant_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_chat_manager.dart';
+import 'package:securecalc/src/features/chat/presentation/pages/bot_chat_detail_page.dart';
 
 class HelpSupportPage extends StatefulWidget {
   const HelpSupportPage({super.key});
@@ -458,6 +460,16 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
     }
   }
 
+  Future<void> _openBotChat() async {
+    final botConv = await BotAssistantService.instance.ensureBotConversationExists();
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BotChatDetailPage(conversation: botConv),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -480,6 +492,84 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
                   ),
                   padding: const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 100.0),
                   children: [
+                    // AI Support Section
+                    _buildSectionHeader('CALNOX AI ASSISTANT & SUPPORT'),
+                    _buildGroupedCard(
+                      isDark: isDark,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primaryColor.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(
+                                  Icons.smart_toy_rounded,
+                                  color: AppTheme.primaryColor,
+                                  size: 22,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Ask Calnox AI Assistant',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    SizedBox(height: 2),
+                                    Text(
+                                      'Get instant answers & learn about security features',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: AppTheme.subtitleGrey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 46,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppTheme.primaryColor,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: _openBotChat,
+                              icon: const Icon(
+                                Icons.chat_outlined,
+                                size: 20,
+                              ),
+                              label: const Text(
+                                'Ask Question',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
                     // Backup & Restore Section
                     _buildSectionHeader('BACKUP & RESTORE DATA'),
                     _buildGroupedCard(

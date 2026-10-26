@@ -144,7 +144,7 @@ class _DeletedChatsPageState extends State<DeletedChatsPage> {
     return peer.avatar;
   }
 
-  void _showRecoverDialog(ServerChatModel chat) {
+  void _showChatOptionsDialog(ServerChatModel chat) {
     final displayName = _getDisplayName(chat);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -159,7 +159,7 @@ class _DeletedChatsPageState extends State<DeletedChatsPage> {
             color: AppTheme.primaryText(isDark),
           ),
         ),
-        message: const Text('Do you want to recover this chat? It will be restored to your active conversations.'),
+        message: const Text('Choose an action for this deleted conversation.'),
         actions: [
           CupertinoActionSheetAction(
             isDefaultAction: true,
@@ -176,6 +176,24 @@ class _DeletedChatsPageState extends State<DeletedChatsPage> {
               ],
             ),
           ),
+          CupertinoActionSheetAction(
+            isDestructiveAction: true,
+            onPressed: () {
+              Navigator.of(modalContext).pop();
+              _confirmPermanentDelete(chat);
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.trash, size: 20, color: Colors.redAccent),
+                SizedBox(width: 8),
+                Text(
+                  'Delete Permanently',
+                  style: TextStyle(color: Colors.redAccent),
+                ),
+              ],
+            ),
+          ),
         ],
         cancelButton: CupertinoActionSheetAction(
           onPressed: () => Navigator.of(modalContext).pop(),
@@ -183,6 +201,82 @@ class _DeletedChatsPageState extends State<DeletedChatsPage> {
         ),
       ),
     );
+  }
+
+  void _confirmPermanentDelete(ServerChatModel chat) {
+    final displayName = _getDisplayName(chat);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+        title: const Text('Delete Permanently?'),
+        content: Text(
+          'Are you sure you want to permanently delete chat with $displayName? This action cannot be undone.',
+          style: TextStyle(
+            color: AppTheme.primaryText(isDark),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _deleteChatPermanently(chat);
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.redAccent,
+            ),
+            child: const Text('Delete Permanently'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteChatPermanently(ServerChatModel chat) async {
+    final displayName = _getDisplayName(chat);
+
+    // Show loading overlay dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => const Center(
+        child: CupertinoActivityIndicator(radius: 16),
+      ),
+    );
+
+    try {
+      final success =
+          await ServerApiService.instance.deleteChatPermanently(chat.id);
+
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop(); // Dismiss loading
+      }
+
+      if (success) {
+        if (mounted) {
+          setState(() {
+            _deletedChats.removeWhere((c) => c.id == chat.id);
+          });
+        }
+        AppToast.show('Chat with $displayName permanently deleted');
+      } else {
+        AppToast.show(
+          'Failed to permanently delete chat. Please try again.',
+          isError: true,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop(); // Dismiss loading
+      }
+      AppToast.show('Error deleting chat: $e', isError: true);
+    }
   }
 
   Future<void> _recoverChat(ServerChatModel chat) async {
@@ -310,8 +404,8 @@ class _DeletedChatsPageState extends State<DeletedChatsPage> {
                       final avatarUrl = _getDisplayAvatar(chat);
 
                       return InkWell(
-                        onLongPress: () => _showRecoverDialog(chat),
-                        onTap: () => _showRecoverDialog(chat),
+                        onLongPress: () => _showChatOptionsDialog(chat),
+                        onTap: () => _showChatOptionsDialog(chat),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 16,
@@ -355,12 +449,12 @@ class _DeletedChatsPageState extends State<DeletedChatsPage> {
                               ),
                               IconButton(
                                 icon: Icon(
-                                  CupertinoIcons.arrow_counterclockwise,
-                                  color: AppTheme.primaryColor,
+                                  CupertinoIcons.ellipsis,
+                                  color: AppTheme.secondaryText(isDark),
                                   size: 22,
                                 ),
-                                tooltip: 'Recover Chat',
-                                onPressed: () => _showRecoverDialog(chat),
+                                tooltip: 'Chat Options',
+                                onPressed: () => _showChatOptionsDialog(chat),
                               ),
                             ],
                           ),

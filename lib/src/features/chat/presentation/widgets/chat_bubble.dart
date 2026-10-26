@@ -21,6 +21,7 @@ import '../../domain/entities/chat_message.dart';
 import 'sticker_picker_panel.dart';
 import '../../domain/models/server_models.dart';
 import '../../domain/services/e2e_crypto_service.dart';
+import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/attachment_cache_service.dart';
 import 'photo_gallery_viewer.dart';
@@ -64,6 +65,7 @@ class ChatBubble extends StatefulWidget {
   final int? callDuration;
   final VoidCallback? onVoiceCallTap;
   final VoidCallback? onVideoCallTap;
+  final String? status;
 
   const ChatBubble({
     super.key,
@@ -103,6 +105,7 @@ class ChatBubble extends StatefulWidget {
     this.callDuration,
     this.onVoiceCallTap,
     this.onVideoCallTap,
+    this.status,
   });
 
   @override
@@ -393,6 +396,56 @@ class _ChatBubbleState extends State<ChatBubble> {
     return ['mp3', 'm4a', 'aac', 'wav', 'ogg', 'opus'].contains(ext);
   }
 
+  String? get _audioSenderAvatar {
+    if (widget.isMe) {
+      final user = ServerApiService.instance.currentUser;
+      if (user?.avatar?.isNotEmpty == true) {
+        return user!.avatar!;
+      }
+      return null;
+    }
+    final chatId = widget.chatId;
+    final convs = LocalChatStorage.instance.conversationsNotifier.value;
+    if (chatId != null && chatId.isNotEmpty) {
+      for (final c in convs) {
+        if (c.id == chatId || c.peerUserId.toString() == chatId) {
+          if (c.avatarUrl.isNotEmpty) return c.avatarUrl;
+        }
+      }
+    }
+    if (widget.senderName != null && widget.senderName!.isNotEmpty) {
+      for (final c in convs) {
+        if (c.name.toLowerCase() == widget.senderName!.toLowerCase()) {
+          if (c.avatarUrl.isNotEmpty) return c.avatarUrl;
+        }
+      }
+    }
+    return null;
+  }
+
+  String get _audioSenderName {
+    if (widget.isMe) {
+      final user = ServerApiService.instance.currentUser;
+      if (user != null && user.name.isNotEmpty && !user.name.startsWith('User #')) {
+        return user.name;
+      }
+      return 'You';
+    }
+    if (widget.senderName != null && widget.senderName!.isNotEmpty) {
+      return widget.senderName!;
+    }
+    final chatId = widget.chatId;
+    if (chatId != null && chatId.isNotEmpty) {
+      final convs = LocalChatStorage.instance.conversationsNotifier.value;
+      for (final c in convs) {
+        if (c.id == chatId || c.peerUserId.toString() == chatId) {
+          if (c.name.isNotEmpty) return c.name;
+        }
+      }
+    }
+    return 'User';
+  }
+
   Future<String> _downloadAttachment() async {
     if (_hasValidLocalFile) {
       return _downloadedPath!;
@@ -637,8 +690,24 @@ class _ChatBubbleState extends State<ChatBubble> {
     );
   }
 
+  String _getDeliveryStatusText() {
+    final s = (widget.status ?? '').toLowerCase().trim();
+    if (widget.isRead || s == 'read' || s == 'seen') {
+      return 'Seen';
+    }
+    if (widget.isDelivered || s == 'delivered') {
+      return 'Delivered';
+    }
+    if (s == 'sending') {
+      return 'Sending...';
+    }
+    return 'Sent';
+  }
+
   Widget _buildStatusTick(bool isDark) {
-    if (widget.isRead) {
+    final s = (widget.status ?? '').toLowerCase().trim();
+
+    if (widget.isRead || s == 'read' || s == 'seen') {
       return const Icon(
         Icons.done_all_rounded,
         size: 14,
@@ -646,13 +715,23 @@ class _ChatBubbleState extends State<ChatBubble> {
       );
     }
 
-    if (widget.isDelivered) {
+    if (widget.isDelivered || s == 'delivered') {
       return Icon(
         Icons.done_all_rounded,
         size: 14,
         color: widget.isMe
             ? Colors.white.withValues(alpha: 0.8)
             : (isDark ? Colors.white60 : AppTheme.subtitleGrey),
+      );
+    }
+
+    if (s == 'sending') {
+      return Icon(
+        Icons.access_time_rounded,
+        size: 12,
+        color: widget.isMe
+            ? Colors.white.withValues(alpha: 0.7)
+            : (isDark ? Colors.white54 : AppTheme.subtitleGrey),
       );
     }
 
@@ -1208,7 +1287,7 @@ class _ChatBubbleState extends State<ChatBubble> {
           ),
         ] else if (!hasMedia && widget.message.isEmpty) ...[
           _buildTimestampWidget(isDark),
-        ] else if (hasMedia && !_isImage && !_isVideo) ...[
+        ] else if (hasMedia && !_isImage && !_isVideo && !_isAudio) ...[
           Align(
             alignment: Alignment.centerRight,
             child: Padding(
@@ -1894,101 +1973,130 @@ class _ChatBubbleState extends State<ChatBubble> {
           .toDouble()
           .clamp(0.0, maxDur);
 
+      final iconColor = widget.isMe
+          ? Colors.white
+          : AppTheme.primaryColor;
+
+      final trackColor = widget.isMe
+          ? Colors.white
+          : (isDark ? Colors.white70 : AppTheme.primaryColor);
+
+      final subtitleColor = widget.isMe
+          ? Colors.white.withValues(alpha: 0.8)
+          : AppTheme.secondaryText(isDark);
+
       return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF182229) : const Color(0xFFF1F3F5),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+        width: MediaQuery.of(context).size.width * 0.72,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        color: Colors.transparent,
+        child: Row(
           children: [
-            Row(
+            // Sender Avatar with Mic Badge Overlay (Screenshot 4)
+            Stack(
+              clipBehavior: Clip.none,
               children: [
-                GestureDetector(
-                  onTap: _isDownloading ? null : _toggleAudioPlayback,
+                IosAvatar(
+                  name: _audioSenderName,
+                  imagePath: _audioSenderAvatar,
+                  size: 40,
+                ),
+                Positioned(
+                  right: -2,
+                  bottom: -2,
                   child: Container(
-                    width: 42,
-                    height: 42,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF007AFF),
+                    padding: const EdgeInsets.all(2.5),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
                       shape: BoxShape.circle,
                     ),
-                    child: _isDownloading
-                        ? const Padding(
-                            padding: EdgeInsets.all(10),
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Icon(
-                            _isPlayingAudio
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _attachmentName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                          color: isDark ? Colors.white : Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        hasLocal
-                            ? '${_formatAudioDuration(_audioPosition)} / ${_formatAudioDuration(_audioDuration)}'
-                            : (_downloadFailed
-                                  ? 'Download failed'
-                                  : 'Tap to download audio'),
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: _downloadFailed
-                              ? Colors.redAccent
-                              : (isDark ? Colors.white60 : Colors.black54),
-                        ),
-                      ),
-                    ],
+                    child: Icon(
+                      CupertinoIcons.mic_fill,
+                      size: 11,
+                      color: widget.isMe ? AppTheme.primaryColor : const Color(0xFF34C759),
+                    ),
                   ),
                 ),
               ],
             ),
-            if (hasLocal) ...[
-              const SizedBox(height: 4),
-              SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: 3,
-                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-                  activeTrackColor: const Color(0xFF007AFF),
-                  inactiveTrackColor: isDark ? Colors.white24 : Colors.black12,
-                  thumbColor: const Color(0xFF007AFF),
+            const SizedBox(width: 8),
+
+            // Play / Pause Button
+            GestureDetector(
+              onTap: _isDownloading ? null : _toggleAudioPlayback,
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: iconColor.withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
                 ),
-                child: Slider(
-                  min: 0.0,
-                  max: maxDur,
-                  value: curPos,
-                  onChanged: (val) {
-                    _audioPlayer?.seek(Duration(milliseconds: val.toInt()));
-                  },
-                ),
+                child: _isDownloading
+                    ? Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: iconColor,
+                        ),
+                      )
+                    : Icon(
+                        _isPlayingAudio
+                            ? CupertinoIcons.pause_fill
+                            : CupertinoIcons.play_fill,
+                        color: iconColor,
+                        size: 20,
+                      ),
               ),
-            ],
+            ),
+            const SizedBox(width: 6),
+
+            // Audio Scrubber / Waveform + Duration / Timestamp
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 3,
+                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                      overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                      activeTrackColor: trackColor,
+                      inactiveTrackColor: trackColor.withValues(alpha: 0.3),
+                      thumbColor: trackColor,
+                    ),
+                    child: Slider(
+                      min: 0.0,
+                      max: maxDur,
+                      value: curPos,
+                      onChanged: hasLocal
+                          ? (val) {
+                              _audioPlayer?.seek(Duration(milliseconds: val.toInt()));
+                            }
+                          : null,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          hasLocal
+                              ? _formatAudioDuration(_audioDuration)
+                              : (_downloadFailed ? 'Failed' : 'Downloading...'),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: subtitleColor,
+                          ),
+                        ),
+                        _buildTimestampWidget(isDark),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       );
@@ -2532,7 +2640,7 @@ class _ChatBubbleState extends State<ChatBubble> {
                               left: widget.isMe ? 0 : 6,
                               right: widget.isMe ? 6 : 0,
                             ),
-                            padding: (_isImage || _isVideo) && mediaUrl != null && mediaUrl.trim().isNotEmpty
+                            padding: (_isImage || _isVideo || _isAudio) && mediaUrl != null && mediaUrl.trim().isNotEmpty
                                 ? EdgeInsets.zero
                                 : const EdgeInsets.symmetric(
                                     horizontal: 14,
@@ -2600,15 +2708,13 @@ class _ChatBubbleState extends State<ChatBubble> {
               ],
             ),
           ),
-          if (widget.isMe &&
-              widget.showDeliveryStatus &&
-              (widget.isRead || widget.isDelivered))
+          if (widget.isMe && widget.showDeliveryStatus)
             Padding(
               padding: const EdgeInsets.only(top: 2, right: 6),
               child: Align(
                 alignment: Alignment.centerRight,
                 child: Text(
-                  widget.isRead ? 'Seen' : 'Delivered',
+                  _getDeliveryStatusText(),
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,

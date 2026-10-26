@@ -25,6 +25,8 @@ class LocalChatStorage {
   int? _accountId;
   int _accountEpoch = 0;
 
+  int? get accountId => _accountId;
+
   String _accountKey(String key) =>
       _accountId == null ? key : 'PREF_CHAT_ACCOUNT_${_accountId}_$key';
 
@@ -179,6 +181,7 @@ class LocalChatStorage {
               isPinned: isPinned,
               isMuted: isMuted,
               isArchived: isArchived,
+              isProfileHidden: map['isProfileHidden'] as bool? ?? false,
               disappearType: (map['disappearType'] as int?) ?? 0,
               backgroundUrl: map['backgroundUrl'] as String?,
               messages: messages,
@@ -187,65 +190,34 @@ class LocalChatStorage {
         }
 
         if (epoch != _accountEpoch) return [];
-        final withBot = await _ensureBotIncluded(conversations);
-        _setConversationsNotifier(withBot);
-        return withBot;
+        sortConversationsByTime(conversations);
+        _setConversationsNotifier(conversations);
+        return conversations;
       } catch (_) {}
     }
 
-    // Return bot conversation when list is otherwise empty
     if (epoch == _accountEpoch) {
-      final emptyWithBot = await _ensureBotIncluded([]);
-      _setConversationsNotifier(emptyWithBot);
-      return emptyWithBot;
+      _setConversationsNotifier([]);
+      return [];
     }
     return [];
   }
 
-  Future<List<ChatConversation>> _ensureBotIncluded(
-    List<ChatConversation> conversations,
-  ) async {
-    final botIndex =
-        conversations.indexWhere((c) => c.id == BotAssistantService.botId);
-    if (botIndex < 0) {
-      final botMessages = await loadMessages(BotAssistantService.botId);
-      final initialMessages = botMessages.isNotEmpty
-          ? botMessages
-          : [
-              ChatMessage(
-                id: 'bot_welcome_1',
-                senderId: BotAssistantService.botId,
-                content:
-                    '👋 Hello! I am your Calnox AI Assistant.\n\nHow can I help you today? Tap any of the suggested questions below or type your query!',
-                timestamp: DateTime.now().subtract(const Duration(minutes: 1)),
-                isRead: true,
-                isDelivered: true,
-              ),
-            ];
-
-      if (botMessages.isEmpty) {
-        await cacheMessages(BotAssistantService.botId, initialMessages);
+  void sortConversationsByTime(List<ChatConversation> list) {
+    list.sort((a, b) {
+      if (a.isPinned != b.isPinned) {
+        return a.isPinned ? -1 : 1;
       }
-
-      final botConv = ChatConversation(
-        id: BotAssistantService.botId,
-        name: BotAssistantService.botName,
-        avatarUrl: '',
-        lastMessage: initialMessages.last.content,
-        lastMessageTime: 'Online',
-        lastActivityAt: DateTime.now(),
-        unreadCount: 0,
-        isOnline: true,
-        isPinned: true,
-        messages: initialMessages,
-      );
-
-      conversations.insert(0, botConv);
-    } else {
-      final bot = conversations[botIndex];
-      conversations[botIndex] = bot.copyWith(isOnline: true);
-    }
-    return conversations;
+      final timeA = a.lastActivityAt ??
+          (a.messages.isNotEmpty
+              ? a.messages.last.timestamp
+              : DateTime.fromMillisecondsSinceEpoch(0));
+      final timeB = b.lastActivityAt ??
+          (b.messages.isNotEmpty
+              ? b.messages.last.timestamp
+              : DateTime.fromMillisecondsSinceEpoch(0));
+      return timeB.compareTo(timeA);
+    });
   }
 
   Future<List<ChatConversation>> _currentConversations() async {
@@ -262,10 +234,18 @@ class LocalChatStorage {
     final conversationsKey = _keyConversations;
     _prefs ??= await SharedPreferences.getInstance();
     if (epoch != _accountEpoch) return;
-    final listWithBot = await _ensureBotIncluded(
-      List<ChatConversation>.from(conversations),
-    );
-    for (final c in listWithBot) {
+
+    final newList = List<ChatConversation>.from(conversations);
+
+    // Preserve local bot conversation if it exists
+    final existingBot = getConversationSync(BotAssistantService.botId);
+    if (existingBot != null && newList.indexWhere((c) => c.id == BotAssistantService.botId) < 0) {
+      newList.add(existingBot);
+    }
+
+    sortConversationsByTime(newList);
+
+    for (final c in newList) {
       if (!c.isGroup) {
         final pId = c.peerUserId ?? int.tryParse(c.id);
         if (pId != null && pId > 0) {
@@ -273,7 +253,7 @@ class LocalChatStorage {
         }
       }
     }
-    final snapshot = List<ChatConversation>.unmodifiable(listWithBot);
+    final snapshot = List<ChatConversation>.unmodifiable(newList);
     conversationsNotifier.value = snapshot;
     final jsonList = snapshot
         .map(
@@ -286,6 +266,9 @@ class LocalChatStorage {
             'lastActivityAt': c.lastActivityAt?.millisecondsSinceEpoch,
             'unreadCount': c.unreadCount,
             'isPinned': c.isPinned,
+            'isMuted': c.isMuted,
+            'isArchived': c.isArchived,
+            'isProfileHidden': c.isProfileHidden,
             'disappearType': c.disappearType,
             'isOnline': c.isOnline,
             'lastSeenAt': c.lastSeenAt?.millisecondsSinceEpoch,
@@ -533,10 +516,21 @@ class LocalChatStorage {
               ? existing.mediaUrl
               : message.mediaUrl);
 
+      final mergedIsRead = existing.isRead || message.isRead;
+      final mergedIsDelivered = existing.isDelivered || message.isDelivered || mergedIsRead;
+      final mergedStatus = mergedIsRead
+          ? 'read'
+          : (mergedIsDelivered
+              ? 'delivered'
+              : (message.status.isNotEmpty ? message.status : existing.status));
+
       messages[existingIdx] = message.copyWith(
         content: effectiveContent,
         mediaUrl: effectiveMediaUrl,
-        isSaved: message.isSaved,
+        isRead: mergedIsRead,
+        isDelivered: mergedIsDelivered,
+        status: mergedStatus,
+        isSaved: message.isSaved || existing.isSaved,
       );
     } else {
       messages.add(message);
@@ -628,7 +622,7 @@ class LocalChatStorage {
     var updated = false;
 
     for (var i = 0; i < messages.length; i++) {
-      if (messages[i].senderId == 'user' && !messages[i].isDelivered) {
+      if (messages[i].senderId == 'user' && !messages[i].isDelivered && !messages[i].isRead) {
         messages[i] = messages[i].copyWith(isDelivered: true, status: 'delivered');
         updated = true;
       }
@@ -680,13 +674,18 @@ class LocalChatStorage {
     if (epoch != _accountEpoch) return;
     var updated = false;
 
+    final cutoff = readThrough ?? DateTime.now();
+
     for (var i = 0; i < messages.length; i++) {
-      final wasReadByPeer =
-          readThrough == null || !messages[i].timestamp.isAfter(readThrough);
+      final wasReadByPeer = !messages[i].timestamp.isAfter(cutoff);
       if (messages[i].senderId == 'user' &&
           wasReadByPeer &&
           (!messages[i].isRead || !messages[i].isDelivered)) {
-        messages[i] = messages[i].copyWith(isRead: true, isDelivered: true);
+        messages[i] = messages[i].copyWith(
+          isRead: true,
+          isDelivered: true,
+          status: 'read',
+        );
         updated = true;
       }
     }
@@ -890,6 +889,7 @@ class LocalChatStorage {
   void _persistConversations(List<ChatConversation> list) {
     final epoch = _accountEpoch;
     final key = _keyConversations;
+    sortConversationsByTime(list);
     _setConversationsNotifier(list);
 
     final jsonList = list.map((c) {

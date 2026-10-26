@@ -354,6 +354,9 @@ class ServerChatManager {
       final isPinned = liveLocal?.isPinned ?? false;
       final isMuted = liveLocal?.isMuted ?? false;
       final isArchived = liveLocal?.isArchived ?? false;
+      final isProfileHidden = peer != null
+          ? !peer.profileVisible
+          : (liveLocal?.isProfileHidden ?? false);
 
       final conversation = ChatConversation(
         id: chatIdStr,
@@ -373,6 +376,8 @@ class ServerChatManager {
         isPinned: isPinned,
         isMuted: isMuted,
         isArchived: isArchived,
+        isBlocked: sc.isBlocked,
+        isProfileHidden: isProfileHidden,
         backgroundUrl: sc.backgroundUrl,
         messages: cachedMessages,
       );
@@ -458,6 +463,7 @@ class ServerChatManager {
     try {
       if (numericId > 0) {
         unawaited(ServerApiService.instance.markDeliveredREST(chatId: numericId));
+        SocketChatService.instance.markDelivered(chatHeadId: numericId);
       }
       final pageRes = await ServerApiService.instance.getMessagesPage(
         numericId,
@@ -770,6 +776,57 @@ class ServerChatManager {
       unawaited(ServerApiService.instance.markChatRead(numericId));
     }
     await LocalChatStorage.instance.markAsRead(chatId);
+  }
+
+  /// Blocks a user by ID and updates local conversation state.
+  Future<bool> blockUser(int userId) async {
+    final success = await ServerApiService.instance.blockUser(userId);
+    if (success) {
+      final conversations = List<ChatConversation>.from(
+        LocalChatStorage.instance.conversationsNotifier.value,
+      );
+      var updated = false;
+      for (var i = 0; i < conversations.length; i++) {
+        final c = conversations[i];
+        if (c.peerUserId == userId || c.id == userId.toString()) {
+          conversations[i] = c.copyWith(isBlocked: true);
+          updated = true;
+        }
+      }
+      if (updated) {
+        LocalChatStorage.instance.conversationsNotifier.value = conversations;
+      }
+      unawaited(syncChats());
+    }
+    return success;
+  }
+
+  /// Unblocks a user by ID and updates local conversation state.
+  Future<bool> unblockUser(int userId) async {
+    final success = await ServerApiService.instance.unblockUser(userId);
+    if (success) {
+      final conversations = List<ChatConversation>.from(
+        LocalChatStorage.instance.conversationsNotifier.value,
+      );
+      var updated = false;
+      for (var i = 0; i < conversations.length; i++) {
+        final c = conversations[i];
+        if (c.peerUserId == userId || c.id == userId.toString()) {
+          conversations[i] = c.copyWith(isBlocked: false);
+          updated = true;
+        }
+      }
+      if (updated) {
+        LocalChatStorage.instance.conversationsNotifier.value = conversations;
+      }
+      unawaited(syncChats());
+    }
+    return success;
+  }
+
+  /// Gets the list of blocked users.
+  Future<List<UserModel>> getBlockedUsers() async {
+    return await ServerApiService.instance.getBlockedUsers();
   }
 
   /// Resolves server chat metadata (peer name, avatar, members) when a new chat event arrives.
@@ -1197,6 +1254,7 @@ class ServerChatManager {
 
         if (!isMe && sm.chatHeadId > 0) {
           unawaited(ServerApiService.instance.markDeliveredREST(chatId: sm.chatHeadId));
+          SocketChatService.instance.markDelivered(chatHeadId: sm.chatHeadId, messageId: sm.id);
         }
 
         // If thread is brand new or has placeholder name, resolve chat details in background
@@ -1276,25 +1334,67 @@ class ServerChatManager {
 
     // 4. Messages read
     _socketSubscriptions.add(
-      SocketChatService.instance.onRead.listen((data) async {
+      SocketChatService.instance.onRead.listen((raw) async {
         if (generation != _socketGeneration) return;
-        debugPrint('[SERVER CHAT] Socket messages read event: $data');
-        final chatId =
-            (data['chat_head_id'] ??
-                    data['chat_id'] ??
-                    data['chatHeadId'] ??
-                    data['chatId'])
-                ?.toString();
-        final readerId = int.tryParse(
-          (data['user_id'] ?? data['userId'] ?? '').toString(),
-        );
-        final currentUserId = ServerApiService.instance.currentUserId;
-        if (chatId == null || currentUserId == null) return;
-        if (readerId != null && readerId == currentUserId) return;
+        debugPrint('[SERVER CHAT] Socket messages read event: $raw');
 
-        final lastReadAt = DateTime.tryParse(
-          (data['last_read_at'] ?? data['lastReadAt'] ?? '').toString(),
+        var data = raw;
+        if (data['data'] is Map) {
+          data = Map<String, dynamic>.from(data['data'] as Map);
+        }
+
+        final chatId = (data['chat_head_id'] ??
+                data['chat_id'] ??
+                data['chatHeadId'] ??
+                data['chatId'])
+            ?.toString();
+
+        final rawReader = data['reader_id'] ??
+            data['readerId'] ??
+            data['read_by'] ??
+            data['readBy'] ??
+            data['by_user_id'] ??
+            data['by_user'] ??
+            data['byUser'] ??
+            data['user_id'] ??
+            data['userId'];
+
+        final readerId = int.tryParse(rawReader?.toString() ?? '');
+        final currentUserId = ServerApiService.instance.currentUserId ?? LocalChatStorage.instance.accountId;
+        final conversations = LocalChatStorage.instance.conversationsNotifier.value;
+        final convMatch = conversations.cast<ChatConversation?>().firstWhere(
+          (c) => c?.id == chatId,
+          orElse: () => null,
         );
+        final peerUserId = convMatch?.peerUserId ?? (chatId != null ? int.tryParse(chatId) : null);
+
+        if (chatId == null || chatId.isEmpty) return;
+
+        // Ignore read events triggered by ourselves
+        if (currentUserId != null && readerId == currentUserId) {
+          debugPrint('[SERVER CHAT] Ignoring self-triggered read event (readerId=$readerId, currentUserId=$currentUserId)');
+          return;
+        }
+
+        // Must be triggered by the peer
+        if (peerUserId != null && readerId != null && readerId != peerUserId) {
+          debugPrint('[SERVER CHAT] Ignoring read event not from peer (readerId=$readerId, peerUserId=$peerUserId)');
+          return;
+        }
+
+        final rawReadAt = data['last_read_at'] ??
+            data['lastReadAt'] ??
+            data['read_at'] ??
+            data['readAt'] ??
+            data['seen_at'] ??
+            data['seenAt'] ??
+            data['updated_at'] ??
+            data['updatedAt'];
+
+        final lastReadAt = DateTime.tryParse(rawReadAt?.toString() ?? '');
+
+        debugPrint('[SERVER CHAT] Processing peer read event for chatId=$chatId (readerId=$readerId, lastReadAt=$lastReadAt)');
+
         await LocalChatStorage.instance.markAllOutgoingMessagesAsRead(
           chatId,
           readThrough: lastReadAt,
@@ -1335,5 +1435,24 @@ class ServerChatManager {
         }
       }),
     );
+  }
+
+  /// Toggles profile visibility for a user (`POST /users/:userId/unshow-profile` or `/show-profile`).
+  Future<bool> toggleProfileVisibility(String chatId, int userId, bool hide) async {
+    final success = hide
+        ? await ServerApiService.instance.hideProfileFromUser(userId)
+        : await ServerApiService.instance.showProfileToUser(userId);
+
+    if (success) {
+      final list = List<ChatConversation>.from(
+        LocalChatStorage.instance.conversationsNotifier.value,
+      );
+      final idx = list.indexWhere((c) => c.id == chatId);
+      if (idx >= 0) {
+        list[idx] = list[idx].copyWith(isProfileHidden: hide);
+        await LocalChatStorage.instance.replaceConversations(list);
+      }
+    }
+    return success;
   }
 }

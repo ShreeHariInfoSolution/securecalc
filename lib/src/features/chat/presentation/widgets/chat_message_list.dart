@@ -502,6 +502,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
                                 fileName: msg.fileName,
                                 isRead: msg.isRead,
                                 isDelivered: msg.isDelivered,
+                                status: msg.status,
                                 isEdited: msg.isEdited,
                                 isDeleted: msg.isDeleted,
                                 isSaved: msg.isSaved,

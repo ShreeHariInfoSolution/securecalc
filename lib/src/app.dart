@@ -46,22 +46,16 @@ class _SynqChatAppState extends State<SynqChatApp> with WidgetsBindingObserver {
       }
     }
 
-    // Lock back to Calculator when app is minimized, sent to background, inactive, or in Recents App switcher
-    // Note: Do NOT lock or cut calls if an active or ringing call is currently in progress
+    // Lock back to Calculator when app is minimized, sent to background, inactive, or in Recents App switcher.
+    // Preserves active call state in CallService & GlobalCallOverlay while locking secret routes.
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
-      if (CallService.instance.state == CallState.idle) {
-        _lockToCalculator();
-      }
+      _lockToCalculator();
     }
   }
 
   void _lockToCalculator() {
-    if (CallService.instance.state != CallState.idle) {
-      return;
-    }
-    CallService.instance.hangUp();
     final nav = navigatorKey.currentState;
     if (nav != null) {
       nav.pushAndRemoveUntil(

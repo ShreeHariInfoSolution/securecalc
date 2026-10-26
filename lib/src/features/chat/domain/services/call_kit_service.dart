@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_callkit_incoming/entities/android_params.dart';
 import 'package:flutter_callkit_incoming/entities/call_event.dart';
 import 'package:flutter_callkit_incoming/entities/call_kit_params.dart';
@@ -174,8 +175,15 @@ class CallKitService {
     );
 
     try {
-      await FlutterCallkitIncoming.showCallkitIncoming(params);
-      debugPrint('[CallKit] Incoming call presented via CallKit for callUuid: $callUuid');
+      final paramsMap = params.toJson();
+      if (paramsMap['ios'] is Map) {
+        (paramsMap['ios'] as Map<String, dynamic>)['includesCallsInRecents'] = false;
+      } else {
+        paramsMap['ios'] = <String, dynamic>{'includesCallsInRecents': false};
+      }
+      await const MethodChannel('flutter_callkit_incoming')
+          .invokeMethod('showCallkitIncoming', paramsMap);
+      debugPrint('[CallKit] Incoming call presented via CallKit (recents disabled) for callUuid: $callUuid');
     } catch (e) {
       debugPrint('[CallKit ERROR] Failed to show CallKit UI: $e');
     }

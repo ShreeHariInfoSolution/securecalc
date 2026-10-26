@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
+import 'package:securecalc/src/core/utils/app_toast.dart';
 
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
@@ -626,6 +627,35 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
                                       },
                                     ),
                                     _buildDivider(isDark),
+
+                                    // Hide / Show Profile
+                                    if (!widget.conversation.isGroup &&
+                                        widget.conversation.peerUserId != null &&
+                                        widget.conversation.peerUserId! > 0) ...[
+                                      _buildActionTile(
+                                        context: context,
+                                        isDark: isDark,
+                                        icon: widget.conversation.isProfileHidden
+                                            ? CupertinoIcons.eye
+                                            : CupertinoIcons.eye_slash,
+                                        label: widget.conversation.isProfileHidden
+                                            ? 'Show My Profile'
+                                            : 'Hide My Profile',
+                                        onTap: () async {
+                                          Navigator.pop(context);
+                                          final peerId = widget.conversation.peerUserId!;
+                                          final hide = !widget.conversation.isProfileHidden;
+                                          final success = await ServerChatManager.instance
+                                              .toggleProfileVisibility(widget.conversation.id, peerId, hide);
+                                          if (mounted && success) {
+                                            AppToast.show(
+                                              hide ? 'Profile hidden from user' : 'Profile visible to user',
+                                            );
+                                          }
+                                        },
+                                      ),
+                                      _buildDivider(isDark),
+                                    ],
 
                                     // 4. Lock chat
                                     _buildActionTile(

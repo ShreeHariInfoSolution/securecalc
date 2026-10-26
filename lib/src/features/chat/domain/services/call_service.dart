@@ -1,10 +1,14 @@
 import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
+import 'package:securecalc/src/app.dart';
+import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'call_kit_service.dart';
 import 'local_chat_storage.dart';
 import 'server_api_service.dart';
@@ -143,6 +147,9 @@ class CallService extends ChangeNotifier {
     String? avatar,
     int? peerUserId,
   }) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+
     await init();
     if (state != CallState.idle) throw CallException(409, 'You are already in a call');
     if (!await _ensurePermissions(type)) {
@@ -178,6 +185,9 @@ class CallService extends ChangeNotifier {
   }
 
   Future<void> acceptCall() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+
     await init();
     if (state != CallState.incomingRinging || callId == null) return;
     final id = callId!;
@@ -246,10 +256,66 @@ class CallService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> _ensureVideoTrack() async {
+    try {
+      var cameraStatus = await Permission.camera.status;
+      if (!cameraStatus.isGranted) {
+        cameraStatus = await Permission.camera.request();
+      }
+      if (!cameraStatus.isGranted && !cameraStatus.isLimited) {
+        if (cameraStatus.isPermanentlyDenied) {
+          _showPermissionDialog(CallType.video);
+        } else {
+          AppToast.show('Camera permission is required for video call', isError: true);
+        }
+        return false;
+      }
+
+      var videoTracks = _localStream?.getVideoTracks() ?? <MediaStreamTrack>[];
+      if (videoTracks.isEmpty) {
+        final videoStream = await navigator.mediaDevices.getUserMedia({
+          'audio': false,
+          'video': {
+            'facingMode': 'user',
+            'width': 640,
+            'height': 480,
+            'frameRate': 24,
+          },
+        });
+        if (videoStream.getVideoTracks().isNotEmpty) {
+          final newTrack = videoStream.getVideoTracks().first;
+          _localStream?.addTrack(newTrack);
+          localRenderer.srcObject = _localStream;
+          if (_pc != null) {
+            await _pc!.addTrack(newTrack, _localStream!);
+            final offer = await _pc!.createOffer();
+            await _pc!.setLocalDescription(offer);
+            final id = callId;
+            if (id != null) {
+              await _emit('webrtc_signal', {
+                'call_id': id,
+                'type': 'offer',
+                'data': {'sdp': offer.sdp, 'type': offer.type},
+              }).catchError((_) => <String, dynamic>{});
+            }
+          }
+        }
+      }
+      return true;
+    } catch (e) {
+      debugPrint('[CALL] Ensure video track error: $e');
+      return false;
+    }
+  }
+
   Future<void> switchCallType(CallType newType) async {
     if (callType == newType) return;
-    callType = newType;
+
     if (newType == CallType.video) {
+      final hasCam = await _ensureVideoTrack();
+      if (!hasCam) return;
+
+      callType = CallType.video;
       camOn = true;
       for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
         t.enabled = true;
@@ -258,6 +324,7 @@ class CallService extends ChangeNotifier {
         await setAudioRoute(AudioRoute.speaker);
       }
     } else {
+      callType = CallType.voice;
       camOn = false;
       for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
         t.enabled = false;
@@ -602,14 +669,49 @@ class CallService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _onCallTypeSwitched(Map<String, dynamic> d) {
+  void _onCallTypeSwitched(Map<String, dynamic> d) async {
     if (_asInt(d['call_id']) != callId) return;
     final typeStr = d['call_type']?.toString().toLowerCase();
     if (typeStr == 'video') {
       callType = CallType.video;
-      // Peer camera remains OFF until peer manually turns it ON
       if (audioRoute == AudioRoute.earpiece) {
         setAudioRoute(AudioRoute.speaker);
+      }
+      notifyListeners();
+
+      final navContext = navigatorKey.currentContext;
+      if (navContext != null) {
+        showCupertinoDialog<void>(
+          context: navContext,
+          builder: (ctx) => CupertinoAlertDialog(
+            title: const Text('Switched to Video Call'),
+            content: Text(
+              '${peerName.isNotEmpty ? peerName : "Other caller"} switched to a video call. Would you like to turn on your camera?',
+            ),
+            actions: [
+              CupertinoDialogAction(
+                child: const Text('Keep Camera Off'),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+              CupertinoDialogAction(
+                isDefaultAction: true,
+                child: const Text('Turn On Camera'),
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  final hasCam = await _ensureVideoTrack();
+                  if (hasCam) {
+                    camOn = true;
+                    for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
+                      t.enabled = true;
+                    }
+                    _sendMediaState();
+                    notifyListeners();
+                  }
+                },
+              ),
+            ],
+          ),
+        );
       }
     } else if (typeStr == 'voice') {
       callType = CallType.voice;
@@ -618,8 +720,8 @@ class CallService extends ChangeNotifier {
         t.enabled = false;
       }
       setAudioRoute(AudioRoute.earpiece);
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   void _onEnded(Map<String, dynamic> d) {
@@ -742,6 +844,10 @@ class CallService extends ChangeNotifier {
 
   void _playRingtone({required bool isOutgoing}) async {
     _stopRingtone();
+    if (!isOutgoing) {
+      // System CallKit / Telecom handles native incoming ringtone cleanly without duplicate audio
+      return;
+    }
     final currentToken = ++_ringtoneToken;
 
     try {
@@ -888,19 +994,70 @@ class CallService extends ChangeNotifier {
   Future<bool> _ensurePermissions(CallType type) async {
     try {
       final perms = [Permission.microphone, if (type == CallType.video) Permission.camera];
-      final Map<Permission, PermissionStatus> statuses = {};
+      bool allGranted = true;
+      bool permanentlyDenied = false;
+
       for (final p in perms) {
         var status = await p.status;
         if (!status.isGranted) {
           status = await p.request();
         }
-        statuses[p] = status;
+        if (!status.isGranted && !status.isLimited) {
+          allGranted = false;
+        }
+        if (status.isPermanentlyDenied) {
+          permanentlyDenied = true;
+        }
       }
-      return statuses.values.every((p) => p.isGranted || p.isLimited);
+
+      if (!allGranted) {
+        if (permanentlyDenied) {
+          _showPermissionDialog(type);
+        } else {
+          AppToast.show(
+            type == CallType.video
+                ? 'Camera & Microphone permission required for call'
+                : 'Microphone permission required for call',
+            isError: true,
+          );
+        }
+        return false;
+      }
+      return true;
     } catch (e) {
       debugPrint('[CALL] Permission check error: $e');
       return true;
     }
+  }
+
+  void _showPermissionDialog(CallType type) {
+    final navContext = navigatorKey.currentContext;
+    if (navContext == null) return;
+    final isVideo = type == CallType.video;
+
+    showCupertinoDialog<void>(
+      context: navContext,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: Text('${isVideo ? "Camera & Microphone" : "Microphone"} Permission Required'),
+        content: Text(
+          'This app requires ${isVideo ? "Camera and Microphone" : "Microphone"} permission to place or receive calls. Please grant permission in App Settings.',
+        ),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(ctx),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            child: const Text('Open Settings'),
+            onPressed: () {
+              Navigator.pop(ctx);
+              openAppSettings();
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Future<Map<String, dynamic>> _emit(String event, Map<String, dynamic> payload) async {

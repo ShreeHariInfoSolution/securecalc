@@ -88,6 +88,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
   late int _disappearType;
   late final int _initialUnreadCount;
+  late bool _isBlocked;
 
   @override
   void initState() {
@@ -95,6 +96,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     WidgetsBinding.instance.addObserver(this);
     _disappearType = widget.conversation.disappearType;
     _initialUnreadCount = widget.conversation.unreadCount;
+    _isBlocked = widget.conversation.isBlocked;
     ServerChatManager.instance.activeChatId = widget.conversation.id;
     _chatName = widget.conversation.name;
     _chatAvatar = widget.conversation.avatarUrl;
@@ -445,11 +447,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
             ? rawFilePath
             : (isGifContent ? msgText : null));
 
+    final isMine = serverMessage.senderId == currentUserId;
     final incoming = ChatMessage(
       id: serverMessage.id.toString(),
-      senderId: serverMessage.senderId == currentUserId
-          ? 'user'
-          : serverMessage.senderId.toString(),
+      senderId: isMine ? 'user' : serverMessage.senderId.toString(),
       content: msgContent,
       timestamp: timestamp,
       type: effectiveType,
@@ -460,7 +461,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                   serverMessage.fileName!.trim().isNotEmpty)
               ? serverMessage.fileName
               : null),
-      isRead: true,
+      isRead: isMine ? serverMessage.isRead : true,
+      isDelivered: isMine ? (serverMessage.isDelivered || serverMessage.isRead) : true,
+      status: isMine ? serverMessage.status : 'read',
       isEdited: serverMessage.isEdited,
       isDeleted: serverMessage.isDeleted,
       reaction: serverMessage.chatReact,
@@ -627,37 +630,73 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     }
   }
 
-  void _handleReadEvent(Map<String, dynamic> data) {
+  void _handleReadEvent(Map<String, dynamic> raw) {
     if (!mounted) return;
-    final eventChatId =
-        (data['chat_head_id'] ??
-                data['chat_id'] ??
-                data['chatHeadId'] ??
-                data['chatId'])
-            ?.toString();
-    final readerId = int.tryParse(
-      (data['user_id'] ?? data['userId'] ?? data['reader_id'] ?? '').toString(),
-    );
-    final currentUserId = ServerApiService.instance.currentUserId;
-    if (eventChatId != widget.conversation.id ||
-        currentUserId == null ||
-        (readerId != null && readerId == currentUserId)) {
+    debugPrint('[CHAT DETAIL] Socket messages read event: $raw');
+
+    var data = raw;
+    if (data['data'] is Map) {
+      data = Map<String, dynamic>.from(data['data'] as Map);
+    }
+
+    final eventChatId = (data['chat_head_id'] ??
+            data['chat_id'] ??
+            data['chatHeadId'] ??
+            data['chatId'])
+        ?.toString();
+
+    final rawReader = data['reader_id'] ??
+        data['readerId'] ??
+        data['read_by'] ??
+        data['readBy'] ??
+        data['by_user_id'] ??
+        data['by_user'] ??
+        data['byUser'] ??
+        data['user_id'] ??
+        data['userId'];
+
+    final readerId = int.tryParse(rawReader?.toString() ?? '');
+    final currentUserId = ServerApiService.instance.currentUserId ?? LocalChatStorage.instance.accountId;
+    final peerUserId = widget.conversation.peerUserId ??
+        PresenceStore.instance.getUserIdForChat(widget.conversation.id) ??
+        (widget.conversation.isGroup ? null : int.tryParse(widget.conversation.id));
+
+    if (eventChatId != widget.conversation.id) return;
+
+    // Ignore read events triggered by ourselves
+    if (currentUserId != null && readerId == currentUserId) {
+      debugPrint('[CHAT DETAIL] Ignoring self-triggered read event (readerId=$readerId, currentUserId=$currentUserId)');
       return;
     }
 
-    final lastReadAt = DateTime.tryParse(
-      (data['last_read_at'] ?? data['lastReadAt'] ?? '').toString(),
-    );
+    // Must be triggered by the peer
+    if (peerUserId != null && readerId != null && readerId != peerUserId) {
+      debugPrint('[CHAT DETAIL] Ignoring read event not from peer (readerId=$readerId, peerUserId=$peerUserId)');
+      return;
+    }
+
+    final rawReadAt = data['last_read_at'] ??
+        data['lastReadAt'] ??
+        data['read_at'] ??
+        data['readAt'] ??
+        data['seen_at'] ??
+        data['seenAt'] ??
+        data['updated_at'] ??
+        data['updatedAt'];
+
+    final lastReadAt = DateTime.tryParse(rawReadAt?.toString() ?? '');
+    final cutoff = lastReadAt ?? DateTime.now();
+
     var changed = false;
     final updatedMessages = _messages.map((message) {
-      final isReadByPeer =
-          lastReadAt == null || !message.timestamp.isAfter(lastReadAt);
-      if (message.senderId == 'user' && isReadByPeer && !message.isRead) {
+      final isReadByPeer = !message.timestamp.isAfter(cutoff);
+      if (message.senderId == 'user' && isReadByPeer && (!message.isRead || !message.isDelivered)) {
         changed = true;
-        return message.copyWith(isRead: true, isDelivered: true);
+        return message.copyWith(isRead: true, isDelivered: true, status: 'read');
       }
       return message;
     }).toList();
+
     if (!changed) return;
 
     setState(() => _messages = updatedMessages);
@@ -795,6 +834,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       });
       _messagesReceivedWhileLoading.clear();
       _scrollToBottom();
+      unawaited(_markChatRead());
     } catch (error) {
       debugPrint('[CHAT] Failed to load server history: $error');
       final cached = await _loadPlainCachedMessages();
@@ -1651,6 +1691,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                                 fileName: message.fileName,
                                 isRead: message.isRead,
                                 isDelivered: message.isDelivered,
+                                status: message.status,
                                 isEdited: message.isEdited,
                                 isDeleted: message.isDeleted,
                                 isSaved: message.isSaved,
@@ -2059,6 +2100,220 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         AppToast.show('Disappearing messages set to $label');
       }
     }
+  }
+
+  Future<void> _unblockCurrentPeer() async {
+    final peerUserId = widget.conversation.peerUserId ?? int.tryParse(widget.conversation.id);
+    if (peerUserId == null || peerUserId <= 0) return;
+
+    final success = await ServerChatManager.instance.unblockUser(peerUserId);
+    if (mounted) {
+      if (success) {
+        setState(() {
+          _isBlocked = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('User unblocked.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to unblock user.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _blockCurrentPeer() async {
+    final peerUserId = widget.conversation.peerUserId ?? int.tryParse(widget.conversation.id);
+    if (peerUserId == null || peerUserId <= 0) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Block User'),
+        content: Text('Are you sure you want to block $_chatName? They will not be able to send you messages.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Block', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final success = await ServerChatManager.instance.blockUser(peerUserId);
+    if (mounted) {
+      if (success) {
+        setState(() {
+          _isBlocked = true;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('User blocked.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to block user.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmClearChat() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear chat?'),
+        content: const Text(
+          'Are you sure you want to delete all messages in this chat? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Clear chat', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final chatId = int.tryParse(widget.conversation.id);
+    if (chatId != null && chatId > 0) {
+      await ServerApiService.instance.clearChatREST(chatId);
+    }
+    await LocalChatStorage.instance.cacheMessages(widget.conversation.id, const []);
+    if (mounted) {
+      setState(() {
+        _messages = [];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chat cleared.')),
+      );
+    }
+  }
+
+  Widget _buildBlockedBanner(bool isDark) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 12, 16, MediaQuery.paddingOf(context).bottom + 12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+        border: Border(
+          top: BorderSide(
+            color: isDark ? Colors.white.withValues(alpha: 0.12) : Colors.black.withValues(alpha: 0.1),
+            width: 0.8,
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'You have blocked this user.',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: isDark ? Colors.white60 : Colors.black54,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: _confirmClearChat,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.redAccent.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.redAccent.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.delete_sweep_outlined,
+                            size: 18,
+                            color: Colors.redAccent,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Clear Chat',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.redAccent,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: InkWell(
+                    onTap: _unblockCurrentPeer,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: AppTheme.primaryColor.withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.lock_open_rounded,
+                            size: 18,
+                            color: AppTheme.primaryColor,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Unblock',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.primaryColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showDisappearingMessagesPicker() {
@@ -3101,10 +3356,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // A terminated app is not guaranteed to run dispose().  Treat leaving the
-    // foreground as the end of this viewing session so after-read messages are
-    // not restored after an app restart.
-    if (state == AppLifecycleState.paused ||
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_markChatRead());
+    } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       unawaited(_purgeSeenMessagesOnExit());
     }
@@ -3165,8 +3419,15 @@ class _ChatDetailPageState extends State<ChatDetailPage>
               return ValueListenableBuilder<int>(
                 valueListenable: AppPreferences.chatBubbleColorNotifier,
                 builder: (context, _, __) {
-                  return Stack(
-                    children: [
+                  return ValueListenableBuilder<List<ChatConversation>>(
+                    valueListenable: LocalChatStorage.instance.conversationsNotifier,
+                    builder: (context, conversations, _) {
+                      final liveConv = conversations.cast<ChatConversation?>().firstWhere(
+                        (c) => c?.id == widget.conversation.id,
+                        orElse: () => null,
+                      );
+                      return Stack(
+                        children: [
                       // Background Wallpaper Layer
                       Positioned.fill(
                         child: ChatWallpaperWidget(
@@ -3229,6 +3490,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                                 chatAvatar: _chatAvatar,
                                 isPeerOnline: _isPeerOnline,
                                 isPeerTyping: _isPeerTyping,
+                                isBlocked: _isBlocked || (liveConv?.isBlocked == true),
+                                onBlockTap: _blockCurrentPeer,
+                                onUnblockTap: _unblockCurrentPeer,
                                 onOpenChatInfo: _openChatInfo,
                                 onSearchMessages: _toggleMessageSearch,
                                 onVoiceCallTap: _startVoiceCall,
@@ -3306,35 +3570,39 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                         left: 0,
                         right: 0,
                         bottom: 0,
-                        child: ChatComposer(
-                            inputController: _inputController,
-                            inputFocusNode: _inputFocusNode,
-                            editingMessage: _editingMessage,
-                            replyingMessage: _replyingMessage,
-                            conversation: widget.conversation.copyWith(
-                              disappearType: _disappearType,
-                            ),
-                            chatName: _chatName,
-                            groupMemberNames: _groupMemberNames,
-                            isSending: _isSending,
-                            onCancelEditing: _cancelEditingMessage,
-                            onCancelReply: _cancelReply,
-                            onTypingChanged: _onTypingChanged,
-                            onSendText: _sendMessage,
-                            onSendAttachment: _uploadAndSendAttachment,
-                            onSendSticker: _sendSticker,
-                            onSendGif: _sendGif,
-                            onDisappearingTap: _showDisappearingMessagesPicker,
-                          ),
+                        child: (_isBlocked || (liveConv?.isBlocked == true))
+                            ? _buildBlockedBanner(isDark)
+                            : ChatComposer(
+                                inputController: _inputController,
+                                inputFocusNode: _inputFocusNode,
+                                editingMessage: _editingMessage,
+                                replyingMessage: _replyingMessage,
+                                conversation: widget.conversation.copyWith(
+                                  disappearType: _disappearType,
+                                ),
+                                chatName: _chatName,
+                                groupMemberNames: _groupMemberNames,
+                                isSending: _isSending,
+                                onCancelEditing: _cancelEditingMessage,
+                                onCancelReply: _cancelReply,
+                                onTypingChanged: _onTypingChanged,
+                                onSendText: _sendMessage,
+                                onSendAttachment: _uploadAndSendAttachment,
+                                onSendSticker: _sendSticker,
+                                onSendGif: _sendGif,
+                                onDisappearingTap: _showDisappearingMessagesPicker,
+                              ),
                       ),
                     ],
                   );
                 },
               );
             },
-          ),
-        ),
+          );
+        },
       ),
-    );
-  }
+    ),
+  ),
+);
+}
 }

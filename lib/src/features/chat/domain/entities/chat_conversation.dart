@@ -18,6 +18,8 @@ class ChatConversation {
   final bool isPinned;
   final bool isMuted;
   final bool isArchived;
+  final bool isBlocked;
+  final bool isProfileHidden;
   final String? backgroundUrl;
   final List<ChatMessage> messages;
 
@@ -39,6 +41,8 @@ class ChatConversation {
     this.isPinned = false,
     this.isMuted = false,
     this.isArchived = false,
+    this.isBlocked = false,
+    this.isProfileHidden = false,
     this.backgroundUrl,
     required this.messages,
   });
@@ -61,6 +65,8 @@ class ChatConversation {
     bool? isPinned,
     bool? isMuted,
     bool? isArchived,
+    bool? isBlocked,
+    bool? isProfileHidden,
     String? backgroundUrl,
     List<ChatMessage>? messages,
   }) {
@@ -82,6 +88,8 @@ class ChatConversation {
       isPinned: isPinned ?? this.isPinned,
       isMuted: isMuted ?? this.isMuted,
       isArchived: isArchived ?? this.isArchived,
+      isBlocked: isBlocked ?? this.isBlocked,
+      isProfileHidden: isProfileHidden ?? this.isProfileHidden,
       backgroundUrl: backgroundUrl ?? this.backgroundUrl,
       messages: messages ?? this.messages,
     );

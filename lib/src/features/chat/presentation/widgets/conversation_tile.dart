@@ -206,6 +206,15 @@ class ConversationTile extends StatelessWidget {
                                   color: AppTheme.secondaryText(isDark),
                                 ),
                               ),
+                            if (conversation.isProfileHidden)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 4.0),
+                                child: Icon(
+                                  CupertinoIcons.eye_slash_fill,
+                                  size: 12,
+                                  color: Colors.orange.shade700,
+                                ),
+                              ),
                             Expanded(
                               child: showTyping
                                   ? Row(

@@ -86,11 +86,14 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
   bool _isPlayingAudio = false;
 
   late int _disappearType;
+  late bool _isBlocked;
+  bool _blockingUser = false;
 
   @override
   void initState() {
     super.initState();
     _disappearType = widget.conversation.disappearType;
+    _isBlocked = widget.conversation.isBlocked;
     Future.microtask(() async {
       await _loadDetails();
       await _loadMedia();
@@ -751,6 +754,56 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       ),
     );
     if (mounted) Navigator.of(context).pop(true);
+  }
+
+  Future<void> _blockUser() async {
+    final peerUserId = widget.conversation.peerUserId ?? int.tryParse(widget.conversation.id);
+    if (peerUserId == null || peerUserId <= 0) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Block User'),
+        content: Text('Are you sure you want to block ${widget.conversation.name}? They will not be able to send you messages.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Block', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _blockingUser = true);
+    final success = await ServerChatManager.instance.blockUser(peerUserId);
+    if (mounted) {
+      setState(() {
+        _blockingUser = false;
+        if (success) _isBlocked = true;
+      });
+      AppToast.show(success ? 'User blocked' : 'Failed to block user');
+    }
+  }
+
+  Future<void> _unblockUser() async {
+    final peerUserId = widget.conversation.peerUserId ?? int.tryParse(widget.conversation.id);
+    if (peerUserId == null || peerUserId <= 0) return;
+
+    setState(() => _blockingUser = true);
+    final success = await ServerChatManager.instance.unblockUser(peerUserId);
+    if (mounted) {
+      setState(() {
+        _blockingUser = false;
+        if (success) _isBlocked = false;
+      });
+      AppToast.show(success ? 'User unblocked' : 'Failed to unblock user');
+    }
   }
 
   Future<void> _addMembers() async {
@@ -1451,6 +1504,44 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                   ],
 
                   const SizedBox(height: 18),
+
+                  // Block / Unblock Card
+                  if (!widget.conversation.isGroup) ...[
+                    _InfoCard(
+                      surface: surface,
+                      children: [
+                        ListTile(
+                          enabled: !_blockingUser,
+                          leading: _blockingUser
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(
+                                  _isBlocked ? Icons.lock_open_rounded : Icons.block_rounded,
+                                  color: _isBlocked ? AppTheme.primaryColor : Colors.redAccent,
+                                ),
+                          title: Text(
+                            _isBlocked ? 'Unblock user' : 'Block user',
+                            style: TextStyle(
+                              color: _isBlocked ? AppTheme.primaryColor : Colors.redAccent,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          subtitle: Text(
+                            _isBlocked
+                                ? 'Allow sending and receiving messages'
+                                : 'Prevent this user from messaging you',
+                          ),
+                          onTap: _blockingUser ? null : (_isBlocked ? _unblockUser : _blockUser),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                  ],
 
                   // Clear Chat Card
                   _InfoCard(

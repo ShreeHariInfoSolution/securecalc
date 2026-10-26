@@ -4,6 +4,7 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -356,19 +357,26 @@ class _ChatComposerState extends State<ChatComposer> {
     }
   }
 
-  Future<void> _toggleVoiceRecording() async {
-    if (widget.isSending) return;
-    if (_isPreviewingVoice) {
-      await _cancelPreviewVoiceRecording();
-      return;
-    }
+  bool _isHoldToRecord = false;
+  bool _isRecordingLocked = false;
+  bool _isRecordingPaused = false;
+  double _dragDx = 0.0;
+  double _dragDy = 0.0;
+
+  Future<void> _onTapMicButton() async {
+    if (widget.isSending || _isPreviewingVoice) return;
     if (_isRecordingVoice) {
-      await _stopAndPreviewRecording();
+      await _stopAndSendDirectRecording();
       return;
     }
+    FocusScope.of(context).unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+    HapticFeedback.mediumImpact();
+
     try {
       if (!await _audioRecorder.hasPermission()) {
-        throw Exception('Microphone permission is required.');
+        AppToast.show('Microphone permission is required', isError: true);
+        return;
       }
       final directory = await getTemporaryDirectory();
       final path =
@@ -380,25 +388,161 @@ class _ChatComposerState extends State<ChatComposer> {
       if (!mounted) return;
       setState(() {
         _isRecordingVoice = true;
+        _isHoldToRecord = false;
+        _isRecordingLocked = true; // Single tap opens locked recording bar directly
+        _isRecordingPaused = false;
         _isPreviewingVoice = false;
+        _dragDx = 0.0;
+        _dragDy = 0.0;
         _recordingDuration = Duration.zero;
       });
       _recordingTimer?.cancel();
       _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) {
+        if (mounted && !_isRecordingPaused) {
           setState(() => _recordingDuration += const Duration(seconds: 1));
         }
       });
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppToast.userFriendlyMessage('Unable to start recording: $error'),
-            ),
-          ),
-        );
+    } catch (e) {
+      debugPrint('[VOICE] Single tap start error: $e');
+    }
+  }
+
+  Future<void> _startHoldToRecord() async {
+    if (widget.isSending || _isPreviewingVoice) return;
+    FocusScope.of(context).unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+    HapticFeedback.mediumImpact();
+
+    try {
+      if (!await _audioRecorder.hasPermission()) {
+        AppToast.show('Microphone permission is required', isError: true);
+        return;
       }
+      final directory = await getTemporaryDirectory();
+      final path =
+          '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _audioRecorder.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc),
+        path: path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _isRecordingVoice = true;
+        _isHoldToRecord = true;
+        _isRecordingLocked = false;
+        _isRecordingPaused = false;
+        _isPreviewingVoice = false;
+        _dragDx = 0.0;
+        _dragDy = 0.0;
+        _recordingDuration = Duration.zero;
+      });
+      _recordingTimer?.cancel();
+      _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted && !_isRecordingPaused) {
+          setState(() => _recordingDuration += const Duration(seconds: 1));
+        }
+      });
+    } catch (e) {
+      debugPrint('[VOICE] Start error: $e');
+    }
+  }
+
+  void _onHoldDragUpdate(DragUpdateDetails details) {
+    if (!_isRecordingVoice || !_isHoldToRecord || _isRecordingLocked) return;
+    setState(() {
+      _dragDx += details.delta.dx;
+      _dragDy += details.delta.dy;
+    });
+
+    if (_dragDx < -80.0) {
+      HapticFeedback.selectionClick();
+      _cancelVoiceRecording();
+      return;
+    }
+
+    if (_dragDy < -60.0) {
+      HapticFeedback.mediumImpact();
+      setState(() {
+        _isRecordingLocked = true;
+        _isHoldToRecord = false;
+        _dragDx = 0.0;
+        _dragDy = 0.0;
+      });
+    }
+  }
+
+  Future<void> _onHoldRelease() async {
+    if (!_isRecordingVoice || !_isHoldToRecord || _isRecordingLocked) return;
+    setState(() {
+      _isHoldToRecord = false;
+    });
+
+    if (_recordingDuration.inMilliseconds < 800) {
+      await _cancelVoiceRecording();
+      AppToast.show('Hold button to record voice note');
+      return;
+    }
+
+    await _stopAndSendDirectRecording();
+  }
+
+  Future<void> _pauseOrResumeRecording() async {
+    if (!_isRecordingVoice) return;
+    if (_isRecordingPaused) {
+      await _audioRecorder.resume();
+      setState(() => _isRecordingPaused = false);
+    } else {
+      await _audioRecorder.pause();
+      setState(() => _isRecordingPaused = true);
+    }
+  }
+
+  Future<void> _stopAndSendDirectRecording() async {
+    _recordingTimer?.cancel();
+    _recordingTimer = null;
+    final path = await _audioRecorder.stop();
+    if (!mounted) return;
+
+    if (path == null || path.isEmpty) {
+      setState(() {
+        _isRecordingVoice = false;
+        _isHoldToRecord = false;
+        _isRecordingLocked = false;
+        _isRecordingPaused = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _isRecordingVoice = false;
+      _isHoldToRecord = false;
+      _isRecordingLocked = false;
+      _isRecordingPaused = false;
+    });
+
+    final caption = widget.inputController.text.trim();
+    if (caption.isNotEmpty) {
+      widget.inputController.clear();
+    }
+
+    await widget.onSendAttachment(
+      file: File(path),
+      fileName: 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
+      fileType: 'audio/mp4',
+      caption: caption.isNotEmpty ? caption : null,
+    );
+  }
+
+  Future<void> _togglePreviewPlayback() async {
+    final player = _previewPlayer;
+    if (player == null || _previewAudioPath == null) return;
+    if (_isPlayingPreview) {
+      await player.pause();
+    } else {
+      if (_previewPosition >= _previewDuration && _previewDuration > Duration.zero) {
+        await player.seek(Duration.zero);
+      }
+      await player.play(DeviceFileSource(_previewAudioPath!));
     }
   }
 
@@ -449,46 +593,6 @@ class _ChatComposerState extends State<ChatComposer> {
     }
   }
 
-  Future<void> _togglePreviewPlayback() async {
-    final player = _previewPlayer;
-    if (player == null || _previewAudioPath == null) return;
-    if (_isPlayingPreview) {
-      await player.pause();
-    } else {
-      if (_previewPosition >= _previewDuration && _previewDuration > Duration.zero) {
-        await player.seek(Duration.zero);
-      }
-      await player.play(DeviceFileSource(_previewAudioPath!));
-    }
-  }
-
-  Future<void> _cancelPreviewVoiceRecording() async {
-    _previewStateSub?.cancel();
-    _previewPosSub?.cancel();
-    _previewDurSub?.cancel();
-    _previewPlayer?.stop();
-    _previewPlayer?.dispose();
-    _previewPlayer = null;
-
-    if (_previewAudioPath != null) {
-      try {
-        final file = File(_previewAudioPath!);
-        if (file.existsSync()) await file.delete();
-      } catch (_) {}
-    }
-
-    if (mounted) {
-      setState(() {
-        _isRecordingVoice = false;
-        _isPreviewingVoice = false;
-        _previewAudioPath = null;
-        _isPlayingPreview = false;
-        _previewPosition = Duration.zero;
-        _previewDuration = Duration.zero;
-      });
-    }
-  }
-
   Future<void> _sendPreviewVoiceRecording() async {
     final path = _previewAudioPath;
     if (path == null || path.isEmpty) return;
@@ -522,8 +626,46 @@ class _ChatComposerState extends State<ChatComposer> {
       fileType: 'audio/mp4',
       caption: caption.isNotEmpty ? caption : null,
     );
-
   }
+
+  Future<void> _toggleVoiceRecording() async {
+    if (_isRecordingVoice) {
+      await _stopAndSendDirectRecording();
+    } else {
+      await _startHoldToRecord();
+    }
+  }
+
+  Future<void> _cancelPreviewVoiceRecording() async {
+    _previewStateSub?.cancel();
+    _previewPosSub?.cancel();
+    _previewDurSub?.cancel();
+    _previewPlayer?.stop();
+    _previewPlayer?.dispose();
+    _previewPlayer = null;
+
+    if (_previewAudioPath != null) {
+      try {
+        final file = File(_previewAudioPath!);
+        if (file.existsSync()) await file.delete();
+      } catch (_) {}
+    }
+
+    if (mounted) {
+      setState(() {
+        _isRecordingVoice = false;
+        _isPreviewingVoice = false;
+        _isHoldToRecord = false;
+        _isRecordingLocked = false;
+        _previewAudioPath = null;
+        _isPlayingPreview = false;
+        _previewPosition = Duration.zero;
+        _previewDuration = Duration.zero;
+      });
+    }
+  }
+
+
 
   Future<void> _cancelVoiceRecording() async {
     _recordingTimer?.cancel();
@@ -842,349 +984,408 @@ class _ChatComposerState extends State<ChatComposer> {
             10,
             isKeyboardOpen ? 6 : (bottomPadding > 0 ? bottomPadding : 6),
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(26),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? const Color(0xEE2C2C2E)
-                      : Colors.white.withValues(alpha: 0.94),
-                  borderRadius: BorderRadius.circular(26),
-                  border: Border.all(
-                    color: AppTheme.glassBorder(isDark),
-                    width: 0.8,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
-                      blurRadius: 12,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-              // Plus Attachment Button (38x38)
-              GlassButton(
-                width: 38,
-                height: 38,
-                radius: 19,
-                isDark: isDark,
-                onTap: () => _showAttachmentOptions(context),
-                child: Icon(
-                  Icons.add_rounded,
-                  size: 24,
-                  color: isDark ? Colors.white : Colors.black87,
-                ),
-              ),
-              const SizedBox(width: 6),
-
-              // GIF Button (38x38)
-              GlassButton(
-                width: 38,
-                height: 38,
-                radius: 19,
-                isDark: isDark,
-                onTap: () {
-                  setState(() {
-                    _showGifPicker = !_showGifPicker;
-                  });
-                  if (_showGifPicker) {
-                    widget.inputFocusNode.unfocus();
-                  }
-                },
-                child: Center(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // Lock Pill Overlay (Screenshot 1)
+              if (_isHoldToRecord && !_isRecordingLocked)
+                Positioned(
+                  right: 12,
+                  bottom: 58,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    width: 44,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
-                      color: _showGifPicker
-                          ? const Color(0xFF007AFF)
-                          : (isDark ? Colors.white24 : Colors.black12),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      'GIF',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.5,
-                        color: _showGifPicker
-                            ? Colors.white
-                            : (isDark ? Colors.white : Colors.black87),
+                      color: isDark ? const Color(0xEE1C1C1E) : Colors.white.withValues(alpha: 0.95),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                        color: AppTheme.glassBorder(isDark),
+                        width: 0.8,
                       ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(CupertinoIcons.lock_open, size: 20, color: Colors.white70),
+                        SizedBox(height: 10),
+                        Icon(CupertinoIcons.chevron_up, size: 16, color: Colors.white54),
+                        SizedBox(height: 10),
+                        Icon(CupertinoIcons.mic_fill, size: 20, color: Color(0xFFFF3B30)),
+                      ],
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
 
-              // Adaptive Input Surface (expandable height up to 145 for 5-line big messages)
-              Expanded(
-                child: Container(
-                  constraints: const BoxConstraints(
-                    minHeight: 38,
-                    maxHeight: 145,
-                  ),
-                  child: GlassSurface(
-                    radius: 19,
-                    isDark: isDark,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 2, 8, 2),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          if (_isRecordingVoice)
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  const Icon(
-                                    CupertinoIcons.circle_fill,
-                                    color: Colors.redAccent,
-                                    size: 10,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    _formatRecordingDuration(
-                                      _recordingDuration,
-                                    ),
-                                    style: TextStyle(
-                                      color: AppTheme.primaryText(isDark),
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Recording voice…',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: AppTheme.secondaryText(isDark),
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(
-                                      minWidth: 28,
-                                      minHeight: 28,
-                                    ),
-                                    onPressed: _stopAndPreviewRecording,
-                                    tooltip: 'Stop & Preview',
-                                    icon: const Icon(
-                                      CupertinoIcons.stop_fill,
-                                      size: 18,
-                                      color: Colors.redAccent,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(
-                                      minWidth: 28,
-                                      minHeight: 28,
-                                    ),
-                                    onPressed: _cancelVoiceRecording,
-                                    tooltip: 'Cancel',
-                                    icon: Icon(
-                                      CupertinoIcons.xmark,
-                                      size: 16,
-                                      color: AppTheme.secondaryText(isDark),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                          else if (_isPreviewingVoice)
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(
-                                      minWidth: 28,
-                                      minHeight: 28,
-                                    ),
-                                    onPressed: _cancelPreviewVoiceRecording,
-                                    tooltip: 'Delete recording',
-                                    icon: const Icon(
-                                      CupertinoIcons.trash,
-                                      size: 18,
-                                      color: Colors.redAccent,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(
-                                      minWidth: 28,
-                                      minHeight: 28,
-                                    ),
-                                    onPressed: _togglePreviewPlayback,
-                                    tooltip: _isPlayingPreview ? 'Pause' : 'Play',
-                                    icon: Icon(
-                                      _isPlayingPreview
-                                          ? CupertinoIcons.pause_fill
-                                          : CupertinoIcons.play_fill,
-                                      size: 20,
-                                      color: const Color(0xFF007AFF),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: SliderTheme(
-                                      data: SliderTheme.of(context).copyWith(
-                                        trackHeight: 3,
-                                        thumbShape: const RoundSliderThumbShape(
-                                          enabledThumbRadius: 6,
-                                        ),
-                                        overlayShape: const RoundSliderOverlayShape(
-                                          overlayRadius: 10,
-                                        ),
-                                        activeTrackColor: const Color(0xFF007AFF),
-                                        inactiveTrackColor: isDark
-                                            ? Colors.white24
-                                            : Colors.black12,
-                                        thumbColor: const Color(0xFF007AFF),
-                                      ),
-                                      child: Slider(
-                                        min: 0.0,
-                                        max: _previewDuration.inMilliseconds > 0
-                                            ? _previewDuration.inMilliseconds.toDouble()
-                                            : 1.0,
-                                        value: _previewPosition.inMilliseconds
-                                            .toDouble()
-                                            .clamp(
-                                              0.0,
-                                              _previewDuration.inMilliseconds > 0
-                                                  ? _previewDuration.inMilliseconds.toDouble()
-                                                  : 1.0,
-                                            ),
-                                        onChanged: (val) {
-                                          _previewPlayer?.seek(
-                                            Duration(milliseconds: val.toInt()),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                  Text(
-                                    '${_formatRecordingDuration(_previewPosition)} / ${_formatRecordingDuration(_previewDuration)}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppTheme.secondaryText(isDark),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  GestureDetector(
-                                    onTap: _sendPreviewVoiceRecording,
-                                    child: Container(
-                                      width: 28,
-                                      height: 28,
-                                      decoration: const BoxDecoration(
-                                        color: Color(0xFF007AFF),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Center(
-                                        child: Icon(
-                                          CupertinoIcons.arrow_up,
-                                          size: 16,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                          else ...[
-                            Expanded(
-                              child: TextField(
-                                controller: widget.inputController,
-                                focusNode: widget.inputFocusNode,
-                                onChanged: _onInputChanged,
-                                minLines: 1,
-                                maxLines: 5,
-                                keyboardType: TextInputType.multiline,
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-                                textInputAction: TextInputAction.newline,
-                                autocorrect: true,
-                                enableSuggestions: true,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  color: AppTheme.primaryText(isDark),
-                                  letterSpacing: -0.2,
-                                ),
-                                decoration: InputDecoration(
-                                  hintText: widget.editingMessage == null
-                                      ? 'iMessage'
-                                      : 'Edit message',
-                                  border: InputBorder.none,
-                                  isDense: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    vertical: 6,
-                                  ),
-                                  hintStyle: const TextStyle(
-                                    color: Color(0xFF8E8E93),
-                                    fontSize: 15,
-                                    letterSpacing: -0.2,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            GestureDetector(
-                              onTap: widget.isSending
-                                  ? null
-                                  : (widget.editingMessage != null ||
-                                            widget.inputController.text
-                                                .trim()
-                                                .isNotEmpty
-                                        ? widget.onSendText
-                                        : _toggleVoiceRecording),
-                              child: widget.isSending
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Color(0xFF007AFF),
-                                      ),
-                                    )
-                                  : (widget.editingMessage != null ||
-                                            widget.inputController.text
-                                                .trim()
-                                                .isNotEmpty
-                                        ? Container(
-                                            width: 28,
-                                            height: 28,
-                                            decoration: const BoxDecoration(
-                                              color: Color(0xFF007AFF),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: Center(
-                                              child: Icon(
-                                                widget.editingMessage != null
-                                                    ? CupertinoIcons.checkmark
-                                                    : CupertinoIcons.arrow_up,
-                                                size: 16,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          )
-                                        : const VoiceBars()),
-                            ),
-                          ],
-                        ],
+              ClipRRect(
+                borderRadius: BorderRadius.circular(26),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xEE2C2C2E)
+                          : Colors.white.withValues(alpha: 0.94),
+                      borderRadius: BorderRadius.circular(26),
+                      border: Border.all(
+                        color: AppTheme.glassBorder(isDark),
+                        width: 0.8,
                       ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                          blurRadius: 12,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        if (_isHoldToRecord && !_isRecordingLocked) ...[
+                          // Screenshot 1: Blinking Mic + Timer + Slide to Cancel
+                          const SizedBox(width: 8),
+                          const Icon(
+                            CupertinoIcons.circle_fill,
+                            color: Color(0xFFFF3B30),
+                            size: 10,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _formatRecordingDuration(_recordingDuration),
+                            style: const TextStyle(
+                              color: Color(0xFFFF3B30),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                            ),
+                          ),
+                          const Spacer(),
+                          Transform.translate(
+                            offset: Offset(_dragDx.clamp(-80.0, 0.0), 0),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Slide to cancel',
+                                  style: TextStyle(
+                                    color: Colors.white60,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                SizedBox(width: 4),
+                                Icon(
+                                  CupertinoIcons.chevron_left,
+                                  size: 14,
+                                  color: Colors.white60,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 20),
+                        ] else if (_isRecordingLocked && _isRecordingVoice) ...[
+                          // Screenshot 3: Locked Recording Bar with Trash, Pause/Resume & Send
+                          IconButton(
+                            onPressed: _cancelVoiceRecording,
+                            icon: const Icon(
+                              CupertinoIcons.trash,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Text(
+                                  _formatRecordingDuration(_recordingDuration),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                const Expanded(child: VoiceBars()),
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: _pauseOrResumeRecording,
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFF3B30).withValues(alpha: 0.2),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: const Color(0xFFFF3B30), width: 1.5),
+                                    ),
+                                    child: Icon(
+                                      _isRecordingPaused
+                                          ? CupertinoIcons.play_fill
+                                          : CupertinoIcons.pause_fill,
+                                      size: 16,
+                                      color: const Color(0xFFFF3B30),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          GestureDetector(
+                            onTap: _stopAndSendDirectRecording,
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF25D366),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Center(
+                                child: Icon(
+                                  Icons.send_rounded,
+                                  size: 18,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ] else if (_isPreviewingVoice) ...[
+                          // Screenshot 2: Preview Panel with Trash, Play/Pause, Scrubber, Send
+                          IconButton(
+                            onPressed: _cancelPreviewVoiceRecording,
+                            icon: const Icon(
+                              CupertinoIcons.trash,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: _togglePreviewPlayback,
+                            icon: Icon(
+                              _isPlayingPreview
+                                  ? CupertinoIcons.pause_fill
+                                  : CupertinoIcons.play_fill,
+                              color: const Color(0xFF25D366),
+                              size: 24,
+                            ),
+                          ),
+                          Expanded(
+                            child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 3,
+                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                                activeTrackColor: const Color(0xFF25D366),
+                                inactiveTrackColor: isDark ? Colors.white24 : Colors.black12,
+                                thumbColor: const Color(0xFF25D366),
+                              ),
+                              child: Slider(
+                                min: 0.0,
+                                max: _previewDuration.inMilliseconds > 0
+                                    ? _previewDuration.inMilliseconds.toDouble()
+                                    : 1.0,
+                                value: _previewPosition.inMilliseconds
+                                    .toDouble()
+                                    .clamp(
+                                      0.0,
+                                      _previewDuration.inMilliseconds > 0
+                                          ? _previewDuration.inMilliseconds.toDouble()
+                                          : 1.0,
+                                    ),
+                                onChanged: (val) {
+                                  _previewPlayer?.seek(
+                                    Duration(milliseconds: val.toInt()),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                          Text(
+                            _formatRecordingDuration(_previewDuration),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.secondaryText(isDark),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: _sendPreviewVoiceRecording,
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF25D366),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Center(
+                                child: Icon(
+                                  Icons.send_rounded,
+                                  size: 18,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ] else ...[
+                          // Normal Composer Row
+                          GlassButton(
+                            width: 38,
+                            height: 38,
+                            radius: 19,
+                            isDark: isDark,
+                            onTap: () => _showAttachmentOptions(context),
+                            child: Icon(
+                              Icons.add_rounded,
+                              size: 24,
+                              color: isDark ? Colors.white : Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+
+                          GlassButton(
+                            width: 38,
+                            height: 38,
+                            radius: 19,
+                            isDark: isDark,
+                            onTap: () {
+                              setState(() {
+                                _showGifPicker = !_showGifPicker;
+                              });
+                              if (_showGifPicker) {
+                                widget.inputFocusNode.unfocus();
+                              }
+                            },
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: _showGifPicker
+                                      ? const Color(0xFF007AFF)
+                                      : (isDark ? Colors.white24 : Colors.black12),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  'GIF',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 0.5,
+                                    color: _showGifPicker
+                                        ? Colors.white
+                                        : (isDark ? Colors.white : Colors.black87),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+
+                          Expanded(
+                            child: Container(
+                              constraints: const BoxConstraints(
+                                minHeight: 38,
+                                maxHeight: 145,
+                              ),
+                              child: GlassSurface(
+                                radius: 19,
+                                isDark: isDark,
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(14, 2, 8, 2),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: widget.inputController,
+                                          focusNode: widget.inputFocusNode,
+                                          onChanged: _onInputChanged,
+                                          minLines: 1,
+                                          maxLines: 5,
+                                          keyboardType: TextInputType.multiline,
+                                          textCapitalization: TextCapitalization.sentences,
+                                          textInputAction: TextInputAction.newline,
+                                          autocorrect: true,
+                                          enableSuggestions: true,
+                                          style: TextStyle(
+                                            fontSize: 15,
+                                            color: AppTheme.primaryText(isDark),
+                                            letterSpacing: -0.2,
+                                          ),
+                                          decoration: InputDecoration(
+                                            hintText: widget.editingMessage == null
+                                                ? 'iMessage'
+                                                : 'Edit message',
+                                            border: InputBorder.none,
+                                            isDense: true,
+                                            contentPadding: const EdgeInsets.symmetric(
+                                              vertical: 6,
+                                            ),
+                                            hintStyle: const TextStyle(
+                                              color: Color(0xFF8E8E93),
+                                              fontSize: 15,
+                                              letterSpacing: -0.2,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      GestureDetector(
+                                        // Long press hold gesture disabled per request; tap starts/stops recording cleanly
+                                        onTap: widget.isSending
+                                            ? null
+                                            : (widget.editingMessage != null ||
+                                                      widget.inputController.text
+                                                          .trim()
+                                                          .isNotEmpty
+                                                  ? widget.onSendText
+                                                  : _onTapMicButton),
+                                        child: widget.isSending
+                                            ? const SizedBox(
+                                                width: 20,
+                                                height: 20,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: Color(0xFF007AFF),
+                                                ),
+                                              )
+                                            : (widget.editingMessage != null ||
+                                                      widget.inputController.text
+                                                          .trim()
+                                                          .isNotEmpty
+                                                  ? Container(
+                                                      width: 28,
+                                                      height: 28,
+                                                      decoration: const BoxDecoration(
+                                                        color: Color(0xFF007AFF),
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                      child: Center(
+                                                        child: Icon(
+                                                          widget.editingMessage != null
+                                                              ? CupertinoIcons.checkmark
+                                                              : CupertinoIcons.arrow_up,
+                                                          size: 16,
+                                                          color: Colors.white,
+                                                        ),
+                                                      ),
+                                                    )
+                                                  : const VoiceBars()),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ),
@@ -1192,9 +1393,7 @@ class _ChatComposerState extends State<ChatComposer> {
             ],
           ),
         ),
-      ),
-    ),
-  ),
+
 ],
 );
   }

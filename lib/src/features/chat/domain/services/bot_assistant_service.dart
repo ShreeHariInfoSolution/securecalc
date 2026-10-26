@@ -102,16 +102,17 @@ class BotAssistantService {
       lastActivityAt: DateTime.now(),
       unreadCount: 0,
       isOnline: true,
-      isPinned: true,
+      isPinned: false,
       messages: initialMessages,
     );
 
     final currentConvs =
         await LocalChatStorage.instance.loadConversations();
-    if (currentConvs.indexWhere((c) => c.id == botId) < 0) {
-      currentConvs.insert(0, botConv);
-      await LocalChatStorage.instance.replaceConversations(currentConvs);
+    final existingIdx = currentConvs.indexWhere((c) => c.id == botId);
+    if (existingIdx < 0) {
+      currentConvs.add(botConv);
       await LocalChatStorage.instance.cacheMessages(botId, initialMessages);
+      await LocalChatStorage.instance.replaceConversations(currentConvs);
     }
 
     return botConv;

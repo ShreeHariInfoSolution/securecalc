@@ -137,6 +137,22 @@ class KeychainHelper {
     }
   }
 
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    print("[Push iOS] Notification tapped in UNUserNotificationCenter. Clearing all delivered notifications.")
+    center.removeAllDeliveredNotifications()
+    center.removeAllPendingNotificationRequests()
+    if #available(iOS 16.0, *) {
+      center.setBadgeCount(0) { _ in }
+    } else {
+      UIApplication.shared.applicationIconBadgeNumber = 0
+    }
+    super.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)
+  }
+
   private func extractString(from dict: [AnyHashable: Any], keys: [String]) -> String? {
     for key in keys {
       if let value = dict[key] {
@@ -240,6 +256,23 @@ class KeychainHelper {
           }
         }
         print("[Push iOS] Native badge updated to: \(count)")
+        result(true)
+
+      case "clearAllNotifications":
+        DispatchQueue.main.async {
+          UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+          UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+          if #available(iOS 16.0, *) {
+            UNUserNotificationCenter.current().setBadgeCount(0) { error in
+              if let error = error {
+                print("[Push iOS] Failed to set badge count: \(error.localizedDescription)")
+              }
+            }
+          } else {
+            UIApplication.shared.applicationIconBadgeNumber = 0
+          }
+        }
+        print("[Push iOS] Native cleared all delivered notifications and badge.")
         result(true)
 
       default:

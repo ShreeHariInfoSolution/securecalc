@@ -241,6 +241,44 @@ class ServerApiService {
     return paginated.items;
   }
 
+  /// Deletes call history logs by IDs or clears all call history.
+  /// `ids`: List of call history log IDs to delete.
+  /// `clearAll`: Set to true to delete all call logs for current user.
+  Future<bool> deleteCallHistory({
+    List<int>? ids,
+    bool clearAll = false,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/calls/history/delete');
+      final Map<String, dynamic> bodyMap = {};
+      if (clearAll) {
+        bodyMap['all'] = true;
+      } else if (ids != null && ids.isNotEmpty) {
+        bodyMap['ids'] = ids;
+      } else {
+        return false;
+      }
+
+      final res = await http.delete(
+        uri,
+        headers: _headers(),
+        body: jsonEncode(bodyMap),
+      );
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map && (decoded['status'] == 200 || decoded['success'] == true)) {
+          return true;
+        }
+      } else {
+        debugPrint('[API] Delete Call History Failed (${res.statusCode}): ${res.body}');
+      }
+    } catch (e) {
+      debugPrint('[API] Delete Call History Error: $e');
+    }
+    return false;
+  }
+
   // ─── Auth Endpoints ────────────────────────────────────────────────────────
 
   Future<AuthResponseModel> register({
@@ -759,6 +797,24 @@ class ServerApiService {
       return false;
     } catch (e) {
       debugPrint('[API] Recover Chat Error ($chatId): $e');
+      return false;
+    }
+  }
+
+  /// Permanently deletes a chat (`DELETE /api/chats/$chatId/permanent`).
+  Future<bool> deleteChatPermanently(int chatId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/chats/$chatId/permanent');
+      debugPrint('[API] DELETE $uri');
+      final res = await http.delete(uri, headers: _headers());
+      debugPrint('[API] DELETE $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[API] Permanent Delete Chat Error ($chatId): $e');
       return false;
     }
   }
@@ -1436,5 +1492,92 @@ class ServerApiService {
       debugPrint('[API] Delete Upload File Error: $e');
     }
     return false;
+  }
+
+  /// Blocks a user (`POST /api/users/$userId/block`).
+  Future<bool> blockUser(int userId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/users/$userId/block');
+      debugPrint('[API] POST $uri');
+      final res = await http.post(uri, headers: _headers());
+      debugPrint('[API] Block user response (${res.statusCode}): ${res.body}');
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('[API] Block user error: $e');
+      return false;
+    }
+  }
+
+  /// Unblocks a user (`POST /api/users/$userId/unblock`).
+  Future<bool> unblockUser(int userId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/users/$userId/unblock');
+      debugPrint('[API] POST $uri');
+      final res = await http.post(uri, headers: _headers());
+      debugPrint('[API] Unblock user response (${res.statusCode}): ${res.body}');
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('[API] Unblock user error: $e');
+      return false;
+    }
+  }
+
+  /// Fetches list of blocked users (`GET /api/users/blocked`).
+  Future<List<UserModel>> getBlockedUsers() async {
+    try {
+      final uri = Uri.parse('$baseUrl/users/blocked');
+      debugPrint('[API] GET $uri');
+      final res = await http.get(uri, headers: _headers());
+      debugPrint('[API] Get blocked users response (${res.statusCode}): ${res.body}');
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final decoded = jsonDecode(res.body);
+        final data = decoded['data'] is Map<String, dynamic>
+            ? decoded['data'] as Map<String, dynamic>
+            : <String, dynamic>{};
+        final rawUsers = data['users'] ?? decoded['users'] ?? decoded['items'];
+        if (rawUsers is List) {
+          return rawUsers
+              .whereType<Map<String, dynamic>>()
+              .map((u) => UserModel.fromJson(u))
+              .toList();
+        }
+      }
+      return [];
+    } catch (e) {
+      debugPrint('[API] Get blocked users error: $e');
+      return [];
+    }
+  }
+
+  /// Hides profile from a user (`POST /api/users/$userId/unshow-profile`).
+  Future<bool> hideProfileFromUser(int userId) async {
+    try {
+      final token = authToken;
+      if (token == null) return false;
+      final uri = Uri.parse('$baseUrl/users/$userId/unshow-profile');
+      debugPrint('[API] POST $uri');
+      final res = await http.post(uri, headers: _headers());
+      debugPrint('[API] Unshow profile response (${res.statusCode}): ${res.body}');
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('[API] Unshow profile error: $e');
+      return false;
+    }
+  }
+
+  /// Shows profile to a user (`POST /api/users/$userId/show-profile`).
+  Future<bool> showProfileToUser(int userId) async {
+    try {
+      final token = authToken;
+      if (token == null) return false;
+      final uri = Uri.parse('$baseUrl/users/$userId/show-profile');
+      debugPrint('[API] POST $uri');
+      final res = await http.post(uri, headers: _headers());
+      debugPrint('[API] Show profile response (${res.statusCode}): ${res.body}');
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('[API] Show profile error: $e');
+      return false;
+    }
   }
 }

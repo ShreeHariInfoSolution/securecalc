@@ -12,7 +12,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:securecalc/src/core/widgets/vault_edge_panel_wrapper.dart';
 import 'package:securecalc/src/features/chat/domain/entities/chat_conversation.dart';
+import 'package:securecalc/src/features/chat/presentation/pages/bot_chat_detail_page.dart';
+import 'package:securecalc/src/features/chat/presentation/pages/chat_detail_page.dart';
 
 import '../../../../core/config/app_preferences.dart';
 import '../../../../../firebase_options.dart';
@@ -32,7 +35,15 @@ const AndroidNotificationChannel _channel = AndroidNotificationChannel(
 );
 
 bool _localReady = false;
+bool _onTapRegistered = false;
 int _badgeCount = 0;
+
+@pragma('vm:entry-point')
+void notificationTapBackground(NotificationResponse notificationResponse) {
+  debugPrint(
+    '[Push Diagnostic BACKGROUND TAP] Local notification tapped in background: ${notificationResponse.payload}',
+  );
+}
 
 Future<void> _updateBadge(int count) async {
   _badgeCount = count < 0 ? 0 : count;
@@ -74,8 +85,10 @@ Future<void> playNotificationSound() async {
 Future<void> _ensureLocalInit({
   void Function(NotificationResponse)? onTap,
 }) async {
-  if (_localReady) return;
-  debugPrint('[Push Diagnostic] Initializing local notification plugin...');
+  if (_localReady && (_onTapRegistered || onTap == null)) return;
+  debugPrint(
+    '[Push Diagnostic] Initializing local notification plugin (onTap provided: ${onTap != null})...',
+  );
   const init = InitializationSettings(
     android: AndroidInitializationSettings('@drawable/ic_notification'),
     iOS: DarwinInitializationSettings(
@@ -87,13 +100,28 @@ Future<void> _ensureLocalInit({
       defaultPresentBadge: true,
     ),
   );
-  await _local.initialize(init, onDidReceiveNotificationResponse: onTap);
+  await _local.initialize(
+    init,
+    onDidReceiveNotificationResponse: (response) {
+      debugPrint('[Push Diagnostic] Local notification response received: ${response.payload}');
+      PushService.instance.clearAllNotifications();
+      if (onTap != null) {
+        onTap(response);
+      } else {
+        PushService.instance._openFromPayload(response.payload);
+      }
+    },
+    onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
+  );
   await _local
       .resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin
       >()
       ?.createNotificationChannel(_channel);
   _localReady = true;
+  if (onTap != null) {
+    _onTapRegistered = true;
+  }
   debugPrint(
     '[Push Diagnostic] Local notification plugin initialized successfully.',
   );
@@ -227,6 +255,7 @@ Future<void> _showNotificationWithDetails({
           icon: '@drawable/ic_notification',
           color: const Color(0xFF007AFF),
           sound: RawResourceAndroidNotificationSound(soundKey),
+          autoCancel: true,
         ),
         iOS: DarwinNotificationDetails(
           presentAlert: true,
@@ -266,6 +295,7 @@ Future<void> _showNotificationWithDetails({
             priority: Priority.high,
             icon: '@drawable/ic_notification',
             color: Color(0xFF007AFF),
+            autoCancel: true,
           ),
           iOS: DarwinNotificationDetails(
             presentAlert: true,
@@ -511,7 +541,11 @@ class PushService {
     if (_pendingChatId != null) {
       final chatId = _pendingChatId!;
       _pendingChatId = null;
-      _navigateToChat(context, chatId);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) {
+          _navigateToChat(context, chatId);
+        }
+      });
     }
   }
 
@@ -719,9 +753,27 @@ class PushService {
   /// Clears app icon notification count (badge) and cancels all delivered notifications in OS notification center.
   Future<void> clearAllNotifications() async {
     try {
+      await _ensureLocalInit();
       await _local.cancelAll();
       await _updateBadge(0);
-      debugPrint('[Push Diagnostic] Cleared all local notifications and badge count.');
+
+      if (Platform.isIOS) {
+        try {
+          await _securityChannel.invokeMethod('clearAllNotifications');
+          debugPrint('[Push Diagnostic] Native iOS notifications cleared via MethodChannel.');
+        } catch (e) {
+          debugPrint('[Push Diagnostic ERROR] Native iOS notification clear failed: $e');
+        }
+      } else if (Platform.isAndroid) {
+        try {
+          await _securityChannel.invokeMethod('clearAllNotifications');
+          debugPrint('[Push Diagnostic] Native Android notifications cleared via MethodChannel.');
+        } catch (e) {
+          debugPrint('[Push Diagnostic ERROR] Native Android notification clear failed: $e');
+        }
+      }
+
+      debugPrint('[Push Diagnostic] Cleared all local and native notifications and badge count.');
     } catch (e) {
       debugPrint('[Push Diagnostic ERROR] Failed to clear all notifications: $e');
     }
@@ -900,6 +952,7 @@ class PushService {
   };
 
   void _openFromPayload(String? payload) {
+    clearAllNotifications();
     if (payload == null) return;
     try {
       _openFromData(Map<String, dynamic>.from(jsonDecode(payload)));
@@ -910,14 +963,23 @@ class PushService {
     debugPrint(
       '[Push Diagnostic] Opening chat screen from notification data: $data',
     );
+    clearAllNotifications();
     final id = int.tryParse('${data['chat_id'] ?? data['chatHeadId'] ?? ''}');
-    if (id == null) return;
+
+    if (id != null) {
+      _pendingChatId = id;
+    }
 
     if (_isVaultReady && _vaultContext != null && _vaultContext!.mounted) {
-      _navigateToChat(_vaultContext!, id);
+      if (_pendingChatId != null) {
+        final chatId = _pendingChatId!;
+        _pendingChatId = null;
+        _navigateToChat(_vaultContext!, chatId);
+      }
     } else {
-      debugPrint('[Push Diagnostic] Vault is not unlocked. Queuing pending chat notification for chatId: $id');
-      _pendingChatId = id;
+      debugPrint(
+        '[Push Diagnostic] Vault is currently locked on Calculator screen. Stored pending chatId $id for navigation after passcode unlock.',
+      );
     }
   }
 
@@ -963,7 +1025,17 @@ class PushService {
       }
 
       if (targetConv != null && context.mounted) {
-        onOpenChat?.call(chatId);
+        if (targetConv.id == 'assistant' || targetConv.id == 'bot') {
+          BotChatDetailPage.open(context, conversation: targetConv);
+        } else {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => VaultEdgePanelWrapper(
+                child: ChatDetailPage(conversation: targetConv!),
+              ),
+            ),
+          );
+        }
       }
     } catch (e) {
       debugPrint('[Push] Error opening chat $chatId: $e');

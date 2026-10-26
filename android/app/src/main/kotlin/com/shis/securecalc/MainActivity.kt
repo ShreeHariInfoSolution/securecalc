@@ -24,6 +24,15 @@ class MainActivity : FlutterActivity() {
                     applySecureFlag(enable)
                     result.success(true)
                 }
+                "clearAllNotifications" -> {
+                    try {
+                        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                        notificationManager.cancelAll()
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("CLEAR_NOTIFICATIONS_ERROR", e.toString(), null)
+                    }
+                }
                 "getSystemDeviceId" -> {
                     try {
                         val prefs = getSharedPreferences("securecalc_device_identity", Context.MODE_PRIVATE)

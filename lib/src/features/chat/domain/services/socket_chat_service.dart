@@ -241,12 +241,26 @@ class SocketChatService {
     });
 
     // 5. Messages Read
-    _socket!.on('messages_read', (data) {
+    void handleRead(dynamic data) {
       debugPrint('[SOCKET] Event messages_read: $data');
-      if (data is Map) {
-        _readStreamController.add(Map<String, dynamic>.from(data));
+      final eventData = data is List && data.isNotEmpty ? data.first : data;
+      if (eventData is Map) {
+        var payload = Map<String, dynamic>.from(eventData);
+        if (payload['data'] is Map) {
+          final inner = Map<String, dynamic>.from(payload['data'] as Map);
+          inner.addAll(payload..remove('data'));
+          payload = inner;
+        }
+        _readStreamController.add(payload);
       }
-    });
+    }
+
+    _socket!.on('messages_read', handleRead);
+    _socket!.on('message_read', handleRead);
+    _socket!.on('read', handleRead);
+    _socket!.on('message:read', handleRead);
+    _socket!.on('messages:read', handleRead);
+    _socket!.on('read_status', handleRead);
 
     // 5b. Messages Delivered
     void handleDelivered(dynamic data) {
@@ -382,9 +396,30 @@ class SocketChatService {
     final payload = <String, dynamic>{
       'chat_head_id': chatHeadId,
       'chat_id': chatHeadId,
+      'user_id': ServerApiService.instance.currentUserId,
+      'last_read_at': DateTime.now().toUtc().toIso8601String(),
     };
     debugPrint('[SOCKET] Emitting mark_read: $payload');
     _socket!.emit('mark_read', payload);
+    _socket!.emit('messages_read', payload);
+    _socket!.emit('message_read', payload);
+  }
+
+  void markDelivered({required int chatHeadId, int? messageId}) {
+    if (!isConnected) return;
+
+    final payload = <String, dynamic>{
+      'chat_head_id': chatHeadId,
+      'chat_id': chatHeadId,
+      'user_id': ServerApiService.instance.currentUserId,
+    };
+    if (messageId != null && messageId > 0) {
+      payload['message_id'] = messageId;
+    }
+    debugPrint('[SOCKET] Emitting mark_delivered: $payload');
+    _socket!.emit('mark_delivered', payload);
+    _socket!.emit('messages_delivered', payload);
+    _socket!.emit('message_delivered', payload);
   }
 
   /// typing: chat_head_id, is_typing

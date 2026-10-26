@@ -88,6 +88,7 @@ class UserModel {
   final bool isOnline;
   final String? lastSeenAt;
   final String? lastSeenText;
+  final bool profileVisible;
 
   String get username => name;
   String get avatarUrl => avatar ?? '';
@@ -106,6 +107,7 @@ class UserModel {
     this.isOnline = false,
     this.lastSeenAt,
     this.lastSeenText,
+    this.profileVisible = true,
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -145,6 +147,18 @@ class UserModel {
       }
     }
 
+    final rawProfileVisible = json['profile_visible'] ??
+        json['profileVisible'] ??
+        json['profile_show'] ??
+        json['profileShow'];
+
+    final bool profileVisible = rawProfileVisible == false ||
+        rawProfileVisible == 0 ||
+        rawProfileVisible == 'false' ||
+        rawProfileVisible == '0'
+        ? false
+        : true;
+
     return UserModel(
       id: id,
       name: name,
@@ -175,6 +189,7 @@ class UserModel {
           json['isOnline'] == '1',
       lastSeenAt: (json['last_seen_at'] ?? json['lastSeenAt'])?.toString(),
       lastSeenText: (json['last_seen_text'] ?? json['lastSeenText'])?.toString(),
+      profileVisible: profileVisible,
     );
   }
 
@@ -191,6 +206,7 @@ class UserModel {
       'key_iv': keyIv,
       'is_online': isOnline,
       'last_seen_at': lastSeenAt,
+      'profile_visible': profileVisible,
     };
   }
 }
@@ -391,6 +407,7 @@ class ServerChatModel {
   final int mediaTotal;
   final List<ServerChatMediaItemModel> media;
   final String? backgroundUrl;
+  final bool isBlocked;
 
   ServerChatModel({
     required this.id,
@@ -415,6 +432,7 @@ class ServerChatModel {
     this.mediaTotal = 0,
     this.media = const [],
     this.backgroundUrl,
+    this.isBlocked = false,
   });
 
   factory ServerChatModel.fromJson(Map<String, dynamic> json) {
@@ -563,6 +581,12 @@ class ServerChatModel {
         ? rawMediaTotal
         : int.tryParse(rawMediaTotal?.toString() ?? '') ?? mediaList.length;
 
+    final rawBlocked = json['is_blocked'] ?? json['isBlocked'] ?? json['blocked'];
+    final isBlockedVal = rawBlocked == true ||
+        rawBlocked == 1 ||
+        rawBlocked == 'true' ||
+        rawBlocked == '1';
+
     return ServerChatModel(
       id: rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? 0),
       groupName:
@@ -632,6 +656,7 @@ class ServerChatModel {
       media: mediaList,
       backgroundUrl: (json['background_url'] ?? json['backgroundUrl'])
           ?.toString(),
+      isBlocked: isBlockedVal,
     );
   }
 }
@@ -709,53 +734,84 @@ class ServerMessageModel {
         ? rawDisappear
         : (int.tryParse(rawDisappear?.toString() ?? '0') ?? 0);
 
-    final rawRead = json['is_read'] ??
+    final rawStatus = json['status']?.toString().toLowerCase().trim() ??
+        json['read_status']?.toString().toLowerCase().trim();
+
+    final explicitRead = json['is_read'] ??
         json['isRead'] ??
         json['read'] ??
-        json['read_at'] ??
         json['is_seen'] ??
         json['isSeen'] ??
-        json['seen'] ??
-        json['seen_at'] ??
-        json['read_by'] ??
-        json['read_status'];
+        json['seen'];
 
-    final rawStatus = json['status']?.toString().toLowerCase();
+    final readAtStr = (json['read_at'] ??
+            json['readAt'] ??
+            json['seen_at'] ??
+            json['seenAt'])
+        ?.toString()
+        .trim();
 
-    final isReadVal = rawRead == true ||
-        rawRead == 1 ||
-        rawRead == '1' ||
-        rawRead == 'true' ||
-        (rawRead is String &&
-            rawRead.isNotEmpty &&
-            rawRead != '0' &&
-            rawRead != 'false' &&
-            rawRead != 'null') ||
-        rawStatus == 'read' ||
-        rawStatus == 'seen';
+    bool isReadVal = false;
+    if (explicitRead == true ||
+        explicitRead == 1 ||
+        explicitRead == '1' ||
+        explicitRead == 'true') {
+      isReadVal = true;
+    } else if (explicitRead == false ||
+        explicitRead == 0 ||
+        explicitRead == '0' ||
+        explicitRead == 'false') {
+      isReadVal = false;
+    } else if (readAtStr != null &&
+        readAtStr.isNotEmpty &&
+        readAtStr != 'null' &&
+        readAtStr != '0' &&
+        readAtStr != 'false') {
+      isReadVal = DateTime.tryParse(readAtStr) != null;
+    } else if (rawStatus == 'read' || rawStatus == 'seen') {
+      isReadVal = true;
+    }
 
-    final rawDelivered = json['is_delivered'] ??
+    final explicitDelivered = json['is_delivered'] ??
         json['isDelivered'] ??
-        json['delivered'] ??
-        json['delivered_at'];
+        json['delivered'];
 
-    final isDeliveredVal = isReadVal ||
-        rawDelivered == true ||
-        rawDelivered == 1 ||
-        rawDelivered == '1' ||
-        rawDelivered == 'true' ||
-        (rawDelivered is String &&
-            rawDelivered.isNotEmpty &&
-            rawDelivered != '0' &&
-            rawDelivered != 'false' &&
-            rawDelivered != 'null') ||
-        rawStatus == 'delivered';
+    final deliveredAtStr = (json['delivered_at'] ?? json['deliveredAt'])
+        ?.toString()
+        .trim();
+
+    bool isDeliveredVal = isReadVal;
+    if (!isDeliveredVal) {
+      if (explicitDelivered == true ||
+          explicitDelivered == 1 ||
+          explicitDelivered == '1' ||
+          explicitDelivered == 'true') {
+        isDeliveredVal = true;
+      } else if (explicitDelivered == false ||
+          explicitDelivered == 0 ||
+          explicitDelivered == '0' ||
+          explicitDelivered == 'false') {
+        isDeliveredVal = false;
+      } else if (deliveredAtStr != null &&
+          deliveredAtStr.isNotEmpty &&
+          deliveredAtStr != 'null' &&
+          deliveredAtStr != '0' &&
+          deliveredAtStr != 'false') {
+        isDeliveredVal = DateTime.tryParse(deliveredAtStr) != null;
+      } else if (rawStatus == 'delivered') {
+        isDeliveredVal = true;
+      }
+    }
 
     final String statusVal = isReadVal
         ? 'read'
         : (isDeliveredVal
             ? 'delivered'
-            : (rawStatus?.isNotEmpty == true ? rawStatus! : 'sent'));
+            : (rawStatus != null &&
+                    rawStatus.isNotEmpty &&
+                    rawStatus != 'null'
+                ? rawStatus
+                : 'sent'));
 
     final rawMsgType = (json['msg_type'] ?? json['msgType'])?.toString();
     final rawCallId = json['call_id'] ?? json['callId'];

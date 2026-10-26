@@ -8,6 +8,7 @@ import 'package:securecalc/src/features/calculator/presentation/pages/calculator
 
 import '../../domain/services/server_chat_manager.dart';
 import '../../domain/services/socket_chat_service.dart';
+import 'blocked_users_page.dart';
 import 'settings/appearance_settings_page.dart';
 import 'settings/disguise_settings_page.dart';
 import 'settings/help_support_page.dart';
@@ -133,6 +134,20 @@ class _SecretSettingsPageState extends State<SecretSettingsPage> {
                               icon: Icons.file_download_outlined,
                               isDark: isDark,
                               targetPage: const MediaAutoDownloadSettingsPage(),
+                            ),
+                            Divider(
+                              height: 1,
+                              indent: 52,
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : Colors.black.withValues(alpha: 0.06),
+                            ),
+                            _buildSettingListTile(
+                              context: context,
+                              title: 'Blocked Users',
+                              icon: Icons.block_rounded,
+                              isDark: isDark,
+                              targetPage: const BlockedUsersPage(),
                             ),
                             // Divider(
                             //   height: 1,
