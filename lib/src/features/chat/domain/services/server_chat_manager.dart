@@ -157,6 +157,12 @@ class ServerChatManager {
 
     final serverChats = pageRes.chats;
 
+    Set<String> lockedChatIds = {};
+    try {
+      final lockedPage = await ServerApiService.instance.getLockedChats(limit: 100);
+      lockedChatIds = {for (final lc in lockedPage.chats) lc.id.toString()};
+    } catch (_) {}
+
     if (currentSyncSeq != _syncSequence ||
         syncUserId != ServerApiService.instance.currentUserId ||
         syncToken != ServerApiService.instance.authToken) {
@@ -354,9 +360,12 @@ class ServerChatManager {
       final isPinned = liveLocal?.isPinned ?? false;
       final isMuted = liveLocal?.isMuted ?? false;
       final isArchived = liveLocal?.isArchived ?? false;
-      final isProfileHidden = peer != null
-          ? !peer.profileVisible
-          : (liveLocal?.isProfileHidden ?? false);
+      final isProfileHidden = liveLocal != null
+          ? liveLocal.isProfileHidden
+          : (peer != null ? !peer.profileVisible : false);
+      final isLocked = sc.isLocked ||
+          lockedChatIds.contains(chatIdStr) ||
+          (liveLocal?.isLocked ?? false);
 
       final conversation = ChatConversation(
         id: chatIdStr,
@@ -378,6 +387,7 @@ class ServerChatManager {
         isArchived: isArchived,
         isBlocked: sc.isBlocked,
         isProfileHidden: isProfileHidden,
+        isLocked: isLocked,
         backgroundUrl: sc.backgroundUrl,
         messages: cachedMessages,
       );
@@ -394,11 +404,12 @@ class ServerChatManager {
     // Combine all live local/WebSocket conversations with the updated API conversations
     // so no conversation is ever lost!
     final mergedMap = <String, ChatConversation>{
-      for (final c in liveConversations) c.id: c,
+      for (final c in liveConversations)
+        c.id: lockedChatIds.contains(c.id) ? c.copyWith(isLocked: true) : c,
     };
 
     for (final c in newConversations) {
-      mergedMap[c.id] = c;
+      mergedMap[c.id] = lockedChatIds.contains(c.id) ? c.copyWith(isLocked: true) : c;
     }
 
     final finalConversations = mergedMap.values.toList();
@@ -496,6 +507,7 @@ class ServerChatManager {
         for (final message in cachedMessages) message.id: message,
       };
       final currentUserId = ServerApiService.instance.currentUserId;
+      final clearedAtMs = LocalChatStorage.instance.getClearedAt(chatId);
 
       final messages = <ChatMessage>[];
       for (final sm in pageRes.messages) {
@@ -508,6 +520,10 @@ class ServerChatManager {
           ts = DateTime.parse(sm.createdAt).toLocal();
         } catch (_) {
           ts = DateTime.now();
+        }
+
+        if (clearedAtMs != null && ts.millisecondsSinceEpoch <= clearedAtMs) {
+          continue;
         }
 
         final cachedMessage = cachedById[sm.id.toString()];
@@ -827,6 +843,50 @@ class ServerChatManager {
   /// Gets the list of blocked users.
   Future<List<UserModel>> getBlockedUsers() async {
     return await ServerApiService.instance.getBlockedUsers();
+  }
+
+  /// Locks a chat by ID and updates local conversation state immediately.
+  Future<bool> lockChat(int chatId) async {
+    final success = await ServerApiService.instance.lockChat(chatId);
+    final chatIdStr = chatId.toString();
+    final conversations = List<ChatConversation>.from(
+      LocalChatStorage.instance.conversationsNotifier.value,
+    );
+    var updated = false;
+    for (var i = 0; i < conversations.length; i++) {
+      final c = conversations[i];
+      if (c.id == chatIdStr || c.peerUserId == chatId) {
+        conversations[i] = c.copyWith(isLocked: true);
+        updated = true;
+      }
+    }
+    if (updated) {
+      await LocalChatStorage.instance.replaceConversations(conversations);
+    }
+    unawaited(syncChats());
+    return success;
+  }
+
+  /// Unlocks a chat by ID and updates local conversation state immediately.
+  Future<bool> unlockChat(int chatId) async {
+    final success = await ServerApiService.instance.unlockChat(chatId);
+    final chatIdStr = chatId.toString();
+    final conversations = List<ChatConversation>.from(
+      LocalChatStorage.instance.conversationsNotifier.value,
+    );
+    var updated = false;
+    for (var i = 0; i < conversations.length; i++) {
+      final c = conversations[i];
+      if (c.id == chatIdStr || c.peerUserId == chatId) {
+        conversations[i] = c.copyWith(isLocked: false);
+        updated = true;
+      }
+    }
+    if (updated) {
+      await LocalChatStorage.instance.replaceConversations(conversations);
+    }
+    unawaited(syncChats());
+    return success;
   }
 
   /// Resolves server chat metadata (peer name, avatar, members) when a new chat event arrives.
@@ -1439,9 +1499,42 @@ class ServerChatManager {
 
   /// Toggles profile visibility for a user (`POST /users/:userId/unshow-profile` or `/show-profile`).
   Future<bool> toggleProfileVisibility(String chatId, int userId, bool hide) async {
+    final currentUserId = ServerApiService.instance.currentUserId;
+    var targetUserId = userId;
+
+    // Safety check: Ensure targetUserId is the OTHER user's ID, NOT our own currentUserId
+    if (targetUserId == currentUserId || targetUserId <= 0) {
+      final list = LocalChatStorage.instance.conversationsNotifier.value;
+      final conv = list.firstWhere(
+        (c) => c.id == chatId,
+        orElse: () => ChatConversation(
+          id: chatId,
+          name: '',
+          avatarUrl: '',
+          lastMessage: '',
+          lastMessageTime: '',
+          messages: const [],
+        ),
+      );
+      if (conv.peerUserId != null && conv.peerUserId! > 0 && conv.peerUserId != currentUserId) {
+        targetUserId = conv.peerUserId!;
+      } else if (!conv.isGroup) {
+        final parsed = int.tryParse(chatId);
+        if (parsed != null && parsed > 0 && parsed != currentUserId) {
+          targetUserId = parsed;
+        }
+      }
+    }
+
+    if (targetUserId <= 0 || targetUserId == currentUserId) {
+      debugPrint('[SERVER CHAT] Invalid targetUserId for hide profile: $targetUserId (currentUserId=$currentUserId)');
+      return false;
+    }
+
+    debugPrint('[SERVER CHAT] Toggling profile visibility for peer $targetUserId (hide=$hide)');
     final success = hide
-        ? await ServerApiService.instance.hideProfileFromUser(userId)
-        : await ServerApiService.instance.showProfileToUser(userId);
+        ? await ServerApiService.instance.hideProfileFromUser(targetUserId)
+        : await ServerApiService.instance.showProfileToUser(targetUserId);
 
     if (success) {
       final list = List<ChatConversation>.from(

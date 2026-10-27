@@ -6,11 +6,13 @@ import 'package:flutter/material.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
+import 'package:securecalc/src/core/widgets/vault_edge_panel_wrapper.dart';
 import 'package:securecalc/src/features/chat/domain/entities/chat_conversation.dart';
 import 'package:securecalc/src/features/chat/domain/models/server_models.dart';
 import 'package:securecalc/src/features/chat/domain/services/call_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/local_chat_storage.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
+import 'package:securecalc/src/features/chat/presentation/pages/chat_detail_page.dart';
 
 enum CallHistoryFilter { all, missed }
 
@@ -40,6 +42,14 @@ class CallHistoryViewState extends State<CallHistoryView> {
   bool _isSelectionMode = false;
   final Set<int> _selectedIds = {};
   bool _isDeleting = false;
+  int? _activeSwipedLogId;
+
+  static final ValueNotifier<int> missedCallsNotifier = ValueNotifier<int>(0);
+
+  void _updateMissedCountNotifier() {
+    final count = _callLogs.where((l) => l.isMissed).length;
+    missedCallsNotifier.value = count;
+  }
 
   @override
   void initState() {
@@ -52,6 +62,7 @@ class CallHistoryViewState extends State<CallHistoryView> {
 
   @override
   void dispose() {
+    _closeGlassMenu();
     _searchController.removeListener(_onSearchChanged);
     _scrollController.removeListener(_onScroll);
     _searchController.dispose();
@@ -106,6 +117,7 @@ class CallHistoryViewState extends State<CallHistoryView> {
           _hasMore = res.hasMore;
           _isLoading = false;
         });
+        _updateMissedCountNotifier();
       }
       unawaited(_resolvePeerUsers(res.items));
     } catch (e) {
@@ -141,6 +153,7 @@ class CallHistoryViewState extends State<CallHistoryView> {
           _hasMore = res.hasMore;
           _isLoadingMore = false;
         });
+        _updateMissedCountNotifier();
 
         unawaited(_resolvePeerUsers(newItems));
       }
@@ -376,6 +389,7 @@ class CallHistoryViewState extends State<CallHistoryView> {
           _callLogs.removeWhere((item) => item.id == log.id);
           _selectedIds.remove(log.id);
         });
+        _updateMissedCountNotifier();
       }
       AppToast.show('Call log deleted');
     } else {
@@ -387,7 +401,6 @@ class CallHistoryViewState extends State<CallHistoryView> {
     if (_selectedIds.isEmpty || _isDeleting) return;
 
     final count = _selectedIds.length;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final confirm = await showCupertinoDialog<bool>(
       context: context,
@@ -425,6 +438,7 @@ class CallHistoryViewState extends State<CallHistoryView> {
           _selectedIds.clear();
           _isSelectionMode = false;
         });
+        _updateMissedCountNotifier();
         AppToast.show(count == 1 ? 'Call log deleted' : '$count call logs deleted');
       } else {
         AppToast.show('Failed to delete selected call logs', isError: true);
@@ -470,6 +484,7 @@ class CallHistoryViewState extends State<CallHistoryView> {
           _selectedIds.clear();
           _isSelectionMode = false;
         });
+        _updateMissedCountNotifier();
         AppToast.show('Call history cleared');
       } else {
         AppToast.show('Failed to clear call history', isError: true);
@@ -477,82 +492,233 @@ class CallHistoryViewState extends State<CallHistoryView> {
     }
   }
 
-  void _showItemContextMenu(CallHistoryModel log, List<ChatConversation> conversations) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final myId = _currentUserId ?? ServerApiService.instance.currentUserId;
-    final isVideo = log.callType.toLowerCase() == 'video';
-    final peerName = _getPeerName(log, conversations);
-
-    showCupertinoModalPopup<void>(
+  Future<void> _confirmDeleteSingle(CallHistoryModel log) async {
+    final confirm = await showCupertinoDialog<bool>(
       context: context,
-      builder: (context) => CupertinoActionSheet(
-        title: Text(peerName),
-        message: Text(_formatCallDate(log.createdDateTime)),
+      builder: (context) => CupertinoAlertDialog(
+        title: const Text('Delete Call Log?'),
+        content: const Text(
+          'Are you sure you want to delete this call log?',
+        ),
         actions: [
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(context);
+          CupertinoDialogAction(
+            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(context, false),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            child: const Text('Delete'),
+            onPressed: () => Navigator.pop(context, true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _deleteSingleLog(log);
+    }
+  }
+
+  void _openMessageThread(CallHistoryModel log, List<ChatConversation> conversations) {
+    final myId = _currentUserId ?? ServerApiService.instance.currentUserId;
+    final peerId = log.getPeerUserId(myId);
+    final peerName = _getPeerName(log, conversations);
+    final peerAvatar = _getPeerAvatar(log, conversations);
+
+    final convMatch = conversations.firstWhere(
+      (c) => c.peerUserId == peerId || c.id == peerId.toString() || c.id == log.chatHeadId?.toString(),
+      orElse: () => ChatConversation(
+        id: (log.chatHeadId ?? peerId).toString(),
+        name: peerName,
+        avatarUrl: peerAvatar,
+        lastMessage: '',
+        lastMessageTime: '',
+        unreadCount: 0,
+        messages: const [],
+      ),
+    );
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => VaultEdgePanelWrapper(
+          isDuressMode: widget.isDuressMode,
+          child: ChatDetailPage(conversation: convMatch),
+        ),
+      ),
+    );
+  }
+
+  OverlayEntry? _currentMenuOverlay;
+
+  void _closeGlassMenu() {
+    _currentMenuOverlay?.remove();
+    _currentMenuOverlay = null;
+  }
+
+  void _showGlassPopupMenu(BuildContext tileContext, CallHistoryModel log, List<ChatConversation> conversations) {
+    _closeGlassMenu();
+
+    final renderBox = tileContext.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final offset = renderBox.localToGlobal(Offset.zero);
+    final size = renderBox.size;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    _currentMenuOverlay = OverlayEntry(
+      builder: (overlayContext) => _GlassPopupMenuOverlay(
+        targetOffset: offset,
+        targetSize: size,
+        isDark: isDark,
+        onDismiss: () {
+          _closeGlassMenu();
+        },
+        children: [
+          // 1. Message
+          _buildGlassMenuItem(
+            context: overlayContext,
+            icon: CupertinoIcons.chat_bubble_fill,
+            label: 'Message',
+            showChevron: true,
+            isDark: isDark,
+            onTap: () {
+              _closeGlassMenu();
+              _openMessageThread(log, conversations);
+            },
+          ),
+
+          Divider(
+            height: 1,
+            thickness: 0.6,
+            color: AppTheme.glassBorder(isDark),
+          ),
+
+          // 2. Call
+          _buildGlassMenuItem(
+            context: overlayContext,
+            icon: CupertinoIcons.phone_fill,
+            label: 'Call',
+            showChevron: true,
+            isDark: isDark,
+            onTap: () {
+              _closeGlassMenu();
               _makeCall(log, conversations, CallType.voice);
             },
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.phone_fill, size: 18),
-                SizedBox(width: 8),
-                Text('Voice Call'),
-              ],
-            ),
           ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(context);
+
+          Divider(
+            height: 1,
+            thickness: 0.6,
+            color: AppTheme.glassBorder(isDark),
+          ),
+
+          // 3. Video
+          _buildGlassMenuItem(
+            context: overlayContext,
+            icon: CupertinoIcons.videocam_fill,
+            label: 'Video',
+            showChevron: true,
+            isDark: isDark,
+            onTap: () {
+              _closeGlassMenu();
               _makeCall(log, conversations, CallType.video);
             },
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.videocam_fill, size: 18),
-                SizedBox(width: 8),
-                Text('Video Call'),
-              ],
-            ),
           ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(context);
+
+          Divider(
+            height: 1,
+            thickness: 0.6,
+            color: AppTheme.glassBorder(isDark),
+          ),
+
+          // 4. Select
+          _buildGlassMenuItem(
+            context: overlayContext,
+            icon: CupertinoIcons.checkmark_circle_fill,
+            label: 'Select',
+            showChevron: true,
+            isDark: isDark,
+            onTap: () {
+              _closeGlassMenu();
               setState(() {
                 _isSelectionMode = true;
                 _selectedIds.add(log.id);
               });
             },
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.checkmark_circle, size: 18),
-                SizedBox(width: 8),
-                Text('Select'),
-              ],
-            ),
           ),
-          CupertinoActionSheetAction(
-            isDestructiveAction: true,
-            onPressed: () {
-              Navigator.pop(context);
-              _deleteSingleLog(log);
+
+          Divider(
+            height: 1,
+            thickness: 0.6,
+            color: AppTheme.glassBorder(isDark),
+          ),
+
+          // 5. Delete
+          _buildGlassMenuItem(
+            context: overlayContext,
+            icon: CupertinoIcons.trash,
+            iconColor: const Color(0xFFFF3B30),
+            label: 'Delete',
+            isDestructive: true,
+            isDark: isDark,
+            onTap: () {
+              _closeGlassMenu();
+              _confirmDeleteSingle(log);
             },
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.trash, size: 18),
-                SizedBox(width: 8),
-                Text('Delete Log'),
-              ],
-            ),
           ),
         ],
-        cancelButton: CupertinoActionSheetAction(
-          child: const Text('Cancel'),
-          onPressed: () => Navigator.pop(context),
+      ),
+    );
+
+    Overlay.of(context).insert(_currentMenuOverlay!);
+  }
+
+  Widget _buildGlassMenuItem({
+    required BuildContext context,
+    required IconData icon,
+    Color? iconColor,
+    required String label,
+    required bool isDark,
+    required VoidCallback onTap,
+    bool showChevron = false,
+    bool isDestructive = false,
+  }) {
+    final effectiveIconColor = iconColor ??
+        (isDestructive
+            ? const Color(0xFFFF3B30)
+            : AppTheme.primaryText(isDark));
+
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: effectiveIconColor,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w500,
+                  color: isDestructive
+                      ? const Color(0xFFFF3B30)
+                      : AppTheme.primaryText(isDark),
+                  letterSpacing: -0.2,
+                ),
+              ),
+            ),
+            if (showChevron)
+              Icon(
+                CupertinoIcons.chevron_right,
+                size: 12,
+                color: AppTheme.secondaryText(isDark).withValues(alpha: 0.5),
+              ),
+          ],
         ),
       ),
     );
@@ -633,17 +799,19 @@ class CallHistoryViewState extends State<CallHistoryView> {
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(18),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: () => _makeCall(
-            log,
-            conversations,
-            isVideo ? CallType.video : CallType.voice,
-          ),
-          onLongPress: () => _showItemContextMenu(log, conversations),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
+        child: Builder(
+          builder: (tileContext) {
+            return InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: () => _makeCall(
+                log,
+                conversations,
+                isVideo ? CallType.video : CallType.voice,
+              ),
+              onLongPress: () => _showGlassPopupMenu(tileContext, log, conversations),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                child: Row(
               children: [
                 // Selection Checkbox in Multi-Select Mode
                 AnimatedContainer(
@@ -724,7 +892,7 @@ class CallHistoryViewState extends State<CallHistoryView> {
 
                 const SizedBox(width: 8),
 
-                // Date/Time & Action Buttons
+                // Date/Time & Call Icon Button (matching call type)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -738,96 +906,58 @@ class CallHistoryViewState extends State<CallHistoryView> {
                     ),
                     const SizedBox(height: 6),
                     if (!_isSelectionMode)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          GestureDetector(
-                            onTap: () => _makeCall(
-                              log,
-                              conversations,
-                              CallType.voice,
-                            ),
-                            child: Container(
-                              padding: const EdgeInsets.all(7),
-                              decoration: BoxDecoration(
-                                color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.phone_rounded,
-                                size: 17,
-                                color: AppTheme.primaryColor,
-                              ),
-                            ),
+                      GestureDetector(
+                        onTap: () => _makeCall(
+                          log,
+                          conversations,
+                          isVideo ? CallType.video : CallType.voice,
+                        ),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: isVideo
+                                ? const Color(0xFF34C759).withValues(alpha: 0.12)
+                                : AppTheme.primaryColor.withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
                           ),
-                          const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () => _makeCall(
-                              log,
-                              conversations,
-                              CallType.video,
-                            ),
-                            child: Container(
-                              padding: const EdgeInsets.all(7),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF34C759).withValues(alpha: 0.12),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.videocam_rounded,
-                                size: 17,
-                                color: Color(0xFF34C759),
-                              ),
-                            ),
+                          child: Icon(
+                            isVideo ? Icons.videocam_rounded : Icons.phone_rounded,
+                            size: 18,
+                            color: isVideo
+                                ? const Color(0xFF34C759)
+                                : AppTheme.primaryColor,
                           ),
-                        ],
+                        ),
                       ),
                   ],
                 ),
               ],
             ),
           ),
-        ),
-      ),
-    );
+        );
+      },
+    ),
+  ),
+);
 
     // Swipe-to-delete widget when NOT in multi-selection mode
     if (_isSelectionMode) {
       return tileContent;
     }
 
-    return Dismissible(
+    return AppleSlideToDelete(
       key: ValueKey('call_log_${log.id}'),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        padding: const EdgeInsets.only(right: 20),
-        alignment: Alignment.centerRight,
-        decoration: BoxDecoration(
-          color: const Color(0xFFFF3B30),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            Icon(
-              CupertinoIcons.trash,
-              color: Colors.white,
-              size: 22,
-            ),
-            SizedBox(width: 6),
-            Text(
-              'Delete',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      ),
-      confirmDismiss: (direction) async {
+      id: log.id,
+      activeSwipedId: _activeSwipedLogId,
+      onSwipeStarted: () {
+        if (_activeSwipedLogId != log.id) {
+          setState(() {
+            _activeSwipedLogId = log.id;
+          });
+        }
+      },
+      enabled: !_isSelectionMode,
+      onConfirmDelete: () async {
         return await showCupertinoDialog<bool>(
           context: context,
           builder: (context) => CupertinoAlertDialog(
@@ -849,7 +979,7 @@ class CallHistoryViewState extends State<CallHistoryView> {
           ),
         );
       },
-      onDismissed: (_) {
+      onDelete: () {
         _deleteSingleLog(log);
       },
       child: tileContent,
@@ -880,6 +1010,8 @@ class CallHistoryViewState extends State<CallHistoryView> {
           return matchesQuery;
         }).toList();
 
+        final missedCount = _callLogs.where((l) => l.isMissed).length;
+
         final allFilteredSelected = filteredLogs.isNotEmpty &&
             _selectedIds.containsAll(filteredLogs.map((e) => e.id));
 
@@ -902,6 +1034,7 @@ class CallHistoryViewState extends State<CallHistoryView> {
                     isSelectionMode: _isSelectionMode,
                     selectedCount: _selectedIds.length,
                     totalCount: filteredLogs.length,
+                    missedCount: missedCount,
                     allFilteredSelected: allFilteredSelected,
                     onFilterChanged: (f) => setState(() => _filter = f),
                     onRefresh: loadCallHistory,
@@ -1101,6 +1234,7 @@ class _CallHistoryHeaderDelegate extends SliverPersistentHeaderDelegate {
   final bool isSelectionMode;
   final int selectedCount;
   final int totalCount;
+  final int missedCount;
   final bool allFilteredSelected;
   final ValueChanged<CallHistoryFilter> onFilterChanged;
   final Future<void> Function() onRefresh;
@@ -1116,6 +1250,7 @@ class _CallHistoryHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.isSelectionMode,
     required this.selectedCount,
     required this.totalCount,
+    required this.missedCount,
     required this.allFilteredSelected,
     required this.onFilterChanged,
     required this.onRefresh,
@@ -1315,6 +1450,7 @@ class _CallHistoryHeaderDelegate extends SliverPersistentHeaderDelegate {
                     Expanded(
                       child: _buildFilterTab(
                         title: 'Missed',
+                        badgeCount: missedCount,
                         isSelected: filter == CallHistoryFilter.missed,
                         onTap: () => onFilterChanged(CallHistoryFilter.missed),
                       ),
@@ -1331,6 +1467,7 @@ class _CallHistoryHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   Widget _buildFilterTab({
     required String title,
+    int? badgeCount,
     required bool isSelected,
     required VoidCallback onTap,
   }) {
@@ -1356,15 +1493,39 @@ class _CallHistoryHeaderDelegate extends SliverPersistentHeaderDelegate {
               : null,
         ),
         child: Center(
-          child: Text(
-            title,
-            style: TextStyle(
-              fontSize: 13.5,
-              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-              color: isSelected
-                  ? AppTheme.primaryText(isDark)
-                  : AppTheme.secondaryText(isDark),
-            ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color: isSelected
+                      ? AppTheme.primaryText(isDark)
+                      : AppTheme.secondaryText(isDark),
+                ),
+              ),
+              if (badgeCount != null && badgeCount > 0) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF3B30),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$badgeCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
@@ -1378,6 +1539,7 @@ class _CallHistoryHeaderDelegate extends SliverPersistentHeaderDelegate {
         oldDelegate.isSelectionMode != isSelectionMode ||
         oldDelegate.selectedCount != selectedCount ||
         oldDelegate.totalCount != totalCount ||
+        oldDelegate.missedCount != missedCount ||
         oldDelegate.allFilteredSelected != allFilteredSelected;
   }
 }
@@ -1533,6 +1695,374 @@ class _CallHistoryShimmerTileState extends State<CallHistoryShimmerTile>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Apple/iOS style swipable tile that reveals a rounded stretching delete pill button.
+class AppleSlideToDelete extends StatefulWidget {
+  final int id;
+  final int? activeSwipedId;
+  final VoidCallback onSwipeStarted;
+  final Widget child;
+  final Future<bool?> Function() onConfirmDelete;
+  final VoidCallback onDelete;
+  final bool enabled;
+
+  const AppleSlideToDelete({
+    super.key,
+    required this.id,
+    required this.activeSwipedId,
+    required this.onSwipeStarted,
+    required this.child,
+    required this.onConfirmDelete,
+    required this.onDelete,
+    this.enabled = true,
+  });
+
+  @override
+  State<AppleSlideToDelete> createState() => _AppleSlideToDeleteState();
+}
+
+class _AppleSlideToDeleteState extends State<AppleSlideToDelete>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
+  late Animation<double> _animation;
+  double _dragOffset = 0.0;
+  bool _isDeleting = false;
+
+  static const double _actionWidth = 76.0;
+  static const double _deleteThreshold = 180.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _animation = Tween<double>(begin: 0.0, end: 0.0).animate(_animController);
+  }
+
+  @override
+  void didUpdateWidget(AppleSlideToDelete oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.activeSwipedId != widget.id &&
+        oldWidget.activeSwipedId == widget.id &&
+        _dragOffset > 0) {
+      _animateTo(0.0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  void _animateTo(double target) {
+    _animation = Tween<double>(
+      begin: _dragOffset,
+      end: target,
+    ).animate(CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeOutCubic,
+    ))..addListener(() {
+        setState(() {
+          _dragOffset = _animation.value;
+        });
+      });
+    _animController.forward(from: 0.0);
+  }
+
+  Future<void> _triggerDelete() async {
+    if (_isDeleting) return;
+    setState(() => _isDeleting = true);
+
+    final confirm = await widget.onConfirmDelete();
+    if (confirm == true) {
+      widget.onDelete();
+    } else {
+      if (mounted) {
+        setState(() => _isDeleting = false);
+        _animateTo(0.0);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled) {
+      return widget.child;
+    }
+
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    return GestureDetector(
+      onHorizontalDragUpdate: (details) {
+        if (_isDeleting) return;
+        if (_dragOffset == 0 && details.delta.dx < 0) {
+          widget.onSwipeStarted();
+        }
+        setState(() {
+          double newOffset = _dragOffset - details.delta.dx;
+          if (newOffset < 0) {
+            newOffset = 0;
+          }
+          if (newOffset > _actionWidth) {
+            final excess = newOffset - _actionWidth;
+            newOffset = _actionWidth + excess * 0.75;
+          }
+          _dragOffset = newOffset;
+        });
+      },
+      onHorizontalDragEnd: (details) {
+        if (_isDeleting) return;
+        final velocity = details.primaryVelocity ?? 0;
+
+        if (velocity < -500 || _dragOffset >= _deleteThreshold) {
+          _animateTo(screenWidth);
+          _triggerDelete();
+        } else if (_dragOffset >= _actionWidth / 2) {
+          _animateTo(_actionWidth);
+        } else {
+          _animateTo(0.0);
+        }
+      },
+      child: Stack(
+        alignment: Alignment.centerRight,
+        clipBehavior: Clip.none,
+        children: [
+          // Background Action (Delete pill button)
+          if (_dragOffset > 0)
+            Positioned.fill(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(
+                    right: 16,
+                    top: 4,
+                    bottom: 4,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: AnimatedContainer(
+                      duration: Duration.zero,
+                      width: _dragOffset.clamp(0.0, screenWidth - 32),
+                      height: double.infinity,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF3B30),
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFFF3B30).withValues(alpha: 0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(18),
+                          onTap: _triggerDelete,
+                          child: SizedBox(
+                            width: double.infinity,
+                            height: double.infinity,
+                            child: Center(
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                physics: const NeverScrollableScrollPhysics(),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const Icon(
+                                        CupertinoIcons.trash,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                      if (_dragOffset > 90) ...[
+                                        const SizedBox(width: 6),
+                                        const Text(
+                                          'Delete',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 14,
+                                          ),
+                                          maxLines: 1,
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Sliding Tile Content
+          Transform.translate(
+            offset: Offset(-_dragOffset, 0),
+            child: widget.child,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Animated position-anchored Glass Popup Menu Overlay
+class _GlassPopupMenuOverlay extends StatefulWidget {
+  final Offset targetOffset;
+  final Size targetSize;
+  final bool isDark;
+  final VoidCallback onDismiss;
+  final List<Widget> children;
+
+  const _GlassPopupMenuOverlay({
+    required this.targetOffset,
+    required this.targetSize,
+    required this.isDark,
+    required this.onDismiss,
+    required this.children,
+  });
+
+  @override
+  State<_GlassPopupMenuOverlay> createState() => _GlassPopupMenuOverlayState();
+}
+
+class _GlassPopupMenuOverlayState extends State<_GlassPopupMenuOverlay>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
+  late Animation<double> _scaleAnim;
+  late Animation<double> _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
+    _scaleAnim = CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeOutCubic,
+    );
+    _fadeAnim = CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeOut,
+    );
+    _animController.forward();
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  void _dismiss() async {
+    await _animController.reverse();
+    widget.onDismiss();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screenSize = MediaQuery.of(context).size;
+    const menuWidth = 195.0;
+    const estimatedMenuHeight = 200.0;
+
+    bool positionBelow = true;
+    double top = widget.targetOffset.dy + widget.targetSize.height + 4;
+    if (top + estimatedMenuHeight > screenSize.height - 80) {
+      top = widget.targetOffset.dy - estimatedMenuHeight - 4;
+      positionBelow = false;
+    }
+
+    // Position on the left side (aligned with left margin of the held item)
+    double left = widget.targetOffset.dx + 16;
+    if (left + menuWidth > screenSize.width - 16) {
+      left = screenSize.width - menuWidth - 16;
+    }
+    if (left < 16) left = 16;
+
+    return Stack(
+      children: [
+        // Transparent Barrier - Tap anywhere outside to dismiss cleanly
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: _dismiss,
+            behavior: HitTestBehavior.translucent,
+            child: Container(color: Colors.transparent),
+          ),
+        ),
+
+        // Pop Menu anchored on the left side directly under the held item
+        Positioned(
+          top: top,
+          left: left,
+          width: menuWidth,
+          child: AnimatedBuilder(
+            animation: _animController,
+            builder: (context, child) {
+              return Transform.scale(
+                scale: 0.85 + (0.15 * _scaleAnim.value),
+                alignment: positionBelow ? Alignment.topLeft : Alignment.bottomLeft,
+                child: Opacity(
+                  opacity: _fadeAnim.value,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: widget.isDark
+                                ? const Color(0xD9252528)
+                                : Colors.white.withValues(alpha: 0.86),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: widget.isDark
+                                  ? const Color(0x33FFFFFF)
+                                  : const Color(0x22000000),
+                              width: 0.5,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(
+                                  alpha: widget.isDark ? 0.30 : 0.10,
+                                ),
+                                blurRadius: 16,
+                                spreadRadius: 0,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: widget.children,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

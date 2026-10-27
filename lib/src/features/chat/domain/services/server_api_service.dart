@@ -33,7 +33,9 @@ class ServerApiService {
   UserModel? _currentUser;
 
   String? get authToken => _authToken;
+
   int? get currentUserId => _currentUserId;
+
   UserModel? get currentUser => _currentUser;
 
   /// Restores saved authentication token and user ID from SharedPreferences.
@@ -42,7 +44,8 @@ class ServerApiService {
     _authToken = prefs.getString(_authTokenKey);
     _currentUserId = prefs.getInt(_authUserIdKey);
     unawaited(
-      PushService.instance.updateNativeCurrentUserId(_currentUserId?.toString()),
+      PushService.instance.updateNativeCurrentUserId(
+          _currentUserId?.toString()),
     );
     LocalChatStorage.instance.setAccountId(_currentUserId);
     final savedUser = prefs.getString(_authUserKey);
@@ -182,7 +185,8 @@ class ServerApiService {
         Uri.parse('$baseUrl/calls/$callId/reject'),
         headers: _headers(requiresAuth: true),
       );
-      debugPrint('[API] Reject call REST status (${res.statusCode}): ${res.body}');
+      debugPrint(
+          '[API] Reject call REST status (${res.statusCode}): ${res.body}');
       return res.statusCode == 200 || res.statusCode == 204;
     } catch (e) {
       debugPrint('[API] Reject call REST error: $e');
@@ -199,7 +203,8 @@ class ServerApiService {
   }) async {
     try {
       final queryParams = <String, String>{
-        if (chatHeadId != null && chatHeadId > 0) 'chat_head_id': chatHeadId.toString(),
+        if (chatHeadId != null && chatHeadId > 0) 'chat_head_id': chatHeadId
+            .toString(),
         'page': page.toString(),
         'limit': limit.toString(),
       };
@@ -210,10 +215,12 @@ class ServerApiService {
       if (res.statusCode == 200) {
         final json = jsonDecode(res.body);
         if (json is Map) {
-          return CallHistoryPaginatedResponse.fromJson(Map<String, dynamic>.from(json));
+          return CallHistoryPaginatedResponse.fromJson(
+              Map<String, dynamic>.from(json));
         }
       } else {
-        debugPrint('[API] Get Call History Failed (${res.statusCode}): ${res.body}');
+        debugPrint(
+            '[API] Get Call History Failed (${res.statusCode}): ${res.body}');
       }
     } catch (e) {
       debugPrint('[API] Get Call History Error: $e');
@@ -267,11 +274,13 @@ class ServerApiService {
 
       if (res.statusCode == 200 || res.statusCode == 201) {
         final decoded = jsonDecode(res.body);
-        if (decoded is Map && (decoded['status'] == 200 || decoded['success'] == true)) {
+        if (decoded is Map &&
+            (decoded['status'] == 200 || decoded['success'] == true)) {
           return true;
         }
       } else {
-        debugPrint('[API] Delete Call History Failed (${res.statusCode}): ${res.body}');
+        debugPrint('[API] Delete Call History Failed (${res.statusCode}): ${res
+            .body}');
       }
     } catch (e) {
       debugPrint('[API] Delete Call History Error: $e');
@@ -319,9 +328,9 @@ class ServerApiService {
         if (decoded is Map) {
           cleanError =
               decoded['message'] ??
-              decoded['error'] ??
-              decoded['msg'] ??
-              cleanError;
+                  decoded['error'] ??
+                  decoded['msg'] ??
+                  cleanError;
         }
       } catch (_) {}
       throw Exception(cleanError);
@@ -365,9 +374,9 @@ class ServerApiService {
         if (decoded is Map) {
           cleanError =
               decoded['message'] ??
-              decoded['error'] ??
-              decoded['msg'] ??
-              cleanError;
+                  decoded['error'] ??
+                  decoded['msg'] ??
+                  cleanError;
         }
       } catch (_) {}
       throw Exception(cleanError);
@@ -395,9 +404,9 @@ class ServerApiService {
         if (decoded is Map) {
           cleanError =
               decoded['message'] ??
-              decoded['error'] ??
-              decoded['msg'] ??
-              cleanError;
+                  decoded['error'] ??
+                  decoded['msg'] ??
+                  cleanError;
         }
       } catch (_) {}
       throw Exception(cleanError);
@@ -442,9 +451,9 @@ class ServerApiService {
         if (decoded is Map) {
           cleanError =
               decoded['message'] ??
-              decoded['error'] ??
-              decoded['msg'] ??
-              cleanError;
+                  decoded['error'] ??
+                  decoded['msg'] ??
+                  cleanError;
         }
       } catch (_) {}
       throw Exception(cleanError);
@@ -487,7 +496,7 @@ class ServerApiService {
         final dotIndex = formattedFileName.lastIndexOf('.');
         if (dotIndex != -1) {
           formattedFileName =
-              '${formattedFileName.substring(0, dotIndex)}.wav';
+          '${formattedFileName.substring(0, dotIndex)}.wav';
         } else {
           formattedFileName = '$formattedFileName.wav';
         }
@@ -500,7 +509,8 @@ class ServerApiService {
         body: jsonEncode(body),
       );
       debugPrint(
-        '[API] Notification sound update response (${res.statusCode}): ${res.body}',
+        '[API] Notification sound update response (${res.statusCode}): ${res
+            .body}',
       );
       return res.statusCode == 200 || res.statusCode == 201;
     } catch (e) {
@@ -519,7 +529,9 @@ class ServerApiService {
         request.headers['Authorization'] = 'Bearer $_authToken';
       }
 
-      if (name != null && name.trim().isNotEmpty) {
+      if (name != null && name
+          .trim()
+          .isNotEmpty) {
         request.fields['name'] = name.trim();
       }
 
@@ -656,15 +668,16 @@ class ServerApiService {
             : data is List
             ? data
             : const [];
-        int readInt(dynamic value, int fallback) => value is int
-            ? value
-            : int.tryParse(value?.toString() ?? '') ?? fallback;
+        int readInt(dynamic value, int fallback) =>
+            value is int
+                ? value
+                : int.tryParse(value?.toString() ?? '') ?? fallback;
         return UserListPageModel(
           users: list
               .whereType<Map>()
               .map(
                 (user) => UserModel.fromJson(Map<String, dynamic>.from(user)),
-              )
+          )
               .toList(),
           page: readInt(data is Map ? data['page'] : null, page),
           limit: readInt(data is Map ? data['limit'] : null, limit),
@@ -716,12 +729,13 @@ class ServerApiService {
         if (decoded is List) {
           final chats = decoded
               .map(
-                (c) => ServerChatModel.fromJson(
+                (c) =>
+                ServerChatModel.fromJson(
                   c is Map<String, dynamic>
                       ? c
                       : Map<String, dynamic>.from(c as Map),
                 ),
-              )
+          )
               .toList();
           return ServerChatListPageModel(
             page: page,
@@ -755,13 +769,14 @@ class ServerApiService {
     }
   }
 
-  Future<ServerChatListPageModel> getDeletedChatsPage({
+  Future<ServerDeletedItemsResponse> getDeletedItemsPage({
     int page = 1,
     int limit = 20,
   }) async {
     try {
-      final uri = Uri.parse('$baseUrl/chats/deleted')
-          .replace(queryParameters: {'page': '$page', 'limit': '$limit'});
+      final uri = Uri.parse('$baseUrl/chats/deleted').replace(
+        queryParameters: {'type': 'all', 'page': '$page', 'limit': '$limit'},
+      );
       debugPrint('[API] GET $uri');
       final res = await http.get(uri, headers: _headers());
       debugPrint('[API] GET $uri (${res.statusCode}): ${res.body}');
@@ -769,14 +784,33 @@ class ServerApiService {
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
         if (decoded is Map<String, dynamic>) {
-          return ServerChatListPageModel.fromJson(decoded);
+          return ServerDeletedItemsResponse.fromJson(decoded);
         } else if (decoded is Map) {
-          return ServerChatListPageModel.fromJson(
+          return ServerDeletedItemsResponse.fromJson(
             Map<String, dynamic>.from(decoded),
           );
         }
       }
-      throw Exception('Unable to load deleted chats.');
+      throw Exception('Unable to load deleted items.');
+    } catch (e) {
+      debugPrint('[API] Get Deleted Items Error: $e');
+      rethrow;
+    }
+  }
+
+  Future<ServerChatListPageModel> getDeletedChatsPage({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final res = await getDeletedItemsPage(page: page, limit: limit);
+      return ServerChatListPageModel(
+        page: res.page,
+        limit: res.limit,
+        total: res.chatsTotal,
+        totalPages: res.chatsTotalPages,
+        chats: res.chats,
+      );
     } catch (e) {
       debugPrint('[API] Get Deleted Chats Error: $e');
       rethrow;
@@ -797,6 +831,48 @@ class ServerApiService {
       return false;
     } catch (e) {
       debugPrint('[API] Recover Chat Error ($chatId): $e');
+      return false;
+    }
+  }
+
+  /// Recovers a deleted message (`POST /api/messages/$messageId/recover`).
+  Future<bool> recoverMessage(int messageId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/messages/$messageId/recover');
+      debugPrint('[API] POST $uri');
+      final res = await http.post(uri, headers: _headers());
+      debugPrint('[API] POST $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        unawaited(ServerChatManager.instance.syncChats());
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[API] Recover Message Error ($messageId): $e');
+      return false;
+    }
+  }
+
+  /// Permanently deletes a message (`DELETE /api/messages/$messageId/permanent`).
+  Future<bool> deleteMessagePermanently(int messageId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/messages/$messageId/permanent');
+      debugPrint('[API] DELETE $uri');
+      var res = await http.delete(uri, headers: _headers());
+      debugPrint('[API] DELETE $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode != 200 && res.statusCode != 201) {
+        final fallbackUri = Uri.parse(
+            '$baseUrl/messages/$messageId?type=permanent&delete_type=permanent');
+        res = await http.delete(fallbackUri, headers: _headers());
+        debugPrint(
+            '[API] DELETE fallback $fallbackUri (${res.statusCode}): ${res
+                .body}');
+      }
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('[API] Permanent Delete Message Error ($messageId): $e');
       return false;
     }
   }
@@ -861,14 +937,14 @@ class ServerApiService {
           : (json is Map<String, dynamic> ? json : <String, dynamic>{});
 
       final chatHeadId =
-          (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) is int
+      (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) is int
           ? (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) as int
           : int.tryParse(
-                  (data['chat_head_id'] ?? data['id'] ?? data['chat_id'])
-                          ?.toString() ??
-                      '',
-                ) ??
-                0;
+        (data['chat_head_id'] ?? data['id'] ?? data['chat_id'])
+            ?.toString() ??
+            '',
+      ) ??
+          0;
 
       if (chatHeadId > 0) {
         final details = await getChatDetails(chatHeadId);
@@ -877,7 +953,8 @@ class ServerApiService {
       return ServerChatModel.fromJson(data);
     } else {
       debugPrint(
-        '[API ERROR] Create Direct Chat Failed (${res.statusCode}): ${res.body}',
+        '[API ERROR] Create Direct Chat Failed (${res.statusCode}): ${res
+            .body}',
       );
       throw Exception('Unable to create direct chat. Please try again.');
     }
@@ -912,14 +989,14 @@ class ServerApiService {
           : (json is Map<String, dynamic> ? json : <String, dynamic>{});
 
       final chatHeadId =
-          (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) is int
+      (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) is int
           ? (data['chat_head_id'] ?? data['id'] ?? data['chat_id']) as int
           : int.tryParse(
-                  (data['chat_head_id'] ?? data['id'] ?? data['chat_id'])
-                          ?.toString() ??
-                      '',
-                ) ??
-                0;
+        (data['chat_head_id'] ?? data['id'] ?? data['chat_id'])
+            ?.toString() ??
+            '',
+      ) ??
+          0;
 
       if (chatHeadId > 0) {
         final details = await getChatDetails(chatHeadId);
@@ -1049,8 +1126,7 @@ class ServerApiService {
   // ─── Messages Endpoints ────────────────────────────────────────────────────
 
   /// Fetches paginated chat messages from GET /chats/:chatId/messages?page={page}&limit={limit}
-  Future<ServerMessagesPageModel> getMessagesPage(
-    int chatId, {
+  Future<ServerMessagesPageModel> getMessagesPage(int chatId, {
     int page = 1,
     int limit = 20,
   }) async {
@@ -1078,8 +1154,7 @@ class ServerApiService {
     }
   }
 
-  Future<List<ServerMessageModel>> getMessages(
-    int chatId, {
+  Future<List<ServerMessageModel>> getMessages(int chatId, {
     int? limit,
     int? page,
     String? before,
@@ -1125,7 +1200,9 @@ class ServerApiService {
         await http.MultipartFile.fromPath(
           'file',
           file.path,
-          filename: fileName ?? file.path.split(RegExp(r'[/\\]')).last,
+          filename: fileName ?? file.path
+              .split(RegExp(r'[/\\]'))
+              .last,
         ),
       );
 
@@ -1133,7 +1210,8 @@ class ServerApiService {
       final res = await http.Response.fromStream(streamedRes);
 
       debugPrint(
-        '[API] Send Message with File Response (${res.statusCode}): ${res.body}',
+        '[API] Send Message with File Response (${res.statusCode}): ${res
+            .body}',
       );
 
       if (res.statusCode == 200 || res.statusCode == 201) {
@@ -1144,7 +1222,8 @@ class ServerApiService {
         return ServerMessageModel.fromJson(data);
       } else {
         debugPrint(
-          '[API ERROR] Send Message with File Failed (${res.statusCode}): ${res.body}',
+          '[API ERROR] Send Message with File Failed (${res.statusCode}): ${res
+              .body}',
         );
         throw Exception('Failed to send attachment. Please try again.');
       }
@@ -1153,7 +1232,9 @@ class ServerApiService {
         'message': message,
         'reply_to_id': replyToId,
         'client_id':
-            clientId ?? 'local_${DateTime.now().millisecondsSinceEpoch}',
+        clientId ?? 'local_${DateTime
+            .now()
+            .millisecondsSinceEpoch}',
         if (filePath != null) 'file_path': filePath,
         if (fileName != null) 'file_name': fileName,
         if (fileType != null) 'file_type': fileType,
@@ -1242,7 +1323,8 @@ class ServerApiService {
 
   Future<bool> deleteMessageREST(int messageId, {int type = 1}) async {
     try {
-      final uri = Uri.parse('$baseUrl/messages/$messageId?type=$type&delete_type=$type');
+      final uri = Uri.parse(
+          '$baseUrl/messages/$messageId?type=$type&delete_type=$type');
       final res = await http.delete(
         uri,
         headers: _headers(),
@@ -1411,8 +1493,7 @@ class ServerApiService {
   }
 
   /// Uploads a file to POST /upload and returns the parsed [UploadItemModel]
-  Future<UploadItemModel?> uploadVaultFile(
-    File file, {
+  Future<UploadItemModel?> uploadVaultFile(File file, {
     String? filename,
   }) async {
     try {
@@ -1427,7 +1508,9 @@ class ServerApiService {
         await http.MultipartFile.fromPath(
           'file',
           file.path,
-          filename: filename ?? file.path.split(RegExp(r'[/\\]')).last,
+          filename: filename ?? file.path
+              .split(RegExp(r'[/\\]'))
+              .last,
         ),
       );
 
@@ -1448,7 +1531,9 @@ class ServerApiService {
               id: 0,
               filePath: data,
               folder: '',
-              fileName: filename ?? file.path.split(RegExp(r'[/\\]')).last,
+              fileName: filename ?? file.path
+                  .split(RegExp(r'[/\\]'))
+                  .last,
               fileType: '',
               fileSize: await file.length(),
               createdAt: DateTime.now().toIso8601String(),
@@ -1514,7 +1599,8 @@ class ServerApiService {
       final uri = Uri.parse('$baseUrl/users/$userId/unblock');
       debugPrint('[API] POST $uri');
       final res = await http.post(uri, headers: _headers());
-      debugPrint('[API] Unblock user response (${res.statusCode}): ${res.body}');
+      debugPrint(
+          '[API] Unblock user response (${res.statusCode}): ${res.body}');
       return res.statusCode == 200 || res.statusCode == 201;
     } catch (e) {
       debugPrint('[API] Unblock user error: $e');
@@ -1528,7 +1614,8 @@ class ServerApiService {
       final uri = Uri.parse('$baseUrl/users/blocked');
       debugPrint('[API] GET $uri');
       final res = await http.get(uri, headers: _headers());
-      debugPrint('[API] Get blocked users response (${res.statusCode}): ${res.body}');
+      debugPrint(
+          '[API] Get blocked users response (${res.statusCode}): ${res.body}');
       if (res.statusCode == 200 || res.statusCode == 201) {
         final decoded = jsonDecode(res.body);
         final data = decoded['data'] is Map<String, dynamic>
@@ -1557,7 +1644,8 @@ class ServerApiService {
       final uri = Uri.parse('$baseUrl/users/$userId/unshow-profile');
       debugPrint('[API] POST $uri');
       final res = await http.post(uri, headers: _headers());
-      debugPrint('[API] Unshow profile response (${res.statusCode}): ${res.body}');
+      debugPrint(
+          '[API] Unshow profile response (${res.statusCode}): ${res.body}');
       return res.statusCode == 200 || res.statusCode == 201;
     } catch (e) {
       debugPrint('[API] Unshow profile error: $e');
@@ -1573,10 +1661,79 @@ class ServerApiService {
       final uri = Uri.parse('$baseUrl/users/$userId/show-profile');
       debugPrint('[API] POST $uri');
       final res = await http.post(uri, headers: _headers());
-      debugPrint('[API] Show profile response (${res.statusCode}): ${res.body}');
+      debugPrint(
+          '[API] Show profile response (${res.statusCode}): ${res.body}');
       return res.statusCode == 200 || res.statusCode == 201;
     } catch (e) {
       debugPrint('[API] Show profile error: $e');
+      return false;
+    }
+  }
+
+  /// Fetches paginated locked chat list (`GET /api/chats/locked?page={page}&limit={limit}`).
+  Future<ServerChatListPageModel> getLockedChats({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/chats/locked').replace(
+        queryParameters: {'page': '$page', 'limit': '$limit'},
+      );
+      debugPrint('[API] GET $uri');
+      final res = await http.get(uri, headers: _headers());
+      debugPrint('[API] GET $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map<String, dynamic>) {
+          return ServerChatListPageModel.fromJson(decoded);
+        } else if (decoded is Map) {
+          return ServerChatListPageModel.fromJson(
+            Map<String, dynamic>.from(decoded),
+          );
+        }
+      }
+      throw Exception('Unable to load locked chats.');
+    } catch (e) {
+      debugPrint('[API] Get Locked Chats Error: $e');
+      rethrow;
+    }
+  }
+
+  /// Locks a chat (`POST /api/chats/$chatId/lock`).
+  Future<bool> lockChat(int chatId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/chats/$chatId/lock');
+      debugPrint('[API] POST $uri');
+      final res = await http.post(uri, headers: _headers());
+      debugPrint('[API] Lock chat response (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        unawaited(ServerChatManager.instance.syncChats());
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[API] Lock chat error ($chatId): $e');
+      return false;
+    }
+  }
+
+  /// Unlocks a chat (`POST /api/chats/$chatId/unlock`).
+  Future<bool> unlockChat(int chatId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/chats/$chatId/unlock');
+      debugPrint('[API] POST $uri');
+      final res = await http.post(uri, headers: _headers());
+      debugPrint('[API] Unlock chat response (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        unawaited(ServerChatManager.instance.syncChats());
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[API] Unlock chat error ($chatId): $e');
       return false;
     }
   }

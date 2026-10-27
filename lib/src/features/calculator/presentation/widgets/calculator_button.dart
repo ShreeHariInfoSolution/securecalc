@@ -99,23 +99,32 @@ class _CalculatorButtonState extends State<CalculatorButton> {
         : BorderRadius.circular(100);
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTapDown: (_) {
         setState(() => _isPressed = true);
       },
       onTapUp: (_) => setState(() => _isPressed = false),
       onTapCancel: () => setState(() => _isPressed = false),
       onTap: widget.onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 80),
-        alignment: widget.isZero ? Alignment.centerLeft : Alignment.center,
-        padding: widget.isZero ? EdgeInsets.only(left: zeroPadding) : EdgeInsets.zero,
-        decoration: BoxDecoration(
-          color: _backgroundColor,
-          borderRadius: borderRadius,
-        ),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: child,
+      child: Container(
+        width: double.infinity,
+        height: double.infinity,
+        alignment: Alignment.center,
+        color: Colors.transparent,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          width: widget.isZero ? double.infinity : height,
+          height: height,
+          alignment: widget.isZero ? Alignment.centerLeft : Alignment.center,
+          padding: widget.isZero ? EdgeInsets.only(left: zeroPadding) : EdgeInsets.zero,
+          decoration: BoxDecoration(
+            color: _backgroundColor,
+            borderRadius: borderRadius,
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: child,
+          ),
         ),
       ),
     );

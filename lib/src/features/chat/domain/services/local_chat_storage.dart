@@ -35,6 +35,19 @@ class LocalChatStorage {
   String _historyKey(String chatId) =>
       _accountKey('PREF_HISTORY_CACHED_$chatId');
   String _draftKey(String chatId) => _accountKey('PREF_DRAFT_$chatId');
+  String _clearedAtKey(String chatId) => _accountKey('PREF_CLEARED_AT_$chatId');
+
+  int? getClearedAt(String chatId) {
+    if (_prefs == null || chatId.isEmpty) return null;
+    return _prefs!.getInt(_clearedAtKey(chatId));
+  }
+
+  Future<void> setClearedAt(String chatId, {DateTime? time}) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    if (chatId.isEmpty) return;
+    final timestamp = (time ?? DateTime.now()).millisecondsSinceEpoch;
+    await _prefs!.setInt(_clearedAtKey(chatId), timestamp);
+  }
 
   String? getDraft(String chatId) {
     if (_prefs == null || chatId.isEmpty) return null;
@@ -182,6 +195,7 @@ class LocalChatStorage {
               isMuted: isMuted,
               isArchived: isArchived,
               isProfileHidden: map['isProfileHidden'] as bool? ?? false,
+              isLocked: map['isLocked'] as bool? ?? false,
               disappearType: (map['disappearType'] as int?) ?? 0,
               backgroundUrl: map['backgroundUrl'] as String?,
               messages: messages,
@@ -269,6 +283,7 @@ class LocalChatStorage {
             'isMuted': c.isMuted,
             'isArchived': c.isArchived,
             'isProfileHidden': c.isProfileHidden,
+            'isLocked': c.isLocked,
             'disappearType': c.disappearType,
             'isOnline': c.isOnline,
             'lastSeenAt': c.lastSeenAt?.millisecondsSinceEpoch,
@@ -315,15 +330,23 @@ class LocalChatStorage {
     if (jsonStr == null || jsonStr.isEmpty) return [];
 
     try {
+      final clearedAtMs = getClearedAt(deviceId);
       final List<dynamic> jsonList = jsonDecode(jsonStr);
       final List<ChatMessage> list = [];
       for (final item in jsonList) {
         final m = item as Map<String, dynamic>;
+        final timestampMs = m['timestamp'] as int;
+
+        if (clearedAtMs != null && timestampMs <= clearedAtMs) {
+          // Skip messages that were created on or before the chat was cleared/deleted
+          continue;
+        }
+
         final msg = ChatMessage(
           id: m['id'] as String,
           senderId: m['senderId'] as String,
           content: m['content'] as String,
-          timestamp: DateTime.fromMillisecondsSinceEpoch(m['timestamp'] as int),
+          timestamp: DateTime.fromMillisecondsSinceEpoch(timestampMs),
           type: (m['type'] as String?) ?? 'text',
           mediaUrl: m['mediaUrl'] as String?,
           fileName: m['fileName'] as String?,
@@ -470,6 +493,12 @@ class LocalChatStorage {
     final epoch = _accountEpoch;
     _prefs ??= await SharedPreferences.getInstance();
     if (epoch != _accountEpoch) return;
+
+    final clearedAtMs = getClearedAt(deviceId);
+    if (clearedAtMs != null && message.timestamp.millisecondsSinceEpoch <= clearedAtMs) {
+      // Do not save old messages that were sent before/at the time the chat was deleted/cleared
+      return;
+    }
 
     // 1. Save Message
     final messages = await loadMessages(deviceId);
@@ -805,10 +834,41 @@ class LocalChatStorage {
 
   Future<void> deleteConversation(String chatId) async {
     final epoch = _accountEpoch;
+    _prefs ??= await SharedPreferences.getInstance();
+    if (epoch != _accountEpoch) return;
+
+    await _prefs?.remove(_messageKey(chatId));
+    await _prefs?.remove(_historyKey(chatId));
+    await _prefs?.remove(_draftKey(chatId));
+    await setClearedAt(chatId);
+
     final conversations = await _currentConversations();
     if (epoch != _accountEpoch) return;
     conversations.removeWhere((c) => c.id == chatId);
     _persistConversations(conversations);
+  }
+
+  Future<void> clearChatMessages(String chatId) async {
+    final epoch = _accountEpoch;
+    _prefs ??= await SharedPreferences.getInstance();
+    if (epoch != _accountEpoch) return;
+
+    await _prefs?.remove(_messageKey(chatId));
+    await _prefs?.remove(_historyKey(chatId));
+    await _prefs?.remove(_draftKey(chatId));
+    await setClearedAt(chatId);
+
+    final conversations = await _currentConversations();
+    if (epoch != _accountEpoch) return;
+    final index = conversations.indexWhere((c) => c.id == chatId);
+    if (index >= 0) {
+      conversations[index] = conversations[index].copyWith(
+        messages: const [],
+        lastMessage: '',
+        unreadCount: 0,
+      );
+      _persistConversations(conversations);
+    }
   }
 
   Future<void> deleteLocalMessage(String deviceId, String messageId) async {
@@ -904,11 +964,15 @@ class LocalChatStorage {
         'isPinned': c.isPinned,
         'isMuted': c.isMuted,
         'isArchived': c.isArchived,
+        'isProfileHidden': c.isProfileHidden,
+        'isLocked': c.isLocked,
         'disappearType': c.disappearType,
         'isOnline': c.isOnline,
+        'lastSeenAt': c.lastSeenAt?.millisecondsSinceEpoch,
         'isTyping': c.isTyping,
         'peerUserId': c.peerUserId,
         'isGroup': c.isGroup,
+        'backgroundUrl': c.backgroundUrl,
         'memberNames': c.memberNames.map(
           (key, value) => MapEntry('$key', value),
         ),

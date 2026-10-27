@@ -170,7 +170,27 @@ class PresenceStore {
     }
 
     final currentMap = Map<int, PresenceState>.from(presenceNotifier.value);
-    currentMap[state.userId] = state;
+    final existing = currentMap[state.userId];
+
+    DateTime? effectiveLastSeen = state.lastSeenAt;
+    if (!state.isOnline) {
+      if (effectiveLastSeen == null) {
+        if (existing != null && !existing.isOnline && existing.lastSeenAt != null) {
+          effectiveLastSeen = existing.lastSeenAt;
+        } else {
+          effectiveLastSeen = DateTime.now();
+        }
+      }
+    }
+
+    final updatedState = PresenceState(
+      userId: state.userId,
+      isOnline: state.isOnline,
+      lastSeenAt: state.isOnline ? null : effectiveLastSeen,
+      lastSeenText: state.lastSeenText ?? (state.isOnline ? 'online' : null),
+    );
+
+    currentMap[state.userId] = updatedState;
     presenceNotifier.value = currentMap;
   }
 

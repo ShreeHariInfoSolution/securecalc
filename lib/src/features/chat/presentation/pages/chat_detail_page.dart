@@ -255,6 +255,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         final peer = otherMembers.isNotEmpty ? otherMembers.first : null;
 
         if (peer != null) {
+          PresenceStore.instance.bindChatUser(widget.conversation.id, peer.id);
+
           final livePresence = PresenceStore.instance.getPresence(peer.id);
           final effectiveOnline = livePresence != null ? livePresence.isOnline : peer.isOnline;
           _isPeerOnline.value = effectiveOnline;
@@ -263,15 +265,13 @@ class _ChatDetailPageState extends State<ChatDetailPage>
               ? DateTime.tryParse(peer.lastSeenAt!)?.toLocal()
               : null;
 
-          if (livePresence == null) {
-            PresenceStore.instance.updatePresence({
-              'user_id': peer.id,
-              'is_online': peer.isOnline,
-              'last_seen_at': peer.lastSeenAt,
-              'last_seen_text': peer.lastSeenText ?? (peer.isOnline ? 'online' : null),
-              'chat_head_id': widget.conversation.id,
-            });
-          }
+          PresenceStore.instance.updatePresence({
+            'user_id': peer.id,
+            'is_online': peer.isOnline,
+            'last_seen_at': peer.lastSeenAt,
+            'last_seen_text': peer.lastSeenText ?? (peer.isOnline ? 'online' : null),
+            'chat_head_id': widget.conversation.id,
+          });
 
           unawaited(
             LocalChatStorage.instance.updateConversation(
@@ -623,7 +623,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
             lastSeenAt:
                 isOnline
                     ? null
-                    : (parsedLastSeen ?? c.lastSeenAt),
+                    : (parsedLastSeen ?? (c.isOnline ? DateTime.now() : (c.lastSeenAt ?? DateTime.now()))),
           ),
         ),
       );
@@ -1695,6 +1695,12 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                                 isEdited: message.isEdited,
                                 isDeleted: message.isDeleted,
                                 isSaved: message.isSaved,
+                                callId: message.callId,
+                                callType: message.callType,
+                                callStatus: message.callStatus,
+                                callDuration: message.callDuration,
+                                onVoiceCallTap: _startVoiceCall,
+                                onVideoCallTap: _startVideoCall,
                                 senderName: !isMine && widget.conversation.isGroup
                                     ? _groupMemberNames[int.tryParse(message.senderId)]
                                     : null,
@@ -1740,6 +1746,30 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (message.type == 'call' ||
+                                  message.callStatus != null ||
+                                  message.callId != null ||
+                                  message.msgType == 'call') ...[
+                                actionRow(
+                                  icon: (message.callType ?? '').toLowerCase() == 'video'
+                                      ? Icons.videocam_rounded
+                                      : Icons.phone_rounded,
+                                  label: (message.callType ?? '').toLowerCase() == 'video'
+                                      ? 'Video Call Back'
+                                      : 'Call Back',
+                                  color: const Color(0xFF34C759),
+                                  onTap: () {
+                                    HapticFeedback.lightImpact();
+                                    Navigator.pop(dialogContext);
+                                    if ((message.callType ?? '').toLowerCase() == 'video') {
+                                      _startVideoCall();
+                                    } else {
+                                      _startVoiceCall();
+                                    }
+                                  },
+                                ),
+                                divider(),
+                              ],
                               actionRow(
                                 icon: Icons.reply_rounded,
                                 label: 'Reply',
@@ -1949,11 +1979,12 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   Future<void> _reactToMessage(ChatMessage message, String emoji) async {
+    final cleanEmoji = normalizeEmojiText(emoji);
     final messageId = int.tryParse(message.id);
     if (messageId == null) return;
     final saved = await ServerApiService.instance.reactMessageREST(
       messageId: messageId,
-      chatReact: emoji,
+      chatReact: cleanEmoji,
     );
     if (!saved) {
       if (mounted) {
@@ -2191,7 +2222,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     if (chatId != null && chatId > 0) {
       await ServerApiService.instance.clearChatREST(chatId);
     }
-    await LocalChatStorage.instance.cacheMessages(widget.conversation.id, const []);
+    await LocalChatStorage.instance.clearChatMessages(widget.conversation.id);
     if (mounted) {
       setState(() {
         _messages = [];
@@ -2602,8 +2633,13 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     if (message == null || _isSending) return;
     final messageId = int.tryParse(message.id);
     if (messageId == null) return;
-    final text = _inputController.text.trim();
-    if (text.isEmpty || text == message.content) {
+    final rawText = _inputController.text.trim();
+    if (rawText.isEmpty) {
+      _cancelEditingMessage();
+      return;
+    }
+    final text = normalizeEmojiText(rawText);
+    if (text == message.content) {
       _cancelEditingMessage();
       return;
     }
@@ -2647,8 +2683,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       await _saveEditedMessage();
       return;
     }
-    final text = _inputController.text.trim();
-    if (text.isEmpty) return;
+    final rawText = _inputController.text.trim();
+    if (rawText.isEmpty) return;
+    final text = normalizeEmojiText(rawText);
 
     _isSending = true;
 

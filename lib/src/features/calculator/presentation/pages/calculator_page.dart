@@ -6,6 +6,7 @@ import '../../../auth/presentation/pages/privacy_consent_page.dart';
 import '../../domain/calculator_logic.dart';
 import '../widgets/calculator_button.dart';
 import '../widgets/calculator_display.dart';
+import '../../../chat/domain/services/call_service.dart';
 import '../../../chat/presentation/pages/vault_home_page.dart';
 
 class CalculatorPage extends StatefulWidget {
@@ -22,11 +23,20 @@ class _CalculatorPageState extends State<CalculatorPage> {
   @override
   void initState() {
     super.initState();
+    CallService.instance.isCalculatorVisibleNotifier.value = true;
     // Turn off soft keyboard whenever entering the calculator
     WidgetsBinding.instance.addPostFrameCallback((_) {
       FocusManager.instance.primaryFocus?.unfocus();
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      CallService.instance.isCalculatorVisibleNotifier.value = false;
+    });
+    super.dispose();
   }
 
 
@@ -153,7 +163,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
                           gap,
                           activeOp,
                         ),
-                        SizedBox(height: gap),
                         _buildTabletRow(
                           ['7', '8', '9', '×'],
                           [
@@ -167,7 +176,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
                           gap,
                           activeOp,
                         ),
-                        SizedBox(height: gap),
                         _buildTabletRow(
                           ['4', '5', '6', '-'],
                           [
@@ -181,7 +189,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
                           gap,
                           activeOp,
                         ),
-                        SizedBox(height: gap),
                         _buildTabletRow(
                           ['1', '2', '3', '+'],
                           [
@@ -195,7 +202,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
                           gap,
                           activeOp,
                         ),
-                        SizedBox(height: gap),
                         _buildTabletRow(
                           ['+/-', '0', '.', '='],
                           [
@@ -276,7 +282,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
                               gap,
                               activeOp,
                             ),
-                            SizedBox(height: gap),
                             _buildPhoneRow(
                               ['7', '8', '9', '×'],
                               [
@@ -289,7 +294,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
                               gap,
                               activeOp,
                             ),
-                            SizedBox(height: gap),
                             _buildPhoneRow(
                               ['4', '5', '6', '-'],
                               [
@@ -302,7 +306,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
                               gap,
                               activeOp,
                             ),
-                            SizedBox(height: gap),
                             _buildPhoneRow(
                               ['1', '2', '3', '+'],
                               [
@@ -315,7 +318,6 @@ class _CalculatorPageState extends State<CalculatorPage> {
                               gap,
                               activeOp,
                             ),
-                            SizedBox(height: gap),
                             _buildPhoneBottomRow(buttonSize, gap, activeOp),
                           ],
                         ),
@@ -339,26 +341,32 @@ class _CalculatorPageState extends State<CalculatorPage> {
     double gap,
     String? activeOp,
   ) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: List.generate(4, (index) {
-        final label = labels[index];
-        final isSelected = activeOp != null && activeOp == label;
+    final cellWidth = buttonWidth + gap;
+    final cellHeight = buttonHeight + gap;
 
-        return SizedBox(
-          width: buttonWidth,
-          height: buttonHeight,
-          child: CalculatorButton(
-            label: label,
-            type: types[index],
-            isSelected: isSelected,
-            buttonSize: buttonWidth,
-            buttonHeight: buttonHeight,
-            isTablet: true,
-            onTap: () => _handleButton(label),
-          ),
-        );
-      }),
+    return SizedBox(
+      height: cellHeight,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: List.generate(4, (index) {
+          final label = labels[index];
+          final isSelected = activeOp != null && activeOp == label;
+
+          return SizedBox(
+            width: cellWidth,
+            height: cellHeight,
+            child: CalculatorButton(
+              label: label,
+              type: types[index],
+              isSelected: isSelected,
+              buttonSize: buttonWidth,
+              buttonHeight: buttonHeight,
+              isTablet: true,
+              onTap: () => _handleButton(label),
+            ),
+          );
+        }),
+      ),
     );
   }
 
@@ -369,70 +377,81 @@ class _CalculatorPageState extends State<CalculatorPage> {
     double gap,
     String? activeOp,
   ) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: List.generate(4, (index) {
-        final label = labels[index];
-        final isSelected = activeOp != null && activeOp == label;
+    final cellWidth = buttonSize + (gap * 0.75);
+    final cellHeight = buttonSize + gap;
 
-        return SizedBox(
-          width: buttonSize,
-          height: buttonSize,
-          child: CalculatorButton(
-            label: label,
-            type: types[index],
-            isSelected: isSelected,
-            buttonSize: buttonSize,
-            isTablet: false,
-            onTap: () => _handleButton(label),
-          ),
-        );
-      }),
+    return SizedBox(
+      height: cellHeight,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: List.generate(4, (index) {
+          final label = labels[index];
+          final isSelected = activeOp != null && activeOp == label;
+
+          return SizedBox(
+            width: cellWidth,
+            height: cellHeight,
+            child: CalculatorButton(
+              label: label,
+              type: types[index],
+              isSelected: isSelected,
+              buttonSize: buttonSize,
+              isTablet: false,
+              onTap: () => _handleButton(label),
+            ),
+          );
+        }),
+      ),
     );
   }
 
   Widget _buildPhoneBottomRow(double buttonSize, double gap, String? activeOp) {
-    final zeroWidth = buttonSize * 2 + gap;
+    final cellWidth = buttonSize + (gap * 0.75);
+    final zeroCellWidth = cellWidth * 2;
+    final cellHeight = buttonSize + gap;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        SizedBox(
-          width: zeroWidth,
-          height: buttonSize,
-          child: CalculatorButton(
-            label: '0',
-            isZero: true,
-            type: CalculatorButtonType.digit,
-            buttonSize: buttonSize,
-            isTablet: false,
-            onTap: () => _handleButton('0'),
+    return SizedBox(
+      height: cellHeight,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          SizedBox(
+            width: zeroCellWidth,
+            height: cellHeight,
+            child: CalculatorButton(
+              label: '0',
+              isZero: true,
+              type: CalculatorButtonType.digit,
+              buttonSize: buttonSize,
+              isTablet: false,
+              onTap: () => _handleButton('0'),
+            ),
           ),
-        ),
-        SizedBox(
-          width: buttonSize,
-          height: buttonSize,
-          child: CalculatorButton(
-            label: '.',
-            type: CalculatorButtonType.digit,
-            buttonSize: buttonSize,
-            isTablet: false,
-            onTap: () => _handleButton('.'),
+          SizedBox(
+            width: cellWidth,
+            height: cellHeight,
+            child: CalculatorButton(
+              label: '.',
+              type: CalculatorButtonType.digit,
+              buttonSize: buttonSize,
+              isTablet: false,
+              onTap: () => _handleButton('.'),
+            ),
           ),
-        ),
-        SizedBox(
-          width: buttonSize,
-          height: buttonSize,
-          child: CalculatorButton(
-            label: '=',
-            type: CalculatorButtonType.operator,
-            isSelected: activeOp == '=',
-            buttonSize: buttonSize,
-            isTablet: false,
-            onTap: () => _handleButton('='),
+          SizedBox(
+            width: cellWidth,
+            height: cellHeight,
+            child: CalculatorButton(
+              label: '=',
+              type: CalculatorButtonType.operator,
+              isSelected: activeOp == '=',
+              buttonSize: buttonSize,
+              isTablet: false,
+              onTap: () => _handleButton('='),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

@@ -112,6 +112,9 @@ class _IncomingCallSheetState extends State<IncomingCallSheet>
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
               child: Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+                ),
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
                 decoration: BoxDecoration(
                   color: isDark
@@ -130,9 +133,11 @@ class _IncomingCallSheetState extends State<IncomingCallSheet>
                     ),
                   ],
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                     // Top Indicator Pill
                     Container(
                       width: 38,
@@ -318,7 +323,8 @@ class _IncomingCallSheetState extends State<IncomingCallSheet>
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 
   Widget _buildEdgeDockedChip(BuildContext context, bool isDark, bool isVideo) {

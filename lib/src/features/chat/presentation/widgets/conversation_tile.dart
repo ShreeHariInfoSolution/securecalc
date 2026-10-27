@@ -9,6 +9,7 @@ import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/services/bot_assistant_service.dart';
 import '../../domain/services/presence_store.dart';
+import 'sticker_picker_panel.dart';
 
 class ConversationTile extends StatelessWidget {
   final ChatConversation conversation;
@@ -271,7 +272,7 @@ class ConversationTile extends StatelessWidget {
                                                   ),
                                                 )
                                               : Text(
-                                                  conversation.lastMessage,
+                                                  normalizeEmojiText(conversation.lastMessage),
                                                   maxLines: 1,
                                                   overflow: TextOverflow.ellipsis,
                                                   style: TextStyle(

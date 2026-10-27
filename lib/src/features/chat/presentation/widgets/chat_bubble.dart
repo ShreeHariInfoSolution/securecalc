@@ -126,19 +126,97 @@ class _ChatBubbleState extends State<ChatBubble> {
   bool _downloadFailed = false;
   bool _isExpanded = false;
 
+  double? _imageAspectRatio;
+  double? _videoAspectRatio;
+  Duration? _videoDuration;
+
   @override
   void initState() {
     super.initState();
     if (widget.mediaUrl?.isNotEmpty == true) {
       unawaited(_restoreDownloadedAttachment());
     }
+    _resolveImageAspectRatio();
   }
 
   @override
   void didUpdateWidget(ChatBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.mediaUrl != widget.mediaUrl) {
+      _imageAspectRatio = null;
+      _videoAspectRatio = null;
+      _videoDuration = null;
       unawaited(_restoreDownloadedAttachment());
+      _resolveImageAspectRatio();
+    }
+  }
+
+  void _resolveImageAspectRatio() {
+    if (_imageAspectRatio != null) return;
+    final path = _downloadedPath ?? widget.mediaUrl;
+    if (path == null || path.isEmpty) return;
+    try {
+      final file = File(path);
+      if (!file.existsSync()) return;
+      final image = Image.file(file);
+      image.image.resolve(const ImageConfiguration()).addListener(
+        ImageStreamListener((ImageInfo info, bool _) {
+          if (mounted) {
+            final w = info.image.width.toDouble();
+            final h = info.image.height.toDouble();
+            if (w > 0 && h > 0) {
+              final ar = w / h;
+              if (_imageAspectRatio != ar) {
+                setState(() {
+                  _imageAspectRatio = ar;
+                });
+              }
+            }
+          }
+        }),
+      );
+    } catch (_) {}
+  }
+
+  Size _getAdaptiveMediaSize(BuildContext context, double? aspectRatio) {
+    final screenW = MediaQuery.of(context).size.width;
+    final maxW = screenW * 0.72;
+    const maxH = 380.0;
+    const minW = 160.0;
+    const minH = 140.0;
+
+    if (aspectRatio == null || aspectRatio <= 0) {
+      return Size(maxW * 0.85, 240.0);
+    }
+
+    double targetW;
+    double targetH;
+
+    if (aspectRatio < 0.85) {
+      targetH = maxH;
+      targetW = (targetH * aspectRatio).clamp(minW, maxW);
+      targetH = (targetW / aspectRatio).clamp(minH, maxH);
+    } else if (aspectRatio > 1.25) {
+      targetW = maxW;
+      targetH = (targetW / aspectRatio).clamp(minH, 260.0);
+    } else {
+      targetW = (maxW * 0.88).clamp(minW, maxW);
+      targetH = (targetW / aspectRatio).clamp(minH, maxH);
+    }
+
+    return Size(targetW, targetH);
+  }
+
+  String _formatMediaDuration(Duration duration) {
+    if (duration.inHours > 0) {
+      final h = duration.inHours;
+      final m = (duration.inMinutes % 60).toString().padLeft(2, '0');
+      final s = (duration.inSeconds % 60).toString().padLeft(2, '0');
+      return '$h:$m:$s';
+    } else {
+      final m = duration.inMinutes;
+      final s = (duration.inSeconds % 60).toString().padLeft(2, '0');
+      return '$m:$s';
     }
   }
 
@@ -237,6 +315,7 @@ class _ChatBubbleState extends State<ChatBubble> {
             _isMediaRevealed = true;
             _downloadFailed = false;
           });
+          _resolveImageAspectRatio();
         }
         return;
       }
@@ -273,6 +352,7 @@ class _ChatBubbleState extends State<ChatBubble> {
         setState(() {
           _isMediaRevealed = true;
         });
+        _resolveImageAspectRatio();
       }
     } catch (_) {}
   }
@@ -549,6 +629,7 @@ class _ChatBubbleState extends State<ChatBubble> {
           _isMediaRevealed = true;
           _downloadFailed = false;
         });
+        _resolveImageAspectRatio();
       }
     } catch (error) {
       AppToast.show(AppToast.userFriendlyMessage('Could not download photo: $error'), isError: true);
@@ -912,7 +993,7 @@ class _ChatBubbleState extends State<ChatBubble> {
 
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-      constraints: const BoxConstraints(minWidth: 190),
+      constraints: const BoxConstraints(minWidth: 150),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -1246,31 +1327,7 @@ class _ChatBubbleState extends State<ChatBubble> {
           ),
         ],
         if (hasMedia) ...[
-          Stack(
-            alignment: Alignment.bottomRight,
-            children: [
-              _buildAttachment(isDark, mediaUrl),
-              if ((_isImage || _isVideo) && !hasText)
-                Positioned(
-                  bottom: 6,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: _buildTimestampWidget(
-                      isDark,
-                      overrideTextColor: Colors.white,
-                    ),
-                  ),
-                ),
-            ],
-          ),
+          _buildAttachment(isDark, mediaUrl),
           if (hasText) const SizedBox(height: 2),
         ],
         if (widget.isDecrypting && !hasMedia) ...[
@@ -1381,7 +1438,7 @@ class _ChatBubbleState extends State<ChatBubble> {
     bool isDark,
     Color textColor,
   ) {
-    final text = widget.message;
+    final text = normalizeEmojiText(widget.message);
     final lines = text.split('\n');
     final isLongParagraph = text.length > 320 || lines.length > 6;
     final textSpans = _buildHighlightedTextSpans(text, textColor, isDark);
@@ -1609,359 +1666,375 @@ class _ChatBubbleState extends State<ChatBubble> {
 
     final hasLocal = _hasValidLocalFile;
 
+    final cleanMsg = widget.message.trim();
+    final isGenericLabel = cleanMsg == '[Attachment]' ||
+        cleanMsg == 'Photo' ||
+        cleanMsg == 'Video' ||
+        cleanMsg == 'Voice message';
+    final hasText = cleanMsg.isNotEmpty && !isGenericLabel;
+
     // ─── 1. IMAGE ATTACHMENT ────────────────────────────────────────────────
     if (_isImage) {
       final showFullImage = hasLocal && _isMediaRevealed;
-      final double maxW = MediaQuery.of(context).size.width * 0.74;
+      final mediaSize = _getAdaptiveMediaSize(context, _imageAspectRatio);
 
-      final cleanMsg = widget.message.trim();
-      final isGenericLabel = cleanMsg == '[Attachment]' ||
-          cleanMsg == 'Photo' ||
-          cleanMsg == 'Video' ||
-          cleanMsg == 'Voice message';
-      final hasText = cleanMsg.isNotEmpty && !isGenericLabel;
-      final bool hasTopHeader = widget.isForwarded ||
-          widget.replyText != null ||
-          (widget.senderName != null && widget.senderName!.isNotEmpty);
-
-      final imageRadius = hasTopHeader
-          ? BorderRadius.circular(12)
-          : BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: hasText
-                  ? Radius.zero
-                  : (widget.isMe ? const Radius.circular(16) : const Radius.circular(4)),
-              bottomRight: hasText
-                  ? Radius.zero
-                  : (widget.isMe ? const Radius.circular(4) : const Radius.circular(16)),
-            );
-
-      return ClipRRect(
-        borderRadius: imageRadius,
-        child: GestureDetector(
-          onTap: showFullImage ? _showImageViewer : _revealImage,
-          child: Container(
-            constraints: BoxConstraints(
-              maxWidth: maxW,
-              minWidth: maxW,
-              maxHeight: 420,
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                if (showFullImage)
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: maxW,
-                      minWidth: maxW,
-                      maxHeight: 420,
-                    ),
-                    child: RepaintBoundary(
-                      child: Image.file(
-                        File(_downloadedPath!),
-                        fit: BoxFit.cover,
-                        alignment: Alignment.topCenter,
-                        cacheWidth: 800,
-                        filterQuality: FilterQuality.medium,
-                        errorBuilder: (context, error, stackTrace) {
-                          try {
-                            if (_downloadedPath != null) {
-                              File(_downloadedPath!).deleteSync();
-                            }
-                          } catch (_) {}
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted) {
-                              setState(() {
-                                _downloadedPath = null;
-                                _downloadFailed = true;
-                              });
-                            }
-                          });
-                          return Container(
-                            constraints: BoxConstraints(
-                              maxWidth: maxW,
-                              minWidth: maxW,
-                              maxHeight: 220,
-                            ),
-                            color: isDark
-                                ? const Color(0xFF1F2A30)
-                                : const Color(0xFFCFD8DC),
-                            child: const Center(
-                              child: Icon(
-                                Icons.broken_image_rounded,
-                                size: 40,
-                                color: Colors.white70,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  )
-                else if (hasLocal)
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: maxW,
-                      minWidth: maxW,
-                      maxHeight: 420,
-                    ),
-                    child: RepaintBoundary(
-                      child: ImageFiltered(
-                        imageFilter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                        child: Image.file(
-                          File(_downloadedPath!),
-                          fit: BoxFit.cover,
-                          alignment: Alignment.topCenter,
-                          cacheWidth: 600,
-                          filterQuality: FilterQuality.low,
-                          errorBuilder: (context, error, stackTrace) {
-                            try {
-                              if (_downloadedPath != null) {
-                                File(_downloadedPath!).deleteSync();
-                              }
-                            } catch (_) {}
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) {
-                                setState(() {
-                                  _downloadedPath = null;
-                                  _downloadFailed = true;
-                                });
-                              }
-                            });
-                            return Container(
-                              constraints: BoxConstraints(
-                                maxWidth: maxW,
-                                minWidth: maxW,
-                                maxHeight: 220,
-                              ),
-                              color: isDark
-                                  ? const Color(0xFF1F2A30)
-                                  : const Color(0xFFCFD8DC),
-                              child: const Center(
-                                child: Icon(
-                                  Icons.broken_image_rounded,
-                                  size: 40,
-                                  color: Colors.white70,
-                                ),
-                              ),
-                            );
-                          },
+      final Widget imageContent = Container(
+        width: mediaSize.width,
+        height: mediaSize.height,
+        color: isDark ? const Color(0xFF1F2A30) : const Color(0xFFCFD8DC),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            if (showFullImage)
+              RepaintBoundary(
+                child: Image.file(
+                  File(_downloadedPath!),
+                  fit: BoxFit.cover,
+                  width: mediaSize.width,
+                  height: mediaSize.height,
+                  alignment: Alignment.topCenter,
+                  cacheWidth: 800,
+                  filterQuality: FilterQuality.medium,
+                  errorBuilder: (context, error, stackTrace) {
+                    try {
+                      if (_downloadedPath != null) {
+                        File(_downloadedPath!).deleteSync();
+                      }
+                    } catch (_) {}
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        setState(() {
+                          _downloadedPath = null;
+                          _downloadFailed = true;
+                        });
+                      }
+                    });
+                    return Container(
+                      width: mediaSize.width,
+                      height: mediaSize.height,
+                      color: isDark ? const Color(0xFF1F2A30) : const Color(0xFFCFD8DC),
+                      child: const Center(
+                        child: Icon(
+                          Icons.broken_image_rounded,
+                          size: 40,
+                          color: Colors.white70,
                         ),
                       ),
-                    ),
-                  )
-                else
-                  Container(
-                    constraints: BoxConstraints(
-                      maxWidth: maxW,
-                      minWidth: maxW,
-                      maxHeight: 220,
-                      minHeight: 140,
-                    ),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: isDark
-                            ? const [Color(0xFF1F2A30), Color(0xFF2C3840)]
-                            : const [Color(0xFFCFD8DC), Color(0xFFB0BEC5)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                    ),
-                    child: const Center(
-                      child: Icon(
-                        Icons.photo_outlined,
-                        size: 44,
-                        color: Colors.white70,
-                      ),
-                    ),
+                    );
+                  },
+                ),
+              )
+            else if (hasLocal)
+              RepaintBoundary(
+                child: ImageFiltered(
+                  imageFilter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                  child: Image.file(
+                    File(_downloadedPath!),
+                    fit: BoxFit.cover,
+                    width: mediaSize.width,
+                    height: mediaSize.height,
+                    alignment: Alignment.topCenter,
+                    cacheWidth: 600,
+                    filterQuality: FilterQuality.low,
+                    errorBuilder: (context, error, stackTrace) {
+                      try {
+                        if (_downloadedPath != null) {
+                          File(_downloadedPath!).deleteSync();
+                        }
+                      } catch (_) {}
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) {
+                          setState(() {
+                            _downloadedPath = null;
+                            _downloadFailed = true;
+                          });
+                        }
+                      });
+                      return Container(
+                        width: mediaSize.width,
+                        height: mediaSize.height,
+                        color: isDark ? const Color(0xFF1F2A30) : const Color(0xFFCFD8DC),
+                        child: const Center(
+                          child: Icon(
+                            Icons.broken_image_rounded,
+                            size: 40,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      );
+                    },
                   ),
+                ),
+              )
+            else
+              Container(
+                width: mediaSize.width,
+                height: mediaSize.height,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isDark
+                        ? const [Color(0xFF1F2A30), Color(0xFF2C3840)]
+                        : const [Color(0xFFCFD8DC), Color(0xFFB0BEC5)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: const Center(
+                  child: Icon(
+                    Icons.photo_outlined,
+                    size: 44,
+                    color: Colors.white70,
+                  ),
+                ),
+              ),
 
-                // Blur Overlay with Download / Download again button
-                if (!showFullImage)
-                  Positioned.fill(
-                    child: Container(
-                      color: Colors.black.withValues(alpha: 0.38),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          if (_isDownloading)
-                            const SizedBox(
-                              width: 32,
-                              height: 32,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.5,
+            // Blur Overlay with Download / Download again button
+            if (!showFullImage)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.38),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (_isDownloading)
+                        const SizedBox(
+                          width: 32,
+                          height: 32,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.download_rounded,
                                 color: Colors.white,
+                                size: 18,
                               ),
-                            )
-                          else
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.65),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.3),
-                                  width: 1,
+                              const SizedBox(width: 6),
+                              Text(
+                                _downloadFailed ? 'Download again' : 'Download',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.download_rounded,
-                                    color: Colors.white,
-                                    size: 18,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    _downloadFailed
-                                        ? 'Download again'
-                                        : 'Download',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
-                      ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+
+            // Bottom Gradient Overlay for readability
+            if (showFullImage)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.72),
+                      ],
                     ),
                   ),
-              ],
-            ),
-          ),
+                ),
+              ),
+
+            // Timestamp Overlay (when no text caption)
+            if (!hasText && showFullImage)
+              Positioned(
+                bottom: 6,
+                right: widget.isMe ? 14 : 8,
+                child: _buildTimestampWidget(
+                  isDark,
+                  overrideTextColor: Colors.white,
+                ),
+              ),
+          ],
         ),
+      );
+
+      final Widget styledImage = !hasText
+          ? ClipPath(
+              clipper: IMessageBubbleClipper(isOutgoing: widget.isMe),
+              child: imageContent,
+            )
+          : ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              child: imageContent,
+            );
+
+      return GestureDetector(
+        onTap: showFullImage ? _showImageViewer : _revealImage,
+        child: styledImage,
       );
     }
 
     // ─── 2. VIDEO ATTACHMENTS ─────────────────
     if (_isVideo) {
       final videoSource = _downloadedPath ?? widget.mediaUrl ?? '';
-      final double maxW = MediaQuery.of(context).size.width * 0.74;
+      final mediaSize = _getAdaptiveMediaSize(context, _videoAspectRatio);
 
-      final cleanMsg = widget.message.trim();
-      final isGenericLabel = cleanMsg == '[Attachment]' ||
-          cleanMsg == 'Photo' ||
-          cleanMsg == 'Video' ||
-          cleanMsg == 'Voice message';
-      final hasText = cleanMsg.isNotEmpty && !isGenericLabel;
-      final bool hasTopHeader = widget.isForwarded ||
-          widget.replyText != null ||
-          (widget.senderName != null && widget.senderName!.isNotEmpty);
+      Widget videoContent;
+      if (videoSource.isNotEmpty && hasLocal && _isMediaRevealed) {
+        videoContent = VideoThumbnailCard(
+          mediaUrl: videoSource,
+          width: mediaSize.width,
+          height: mediaSize.height,
+          onInfoResolved: (aspectRatio, duration) {
+            if (_videoAspectRatio != aspectRatio || _videoDuration != duration) {
+              if (mounted) {
+                setState(() {
+                  _videoAspectRatio = aspectRatio;
+                  _videoDuration = duration;
+                });
+              }
+            }
+          },
+          bottomLeading: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                CupertinoIcons.videocam_fill,
+                color: Colors.white,
+                size: 13,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                _formatMediaDuration(_videoDuration ?? Duration.zero),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          bottomTrailing: !hasText
+              ? _buildTimestampWidget(
+                  isDark,
+                  overrideTextColor: Colors.white,
+                )
+              : null,
+        );
+      } else {
+        videoContent = Container(
+          width: mediaSize.width,
+          height: mediaSize.height,
+          color: const Color(0xFF1C1C1E),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              const Center(
+                child: Icon(
+                  CupertinoIcons.videocam_fill,
+                  size: 44,
+                  color: Colors.white38,
+                ),
+              ),
+              Container(color: Colors.black.withValues(alpha: 0.45)),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (_isDownloading)
+                    const SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: Colors.white,
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.65),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.download_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _downloadFailed ? 'Download again' : 'Download',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+              if (!hasText)
+                Positioned(
+                  bottom: 6,
+                  right: widget.isMe ? 14 : 8,
+                  child: _buildTimestampWidget(
+                    isDark,
+                    overrideTextColor: Colors.white,
+                  ),
+                ),
+            ],
+          ),
+        );
+      }
 
-      final videoRadius = hasTopHeader
-          ? BorderRadius.circular(12)
-          : BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: hasText
-                  ? Radius.zero
-                  : (widget.isMe ? const Radius.circular(16) : const Radius.circular(4)),
-              bottomRight: hasText
-                  ? Radius.zero
-                  : (widget.isMe ? const Radius.circular(4) : const Radius.circular(16)),
+      final Widget styledVideo = !hasText
+          ? ClipPath(
+              clipper: IMessageBubbleClipper(isOutgoing: widget.isMe),
+              child: videoContent,
+            )
+          : ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              child: videoContent,
             );
 
       return GestureDetector(
         onTap: hasLocal
             ? _openAttachment
             : (_isDownloading ? null : _revealImage),
-        child: ClipRRect(
-          borderRadius: videoRadius,
-          child: Container(
-            width: maxW,
-            constraints: BoxConstraints(
-              maxWidth: maxW,
-              minWidth: maxW,
-              maxHeight: 420,
-              minHeight: 180,
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (videoSource.isNotEmpty)
-                  VideoThumbnailCard(
-                    mediaUrl: videoSource,
-                    width: maxW,
-                    height: 420,
-                    borderRadius: videoRadius,
-                  )
-                else
-                  Container(
-                    color: const Color(0xFF1C1C1E),
-                    child: const Center(
-                      child: Icon(
-                        CupertinoIcons.videocam_fill,
-                        size: 44,
-                        color: Colors.white38,
-                      ),
-                    ),
-                  ),
-                if (!hasLocal)
-                  Container(
-                    color: Colors.black.withValues(alpha: 0.45),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        if (_isDownloading)
-                          const SizedBox(
-                            width: 32,
-                            height: 32,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.5,
-                              color: Colors.white,
-                            ),
-                          )
-                        else
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.65),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.3),
-                                width: 1,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.download_rounded,
-                                  color: Colors.white,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  _downloadFailed
-                                      ? 'Download again'
-                                      : 'Download',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
+        child: styledVideo,
       );
     }
 
@@ -2264,22 +2337,20 @@ class _ChatBubbleState extends State<ChatBubble> {
       },
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 6),
-        padding: const EdgeInsets.all(7),
+        padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA),
+          color: isDark
+              ? const Color(0x60000000)
+              : const Color(0x35000000),
           shape: BoxShape.circle,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.12),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
-        child: Icon(
-          CupertinoIcons.reply_thick_solid,
-          size: 15,
-          color: isDark ? Colors.white70 : Colors.black87,
+        child: Transform.scale(
+          scaleX: -1,
+          child: const Icon(
+            CupertinoIcons.reply_thick_solid,
+            size: 14,
+            color: Colors.white,
+          ),
         ),
       ),
     );
@@ -2496,7 +2567,7 @@ class _ChatBubbleState extends State<ChatBubble> {
 
 
     final cleanType = (widget.type ?? 'text').toLowerCase().trim();
-    final cleanMsg = widget.message.trim();
+    final cleanMsg = normalizeEmojiText(widget.message.trim());
     final rawMediaUrl = widget.mediaUrl?.trim();
 
     final isSticker = cleanType == 'sticker' ||
@@ -2573,6 +2644,11 @@ class _ChatBubbleState extends State<ChatBubble> {
         : (isDark ? Colors.white : Colors.black);
 
     final mediaUrl = widget.mediaUrl;
+    final isGenericLabel = cleanMsg == '[Attachment]' ||
+        cleanMsg == 'Photo' ||
+        cleanMsg == 'Video' ||
+        cleanMsg == 'Voice message';
+    final hasText = cleanMsg.isNotEmpty && !isGenericLabel;
 
     final Widget bubbleBody = Padding(
       padding: const EdgeInsets.symmetric(vertical: 3.0, horizontal: 12.0),
@@ -2610,47 +2686,52 @@ class _ChatBubbleState extends State<ChatBubble> {
                     children: [
                       if (widget.isMe && mediaUrl != null && mediaUrl.trim().isNotEmpty)
                         _buildQuickForwardButton(isDark),
-                      Container(
-                        decoration: widget.isHighlighted
-                            ? BoxDecoration(
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: highlightBorderColor,
-                                  width: 2.2,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: highlightBorderColor.withValues(alpha: 0.55),
-                                    blurRadius: 14,
-                                    spreadRadius: 2,
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: Container(
+                          decoration: widget.isHighlighted
+                              ? BoxDecoration(
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: highlightBorderColor,
+                                    width: 2.2,
                                   ),
-                                ],
-                              )
-                            : null,
-                        child: CustomPaint(
-                          painter: IMessageBubblePainter(
-                            color: bubbleColor,
-                            isOutgoing: widget.isMe,
-                          ),
-                          child: Container(
-                            constraints: BoxConstraints(
-                              maxWidth: MediaQuery.of(context).size.width * 0.74,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: highlightBorderColor.withValues(alpha: 0.55),
+                                      blurRadius: 14,
+                                      spreadRadius: 2,
+                                    ),
+                                  ],
+                                )
+                              : null,
+                          child: CustomPaint(
+                            painter: IMessageBubblePainter(
+                              color: (_isImage || _isVideo) && !hasText
+                                  ? Colors.transparent
+                                  : bubbleColor,
+                              isOutgoing: widget.isMe,
                             ),
-                            margin: EdgeInsets.only(
-                              left: widget.isMe ? 0 : 6,
-                              right: widget.isMe ? 6 : 0,
-                            ),
-                            padding: (_isImage || _isVideo || _isAudio) && mediaUrl != null && mediaUrl.trim().isNotEmpty
-                                ? EdgeInsets.zero
-                                : const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 9,
-                                  ),
-                            child: _buildBubbleContent(
-                              context,
-                              isDark,
-                              textColor,
-                              mediaUrl,
+                            child: Container(
+                              constraints: BoxConstraints(
+                                maxWidth: MediaQuery.of(context).size.width * 0.74,
+                              ),
+                              margin: EdgeInsets.only(
+                                left: widget.isMe ? 0 : 6,
+                                right: widget.isMe ? 6 : 0,
+                              ),
+                              padding: (_isImage || _isVideo || _isAudio) && mediaUrl != null && mediaUrl.trim().isNotEmpty
+                                  ? EdgeInsets.zero
+                                  : const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 9,
+                                    ),
+                              child: _buildBubbleContent(
+                                context,
+                                isDark,
+                                textColor,
+                                mediaUrl,
+                              ),
                             ),
                           ),
                         ),
@@ -3637,32 +3718,34 @@ class IMessageBubblePainter extends CustomPainter {
     final path = Path();
     final double w = size.width;
     final double h = size.height;
-    const double r = 18.0;
+    const double r = 16.0;
 
     if (isOutgoing) {
       // Outgoing (Me / Right Tail)
+      final double mainW = w - 6.0;
       path.moveTo(r, 0);
-      path.lineTo(w - r, 0);
-      path.quadraticBezierTo(w, 0, w, r);
-      path.lineTo(w, h - 12);
-      path.quadraticBezierTo(w, h - 4, w + 6, h);
-      path.quadraticBezierTo(w - 2, h, w - 14, h);
+      path.lineTo(mainW - r, 0);
+      path.quadraticBezierTo(mainW, 0, mainW, r);
+      path.lineTo(mainW, h - 12);
+      path.quadraticBezierTo(mainW, h - 2, w, h);
+      path.quadraticBezierTo(mainW - 2, h, mainW - 14, h);
       path.lineTo(r, h);
       path.quadraticBezierTo(0, h, 0, h - r);
       path.lineTo(0, r);
       path.quadraticBezierTo(0, 0, r, 0);
     } else {
       // Incoming (Peer / Left Tail)
-      path.moveTo(w - r, 0);
-      path.lineTo(r, 0);
-      path.quadraticBezierTo(0, 0, 0, r);
-      path.lineTo(0, h - 12);
-      path.quadraticBezierTo(0, h - 4, -6, h);
-      path.quadraticBezierTo(2, h, 14, h);
-      path.lineTo(w - r, h);
-      path.quadraticBezierTo(w, h, w, h - r);
-      path.lineTo(w, r);
-      path.quadraticBezierTo(w, 0, w - r, 0);
+      const double startX = 6.0;
+      path.moveTo(startX + r, 0);
+      path.lineTo(w - r, 0);
+      path.quadraticBezierTo(w, 0, w, r);
+      path.lineTo(w, h - r);
+      path.quadraticBezierTo(w, h, w - r, h);
+      path.lineTo(startX + 14, h);
+      path.quadraticBezierTo(startX - 2, h, 0, h);
+      path.quadraticBezierTo(startX, h - 2, startX, h - 12);
+      path.lineTo(startX, r);
+      path.quadraticBezierTo(startX, 0, startX + r, 0);
     }
 
     path.close();
@@ -3672,6 +3755,60 @@ class IMessageBubblePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant IMessageBubblePainter oldDelegate) {
     return oldDelegate.color != color || oldDelegate.isOutgoing != isOutgoing;
+  }
+}
+
+class IMessageBubbleClipper extends CustomClipper<Path> {
+  final bool isOutgoing;
+  final double radius;
+
+  const IMessageBubbleClipper({
+    required this.isOutgoing,
+    this.radius = 16.0,
+  });
+
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    final double w = size.width;
+    final double h = size.height;
+    final double r = radius;
+
+    if (isOutgoing) {
+      // Outgoing (Me / Right Tail)
+      final double mainW = w - 6.0;
+      path.moveTo(r, 0);
+      path.lineTo(mainW - r, 0);
+      path.quadraticBezierTo(mainW, 0, mainW, r);
+      path.lineTo(mainW, h - 12);
+      path.quadraticBezierTo(mainW, h - 2, w, h);
+      path.quadraticBezierTo(mainW - 2, h, mainW - 14, h);
+      path.lineTo(r, h);
+      path.quadraticBezierTo(0, h, 0, h - r);
+      path.lineTo(0, r);
+      path.quadraticBezierTo(0, 0, r, 0);
+    } else {
+      // Incoming (Peer / Left Tail)
+      const double startX = 6.0;
+      path.moveTo(startX + r, 0);
+      path.lineTo(w - r, 0);
+      path.quadraticBezierTo(w, 0, w, r);
+      path.lineTo(w, h - r);
+      path.quadraticBezierTo(w, h, w - r, h);
+      path.lineTo(startX + 14, h);
+      path.quadraticBezierTo(startX - 2, h, 0, h);
+      path.quadraticBezierTo(startX, h - 2, startX, h - 12);
+      path.lineTo(startX, r);
+      path.quadraticBezierTo(startX, 0, startX + r, 0);
+    }
+
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant IMessageBubbleClipper oldClipper) {
+    return oldClipper.isOutgoing != isOutgoing || oldClipper.radius != radius;
   }
 }
 

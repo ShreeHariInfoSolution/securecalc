@@ -362,11 +362,11 @@ class _FloatingCallWidgetState extends State<FloatingCallWidget> {
                 ),
               ),
 
-              // 4. Bottom Controls (Mute & Hangup)
+              // 4. Bottom Controls (Mute, Flip Camera & Hangup)
               Positioned(
                 bottom: 8,
-                left: 8,
-                right: 8,
+                left: 6,
+                right: 6,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
@@ -388,6 +388,26 @@ class _FloatingCallWidgetState extends State<FloatingCallWidget> {
                         ),
                       ),
                     ),
+
+                    // Flip Camera (if camera active)
+                    if (callService.camOn)
+                      GestureDetector(
+                        onTap: () {
+                          callService.switchCamera();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: const BoxDecoration(
+                            color: Colors.black54,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            CupertinoIcons.camera_rotate_fill,
+                            color: Colors.white,
+                            size: 13,
+                          ),
+                        ),
+                      ),
 
                     // End Call Button
                     GestureDetector(

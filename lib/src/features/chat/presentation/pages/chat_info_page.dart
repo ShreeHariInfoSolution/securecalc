@@ -88,16 +88,40 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
   late int _disappearType;
   late bool _isBlocked;
   bool _blockingUser = false;
+  late bool _isLocked;
+  bool _lockingChat = false;
 
   @override
   void initState() {
     super.initState();
     _disappearType = widget.conversation.disappearType;
     _isBlocked = widget.conversation.isBlocked;
+    _isLocked = widget.conversation.isLocked;
     Future.microtask(() async {
       await _loadDetails();
       await _loadMedia();
     });
+  }
+
+  Future<void> _toggleLockChat() async {
+    final chatIdInt = int.tryParse(widget.conversation.id);
+    if (chatIdInt == null || chatIdInt <= 0) return;
+    setState(() => _lockingChat = true);
+    final success = _isLocked
+        ? await ServerChatManager.instance.unlockChat(chatIdInt)
+        : await ServerChatManager.instance.lockChat(chatIdInt);
+    if (mounted) {
+      setState(() {
+        _lockingChat = false;
+        if (success) _isLocked = !_isLocked;
+      });
+      AppToast.show(
+        success
+            ? (_isLocked ? 'Chat locked' : 'Chat unlocked')
+            : 'Failed to update chat lock.',
+        isError: !success,
+      );
+    }
   }
 
   @override
@@ -690,18 +714,6 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
     return clean.split('/').last;
   }
 
-  String _formatFileSize(int bytes) {
-    if (bytes <= 0) return '';
-    const suffixes = ['B', 'KB', 'MB', 'GB'];
-    var i = 0;
-    double count = bytes.toDouble();
-    while (count >= 1024 && i < suffixes.length - 1) {
-      count /= 1024;
-      i++;
-    }
-    return '${count.toStringAsFixed(count < 10 && i > 0 ? 1 : 0)} ${suffixes[i]}';
-  }
-
 
 
   Future<void> _clearChat() async {
@@ -740,10 +752,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       );
       return;
     }
-    await LocalChatStorage.instance.cacheMessages(
-      widget.conversation.id,
-      const [],
-    );
+    await LocalChatStorage.instance.clearChatMessages(widget.conversation.id);
     await LocalChatStorage.instance.updateConversation(
       widget.conversation.id,
       (conversation) => conversation.copyWith(
@@ -961,116 +970,6 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not remove this member.')),
       );
-    }
-  }
-
-  Future<void> _toggleAudio(ChatMediaItem item) async {
-    _audioPlayer ??= AudioPlayer();
-
-    if (_currentlyPlayingAudioUrl == item.fullUrl && _isPlayingAudio) {
-      await _audioPlayer?.pause();
-      setState(() => _isPlayingAudio = false);
-      return;
-    }
-
-    try {
-      await _audioPlayer?.stop();
-      final url = item.fullUrl;
-      if (url.startsWith('http://') || url.startsWith('https://')) {
-        await _audioPlayer?.play(UrlSource(url));
-      } else if (File(url).existsSync()) {
-        await _audioPlayer?.play(DeviceFileSource(url));
-      } else {
-        final cached = await AttachmentCacheService.instance.resolveLocalPath(
-          url,
-        );
-        if (cached != null && File(cached).existsSync()) {
-          await _audioPlayer?.play(DeviceFileSource(cached));
-        }
-      }
-      setState(() {
-        _currentlyPlayingAudioUrl = item.fullUrl;
-        _isPlayingAudio = true;
-      });
-      _audioPlayer?.onPlayerComplete.listen((_) {
-        if (mounted) {
-          setState(() {
-            _isPlayingAudio = false;
-            _currentlyPlayingAudioUrl = null;
-          });
-        }
-      });
-    } catch (e) {
-      debugPrint('[AUDIO PLAY ERROR] $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not play audio file.')),
-        );
-      }
-    }
-  }
-
-  Future<void> _openDocument(ChatMediaItem item) async {
-    final url = item.fullUrl;
-    if (item.folder == 'video') {
-      AppVideoPlayerModal.open(
-        context,
-        mediaUrl: url,
-        title: item.fileName,
-      );
-      return;
-    }
-    try {
-      if (!url.startsWith('http://') &&
-          !url.startsWith('https://') &&
-          File(url).existsSync()) {
-        await OpenFilex.open(url);
-        return;
-      }
-
-      final cached = await AttachmentCacheService.instance.resolveLocalPath(
-        url,
-      );
-      if (cached != null && File(cached).existsSync()) {
-        await OpenFilex.open(cached);
-        return;
-      }
-
-      // Download
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Opening ${item.fileName}...')));
-
-      final headers = ServerApiService.instance.authToken != null
-          ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
-          : null;
-
-      final res = await http.get(Uri.parse(url), headers: headers);
-      if (res.statusCode == 200) {
-        final dir = await getTemporaryDirectory();
-        final file = File('${dir.path}/${item.fileName}');
-        await file.writeAsBytes(res.bodyBytes);
-        AttachmentCacheService.instance.updateCache(url, file.path);
-        await OpenFilex.open(file.path);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to download document (${res.statusCode})'),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint('[DOC OPEN ERROR] $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppToast.userFriendlyMessage('Could not open file: $e'),
-            ),
-          ),
-        );
-      }
     }
   }
 
@@ -1505,6 +1404,44 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
 
                   const SizedBox(height: 18),
 
+                  // Lock / Unlock Chat Card
+                  _InfoCard(
+                    surface: surface,
+                    children: [
+                      ListTile(
+                        enabled: !_lockingChat,
+                        leading: _lockingChat
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Icon(
+                                _isLocked
+                                    ? CupertinoIcons.lock_open_fill
+                                    : CupertinoIcons.lock_fill,
+                                color: AppTheme.primaryColor,
+                              ),
+                        title: Text(
+                          _isLocked ? 'Unlock Chat' : 'Lock Chat',
+                          style: const TextStyle(
+                            color: AppTheme.primaryColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: Text(
+                          _isLocked
+                              ? 'Remove conversation from locked chats'
+                              : 'Hide this conversation behind passcode',
+                        ),
+                        onTap: _lockingChat ? null : _toggleLockChat,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+
                   // Block / Unblock Card
                   if (!widget.conversation.isGroup) ...[
                     _InfoCard(
@@ -1822,41 +1759,6 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
           ),
         ),
       ],
-    );
-  }
-
-
-
-  Widget _buildDocTypeIcon(String name) {
-    final ext = name.split('.').last.toLowerCase();
-    IconData iconData = CupertinoIcons.doc_fill;
-    Color iconColor = Colors.blue;
-
-    if (ext == 'pdf') {
-      iconData = CupertinoIcons.doc_text_fill;
-      iconColor = Colors.redAccent;
-    } else if (['doc', 'docx'].contains(ext)) {
-      iconData = CupertinoIcons.doc_richtext;
-      iconColor = Colors.blueAccent;
-    } else if (['xls', 'xlsx'].contains(ext)) {
-      iconData = CupertinoIcons.table_fill;
-      iconColor = Colors.green;
-    } else if (['zip', 'rar', '7z', 'tar', 'gz'].contains(ext)) {
-      iconData = CupertinoIcons.archivebox_fill;
-      iconColor = Colors.orange;
-    } else if (['txt', 'rtf'].contains(ext)) {
-      iconData = CupertinoIcons.doc_plaintext;
-      iconColor = Colors.grey;
-    }
-
-    return Container(
-      width: 38,
-      height: 38,
-      decoration: BoxDecoration(
-        color: iconColor.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Icon(iconData, color: iconColor, size: 22),
     );
   }
 }

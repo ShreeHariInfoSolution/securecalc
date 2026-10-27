@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
@@ -8,7 +9,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/ios_avatar.dart';
 import '../../domain/services/call_service.dart';
 
-enum _CallOverlayType { none, options, audioRoute }
+enum _CallOverlayType { none, audioRoute }
 
 class CallPage extends StatefulWidget {
   const CallPage({super.key});
@@ -34,6 +35,12 @@ class _CallPageState extends State<CallPage> {
   void initState() {
     super.initState();
     _callService.addListener(_onCallStateChanged);
+
+    _callService.refreshAudioDevices().then((_) {
+      if (mounted) {
+        _callService.initializeDefaultAudioRoute(_callService.callType);
+      }
+    });
   }
 
   @override
@@ -84,21 +91,38 @@ class _CallPageState extends State<CallPage> {
     });
   }
 
-  void _showAudioRouteSheet() {
-    _callService.refreshAudioDevices();
-    setState(() {
-      _activeOverlay = _activeOverlay == _CallOverlayType.audioRoute
-          ? _CallOverlayType.none
-          : _CallOverlayType.audioRoute;
-    });
+  void _handleAudioRouteTap() async {
+    await _callService.refreshAudioDevices();
+    if (!_callService.hasConnectedHeadphones) {
+      final nextRoute = _callService.audioRoute == AudioRoute.speaker
+          ? AudioRoute.earpiece
+          : AudioRoute.speaker;
+      await _callService.setAudioRoute(nextRoute);
+      if (mounted) {
+        setState(() {
+          _activeOverlay = _CallOverlayType.none;
+        });
+      }
+    } else {
+      if (mounted) {
+        setState(() {
+          _activeOverlay = _activeOverlay == _CallOverlayType.audioRoute
+              ? _CallOverlayType.none
+              : _CallOverlayType.audioRoute;
+        });
+      }
+    }
   }
 
-  void _showCallOptionsSheet() {
-    setState(() {
-      _activeOverlay = _activeOverlay == _CallOverlayType.options
-          ? _CallOverlayType.none
-          : _CallOverlayType.options;
-    });
+  bool _isAudioButtonActive() {
+    if (_activeOverlay == _CallOverlayType.audioRoute) {
+      return true;
+    }
+    if (!_callService.hasConnectedHeadphones) {
+      return _callService.audioRoute == AudioRoute.speaker;
+    }
+    return _callService.audioRoute == AudioRoute.speaker ||
+        _callService.audioRoute == AudioRoute.bluetooth;
   }
 
   Widget _buildRemoteVideoWidget() {
@@ -435,57 +459,66 @@ class _CallPageState extends State<CallPage> {
                 ),
               ),
 
-              // 3. User Info (Voice Call or pre-active Video Call)
+              // 3. Adaptive User Info Section (Voice Call or pre-active Video Call)
               if (!isVideo || _callService.state != CallState.active)
                 Positioned(
-                  top: topPadding + 85,
-                  left: 24,
-                  right: 24,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                          border: Border.all(
-                            color: AppTheme.primaryColor.withValues(alpha: 0.3),
-                            width: 2,
+                  top: topPadding + 60,
+                  left: 20,
+                  right: 20,
+                  bottom: bottomPadding + 140,
+                  child: Center(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                                border: Border.all(
+                                  color: AppTheme.primaryColor.withValues(alpha: 0.3),
+                                  width: 2,
+                                ),
+                              ),
+                              child: IosAvatar(
+                                name: _callService.peerName,
+                                imagePath: _callService.peerAvatar,
+                                size: 88,
+                                showOnline: false,
+                              ),
+                            ),
                           ),
-                        ),
-                        child: IosAvatar(
-                          name: _callService.peerName,
-                          imagePath: _callService.peerAvatar,
-                          size: 96,
-                          showOnline: false,
-                        ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _callService.peerName,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _getStatusText(),
+                            style: TextStyle(
+                              color: _callService.state == CallState.active
+                                  ? const Color(0xFF34C759)
+                                  : Colors.white70,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 18),
-                      Text(
-                        _callService.peerName,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _getStatusText(),
-                        style: TextStyle(
-                          color: _callService.state == CallState.active
-                              ? const Color(0xFF34C759)
-                              : Colors.white70,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
 
@@ -521,96 +554,119 @@ class _CallPageState extends State<CallPage> {
                   ),
                 ),
 
-              // 4. Anchored Frosted Glass Pop-up Capsule Overlay (Audio Route or Options)
-              if (_activeOverlay != _CallOverlayType.none)
-                _buildCallOverlay(context, bottomPadding),
 
-              // 5. Floating Control Bar
+
+              // 4. Floating Control Bar
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 280),
                 curve: Curves.easeOutBack,
-                left: 20,
-                right: 20,
-                bottom: _showControls ? bottomPadding + 20 : -120,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(40),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xB32C2C2E),
-                        borderRadius: BorderRadius.circular(40),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.22),
-                          width: 1,
-                        ),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Colors.black45,
-                            blurRadius: 20,
-                            offset: Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          // Options Button
-                          _CallControlButton(
-                            icon: CupertinoIcons.ellipsis,
-                            label: 'More',
-                            isActive: _activeOverlay == _CallOverlayType.options,
-                            onTap: _showCallOptionsSheet,
-                          ),
-
-                          // Video Camera Toggle (if video call)
-                          if (isVideo) ...[
-                            _CallControlButton(
-                              icon: _callService.camOn
-                                  ? CupertinoIcons.videocam_fill
-                                  : Icons.videocam_off,
-                              label: _callService.camOn ? 'Camera' : 'Off',
-                              isActive: !_callService.camOn,
-                              onTap: _callService.toggleCamera,
+                left: 16,
+                right: 16,
+                bottom: _showControls ? bottomPadding + 16 : -130,
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 500),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(40),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xB32C2C2E),
+                            borderRadius: BorderRadius.circular(40),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.22),
+                              width: 1,
                             ),
-                          ],
-
-                          // Speaker / Audio Route Button
-                          _CallControlButton(
-                            icon: _getSpeakerIcon(_callService.audioRoute),
-                            label: _getSpeakerLabel(_callService.audioRoute),
-                            isActive: _activeOverlay == _CallOverlayType.audioRoute ||
-                                _callService.audioRoute == AudioRoute.speaker,
-                            onTap: _showAudioRouteSheet,
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Colors.black45,
+                                blurRadius: 20,
+                                offset: Offset(0, 8),
+                              ),
+                            ],
                           ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // Video Switch / Request Button
+                              Expanded(
+                                child: _CallControlButton(
+                                  icon: isVideo ? CupertinoIcons.videocam_fill : CupertinoIcons.videocam,
+                                  label: isVideo ? 'Video On' : 'Video',
+                                  isActive: isVideo,
+                                  onTap: () {
+                                    if (isVideo) {
+                                      _callService.switchCallType(CallType.voice);
+                                    } else {
+                                      _callService.requestVideoCallSwitch();
+                                    }
+                                  },
+                                ),
+                              ),
 
-                          // Mute Mic Button
-                          _CallControlButton(
-                            icon: _callService.micOn
-                                ? CupertinoIcons.mic_fill
-                                : CupertinoIcons.mic_slash_fill,
-                            label: _callService.micOn ? 'Mute' : 'Muted',
-                            isActive: !_callService.micOn,
-                            onTap: _callService.toggleMute,
-                          ),
+                              // Camera Flip Button (when camera is on in video call)
+                              if (isVideo && _callService.camOn)
+                                Expanded(
+                                  child: _CallControlButton(
+                                    icon: CupertinoIcons.camera_rotate_fill,
+                                    label: 'Flip',
+                                    isActive: false,
+                                    onTap: () {
+                                      _callService.switchCamera();
+                                    },
+                                  ),
+                                ),
 
-                          // End Call Button (Red Circle)
-                          _CallControlButton(
-                            icon: CupertinoIcons.phone_down_fill,
-                            label: 'End',
-                            backgroundColor: const Color(0xFFFF3B30),
-                            iconColor: Colors.white,
-                            onTap: () async {
-                              await _callService.hangUp();
-                            },
+                              // Speaker / Audio Route Button
+                              Expanded(
+                                child: _CallControlButton(
+                                  icon: _getSpeakerIcon(_callService.audioRoute),
+                                  label: _getSpeakerLabel(_callService.audioRoute),
+                                  isActive: _isAudioButtonActive(),
+                                  onTap: _handleAudioRouteTap,
+                                ),
+                              ),
+
+                              // Mute Mic Button
+                              Expanded(
+                                child: _CallControlButton(
+                                  icon: _callService.micOn
+                                      ? CupertinoIcons.mic_fill
+                                      : CupertinoIcons.mic_slash_fill,
+                                  label: _callService.micOn ? 'Mute' : 'Muted',
+                                  isActive: !_callService.micOn,
+                                  onTap: _callService.toggleMute,
+                                ),
+                              ),
+
+                              // End Call Button (Red Circle)
+                              Expanded(
+                                child: _CallControlButton(
+                                  icon: CupertinoIcons.phone_down_fill,
+                                  label: 'End',
+                                  backgroundColor: const Color(0xFFFF3B30),
+                                  iconColor: Colors.white,
+                                  onTap: () async {
+                                    await _callService.hangUp();
+                                  },
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
+
+              // 5. Anchored Frosted Glass Pop-up Capsule Overlay
+              if (_activeOverlay != _CallOverlayType.none)
+                _buildCallOverlay(context, bottomPadding),
             ],
           ),
         ),
@@ -619,6 +675,7 @@ class _CallPageState extends State<CallPage> {
   }
 
   Widget _buildCallOverlay(BuildContext context, double bottomPadding) {
+    final screenSize = MediaQuery.of(context).size;
     return Stack(
       children: [
         Positioned.fill(
@@ -633,16 +690,19 @@ class _CallPageState extends State<CallPage> {
           ),
         ),
         Positioned(
-          bottom: bottomPadding + 108,
-          left: 24,
-          right: 24,
+          bottom: bottomPadding + 115,
+          left: 20,
+          right: 20,
           child: Center(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(28),
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
                 child: Container(
-                  constraints: const BoxConstraints(maxWidth: 320),
+                  constraints: BoxConstraints(
+                    maxWidth: 320,
+                    maxHeight: screenSize.height * 0.45,
+                  ),
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   decoration: BoxDecoration(
                     color: const Color(0xEB2C2C2E),
@@ -659,9 +719,10 @@ class _CallPageState extends State<CallPage> {
                       ),
                     ],
                   ),
-                  child: _activeOverlay == _CallOverlayType.options
-                      ? _buildCallOptionsCard()
-                      : _buildAudioRouteCard(),
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: _buildAudioRouteCard(),
+                  ),
                 ),
               ),
             ),
@@ -671,55 +732,9 @@ class _CallPageState extends State<CallPage> {
     );
   }
 
-  Widget _buildCallOptionsCard() {
-    final isVideo = _callService.callType == CallType.video;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _PopUpMenuTile(
-          icon: isVideo ? CupertinoIcons.phone_fill : CupertinoIcons.videocam_fill,
-          title: isVideo ? 'Switch to Voice Call' : 'Switch to Video Call',
-          isSelected: false,
-          onTap: () {
-            setState(() {
-              _activeOverlay = _CallOverlayType.none;
-            });
-            _callService.switchCallType(
-              isVideo ? CallType.voice : CallType.video,
-            );
-          },
-        ),
-        if (isVideo && _callService.camOn)
-          _PopUpMenuTile(
-            icon: CupertinoIcons.camera_rotate_fill,
-            title: 'Flip Camera',
-            isSelected: false,
-            onTap: () {
-              setState(() {
-                _activeOverlay = _CallOverlayType.none;
-              });
-              _callService.switchCamera();
-            },
-          ),
-        _PopUpMenuTile(
-          icon: CupertinoIcons.rectangle_on_rectangle_angled,
-          title: 'Minimize Call Window',
-          isSelected: false,
-          onTap: () {
-            setState(() {
-              _activeOverlay = _CallOverlayType.none;
-            });
-            _minimize();
-          },
-        ),
-      ],
-    );
-  }
-
   Widget _buildAudioRouteCard() {
     final currentRoute = _callService.audioRoute;
-    final hasHeadset = _callService.hasConnectedHeadset;
+    final hasHeadset = _callService.hasConnectedHeadphones;
     final headsetName = _callService.connectedHeadsetName;
 
     return Column(
@@ -738,7 +753,7 @@ class _CallPageState extends State<CallPage> {
         ),
         _PopUpMenuTile(
           icon: CupertinoIcons.phone_fill,
-          title: 'Phone Earpiece',
+          title: 'Phone',
           isSelected: currentRoute == AudioRoute.earpiece,
           onTap: () {
             _callService.setAudioRoute(AudioRoute.earpiece);
@@ -764,29 +779,34 @@ class _CallPageState extends State<CallPage> {
   }
 
   IconData _getSpeakerIcon(AudioRoute route) {
+    if (_callService.hasConnectedHeadphones && route == AudioRoute.bluetooth) {
+      return CupertinoIcons.headphones;
+    }
     switch (route) {
       case AudioRoute.speaker:
         return CupertinoIcons.speaker_3_fill;
-      case AudioRoute.earpiece:
-        return CupertinoIcons.phone_fill;
       case AudioRoute.bluetooth:
         return CupertinoIcons.headphones;
+      case AudioRoute.earpiece:
+        return CupertinoIcons.phone_fill;
     }
   }
 
   String _getSpeakerLabel(AudioRoute route) {
-    if (_callService.selectedAudioDeviceName.isNotEmpty &&
-        _callService.selectedAudioDeviceName != 'Speaker' &&
-        _callService.selectedAudioDeviceName != 'Earpiece') {
-      return _callService.selectedAudioDeviceName;
+    if (route == AudioRoute.bluetooth && _callService.hasConnectedHeadphones) {
+      final name = _callService.connectedHeadsetName;
+      if (name.isNotEmpty && name != 'Speaker' && name != 'Phone' && name != 'Earpiece') {
+        return name.length > 8 ? '${name.substring(0, 7)}…' : name;
+      }
+      return 'Headset';
     }
     switch (route) {
       case AudioRoute.speaker:
         return 'Speaker';
       case AudioRoute.earpiece:
-        return 'Earpiece';
+        return 'Phone';
       case AudioRoute.bluetooth:
-        return 'Headphones';
+        return 'Headset';
     }
   }
 }
@@ -875,23 +895,28 @@ class _CallControlButton extends StatelessWidget {
 
     return GestureDetector(
       onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            width: 52,
-            height: 52,
+            width: 50,
+            height: 50,
             decoration: BoxDecoration(
               color: bg,
               shape: BoxShape.circle,
             ),
             child: Center(
-              child: Icon(icon, color: ic, size: 24),
+              child: Icon(icon, color: ic, size: 22),
             ),
           ),
           const SizedBox(height: 6),
           Text(
             label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
             style: const TextStyle(
               color: Colors.white70,
               fontSize: 11,

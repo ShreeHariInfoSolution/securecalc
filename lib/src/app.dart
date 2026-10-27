@@ -56,6 +56,7 @@ class _SynqChatAppState extends State<SynqChatApp> with WidgetsBindingObserver {
   }
 
   void _lockToCalculator() {
+    CallService.instance.isCalculatorVisibleNotifier.value = true;
     final nav = navigatorKey.currentState;
     if (nav != null) {
       nav.pushAndRemoveUntil(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 
@@ -13,6 +14,7 @@ import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
 import 'chat_wallpaper_widget.dart';
+import 'sticker_picker_panel.dart';
 
 /// iOS WhatsApp-style frosted glass peek preview dialog on long press in chat list.
 class ChatPeekPreviewDialog extends StatefulWidget {
@@ -108,12 +110,7 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
   }
 
   bool _isSingleEmoji(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return false;
-    final regex = RegExp(
-      r'^(?:[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF])+$',
-    );
-    return regex.hasMatch(trimmed) && trimmed.runes.length <= 3;
+    return getEmojiOnlyCount(text) == 1;
   }
 
   bool _isImageMessage(ChatMessage msg) {
@@ -219,7 +216,7 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
                 ? CrossAxisAlignment.end
                 : CrossAxisAlignment.start,
             children: [
-              Text(msg.content.trim(), style: const TextStyle(fontSize: 48)),
+              Text(normalizeEmojiText(msg.content.trim()), style: const TextStyle(fontSize: 48)),
               Text(
                 _formatTime(msg.timestamp),
                 style: TextStyle(
@@ -629,43 +626,72 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
                                     _buildDivider(isDark),
 
                                     // Hide / Show Profile
-                                    if (!widget.conversation.isGroup &&
-                                        widget.conversation.peerUserId != null &&
-                                        widget.conversation.peerUserId! > 0) ...[
-                                      _buildActionTile(
-                                        context: context,
-                                        isDark: isDark,
-                                        icon: widget.conversation.isProfileHidden
-                                            ? CupertinoIcons.eye
-                                            : CupertinoIcons.eye_slash,
-                                        label: widget.conversation.isProfileHidden
-                                            ? 'Show My Profile'
-                                            : 'Hide My Profile',
-                                        onTap: () async {
-                                          Navigator.pop(context);
-                                          final peerId = widget.conversation.peerUserId!;
-                                          final hide = !widget.conversation.isProfileHidden;
-                                          final success = await ServerChatManager.instance
-                                              .toggleProfileVisibility(widget.conversation.id, peerId, hide);
-                                          if (mounted && success) {
-                                            AppToast.show(
-                                              hide ? 'Profile hidden from user' : 'Profile visible to user',
-                                            );
-                                          }
-                                        },
-                                      ),
-                                      _buildDivider(isDark),
-                                    ],
+                                    () {
+                                      final currentUserId = ServerApiService.instance.currentUserId;
+                                      final effectivePeerId = widget.conversation.peerUserId ??
+                                          (widget.conversation.isGroup ? null : int.tryParse(widget.conversation.id));
+                                      if (!widget.conversation.isGroup &&
+                                          effectivePeerId != null &&
+                                          effectivePeerId > 0 &&
+                                          effectivePeerId != currentUserId) {
+                                        return Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            _buildActionTile(
+                                              context: context,
+                                              isDark: isDark,
+                                              icon: widget.conversation.isProfileHidden
+                                                  ? CupertinoIcons.eye
+                                                  : CupertinoIcons.eye_slash,
+                                              label: widget.conversation.isProfileHidden
+                                                  ? 'Show My Profile'
+                                                  : 'Hide My Profile',
+                                              onTap: () async {
+                                                Navigator.pop(context);
+                                                final hide = !widget.conversation.isProfileHidden;
+                                                final success = await ServerChatManager.instance
+                                                    .toggleProfileVisibility(widget.conversation.id, effectivePeerId, hide);
+                                                if (mounted && success) {
+                                                  AppToast.show(
+                                                    hide ? 'Profile hidden from user' : 'Profile visible to user',
+                                                  );
+                                                }
+                                              },
+                                            ),
+                                            _buildDivider(isDark),
+                                          ],
+                                        );
+                                      }
+                                      return const SizedBox.shrink();
+                                    }(),
 
-                                    // 4. Lock chat
+                                    // 4. Lock / Unlock chat
                                     _buildActionTile(
                                       context: context,
                                       isDark: isDark,
-                                      icon: CupertinoIcons.lock,
-                                      label: 'Lock chat',
-                                      onTap: () {
+                                      icon: widget.conversation.isLocked
+                                          ? CupertinoIcons.lock_open
+                                          : CupertinoIcons.lock,
+                                      label: widget.conversation.isLocked
+                                          ? 'Unlock chat'
+                                          : 'Lock chat',
+                                      onTap: () async {
                                         Navigator.pop(context);
-                                        widget.onOpenChat();
+                                        final isLocked = widget.conversation.isLocked;
+                                        final chatIdInt = int.tryParse(widget.conversation.id);
+                                        if (chatIdInt != null && chatIdInt > 0) {
+                                          final success = isLocked
+                                              ? await ServerChatManager.instance.unlockChat(chatIdInt)
+                                              : await ServerChatManager.instance.lockChat(chatIdInt);
+                                          if (success) {
+                                            AppToast.show(isLocked ? 'Chat unlocked' : 'Chat locked');
+                                          } else {
+                                            AppToast.show(
+                                              'Failed to ${isLocked ? "unlock" : "lock"} chat',
+                                              isError: true,
+                                            );
+                                          }
+                                        }
                                       },
                                     ),
                                     _buildDivider(isDark),

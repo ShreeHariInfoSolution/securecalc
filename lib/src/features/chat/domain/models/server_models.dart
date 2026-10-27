@@ -337,6 +337,140 @@ class ServerChatListPageModel {
   }
 }
 
+/// Combined Deleted Chats & Messages API Response Model
+class ServerDeletedItemsResponse {
+  final int retentionDays;
+  final int page;
+  final int limit;
+  final List<ServerChatModel> chats;
+  final int chatsTotal;
+  final int chatsTotalPages;
+  final bool chatsHasMore;
+  final List<ServerMessageModel> messages;
+  final int messagesTotal;
+  final int messagesTotalPages;
+  final bool messagesHasMore;
+
+  ServerDeletedItemsResponse({
+    required this.retentionDays,
+    required this.page,
+    required this.limit,
+    required this.chats,
+    required this.chatsTotal,
+    required this.chatsTotalPages,
+    required this.chatsHasMore,
+    required this.messages,
+    required this.messagesTotal,
+    required this.messagesTotalPages,
+    required this.messagesHasMore,
+  });
+
+  factory ServerDeletedItemsResponse.fromJson(Map<String, dynamic> json) {
+    int readInt(dynamic v, int fallback) {
+      if (v is int) return v;
+      if (v != null) {
+        final parsed = int.tryParse(v.toString());
+        if (parsed != null) return parsed;
+      }
+      return fallback;
+    }
+
+    final data = json['data'] is Map<String, dynamic>
+        ? json['data'] as Map<String, dynamic>
+        : (json['data'] is Map
+            ? Map<String, dynamic>.from(json['data'] as Map)
+            : json);
+
+    final retentionDays = readInt(data['retention_days'] ?? data['retentionDays'], 30);
+    final page = readInt(data['page'], 1);
+    final limit = readInt(data['limit'], 20);
+
+    // Parse Chats
+    final List<ServerChatModel> chatsList = [];
+    int chatsTotal = 0;
+    int chatsTotalPages = 1;
+    bool chatsHasMore = false;
+
+    final chatsMap = data['chats'];
+    if (chatsMap is Map) {
+      chatsTotal = readInt(chatsMap['total'], 0);
+      chatsTotalPages = readInt(chatsMap['total_pages'] ?? chatsMap['totalPages'], 1);
+      final rawHasMore = chatsMap['has_more'] ?? chatsMap['hasMore'];
+      chatsHasMore = rawHasMore is bool
+          ? rawHasMore
+          : (chatsTotalPages > page);
+      final items = chatsMap['items'] ?? chatsMap['data'];
+      if (items is List) {
+        for (final c in items) {
+          if (c is Map<String, dynamic>) {
+            chatsList.add(ServerChatModel.fromJson(c));
+          } else if (c is Map) {
+            chatsList.add(ServerChatModel.fromJson(Map<String, dynamic>.from(c)));
+          }
+        }
+      }
+    } else if (chatsMap is List) {
+      for (final c in chatsMap) {
+        if (c is Map<String, dynamic>) {
+          chatsList.add(ServerChatModel.fromJson(c));
+        } else if (c is Map) {
+          chatsList.add(ServerChatModel.fromJson(Map<String, dynamic>.from(c)));
+        }
+      }
+      chatsTotal = chatsList.length;
+    }
+
+    // Parse Messages
+    final List<ServerMessageModel> messagesList = [];
+    int messagesTotal = 0;
+    int messagesTotalPages = 1;
+    bool messagesHasMore = false;
+
+    final messagesMap = data['messages'];
+    if (messagesMap is Map) {
+      messagesTotal = readInt(messagesMap['total'], 0);
+      messagesTotalPages = readInt(messagesMap['total_pages'] ?? messagesMap['totalPages'], 1);
+      final rawHasMore = messagesMap['has_more'] ?? messagesMap['hasMore'];
+      messagesHasMore = rawHasMore is bool
+          ? rawHasMore
+          : (messagesTotalPages > page);
+      final items = messagesMap['items'] ?? messagesMap['data'];
+      if (items is List) {
+        for (final m in items) {
+          if (m is Map<String, dynamic>) {
+            messagesList.add(ServerMessageModel.fromJson(m));
+          } else if (m is Map) {
+            messagesList.add(ServerMessageModel.fromJson(Map<String, dynamic>.from(m)));
+          }
+        }
+      }
+    } else if (messagesMap is List) {
+      for (final m in messagesMap) {
+        if (m is Map<String, dynamic>) {
+          messagesList.add(ServerMessageModel.fromJson(m));
+        } else if (m is Map) {
+          messagesList.add(ServerMessageModel.fromJson(Map<String, dynamic>.from(m)));
+        }
+      }
+      messagesTotal = messagesList.length;
+    }
+
+    return ServerDeletedItemsResponse(
+      retentionDays: retentionDays,
+      page: page,
+      limit: limit,
+      chats: chatsList,
+      chatsTotal: chatsTotal,
+      chatsTotalPages: chatsTotalPages,
+      chatsHasMore: chatsHasMore,
+      messages: messagesList,
+      messagesTotal: messagesTotal,
+      messagesTotalPages: messagesTotalPages,
+      messagesHasMore: messagesHasMore,
+    );
+  }
+}
+
 /// Represents a media attachment item returned in Chat Details API (GET /chats/:chatId)
 class ServerChatMediaItemModel {
   final int id;
@@ -408,6 +542,7 @@ class ServerChatModel {
   final List<ServerChatMediaItemModel> media;
   final String? backgroundUrl;
   final bool isBlocked;
+  final bool isLocked;
 
   ServerChatModel({
     required this.id,
@@ -433,6 +568,7 @@ class ServerChatModel {
     this.media = const [],
     this.backgroundUrl,
     this.isBlocked = false,
+    this.isLocked = false,
   });
 
   factory ServerChatModel.fromJson(Map<String, dynamic> json) {
@@ -587,6 +723,12 @@ class ServerChatModel {
         rawBlocked == 'true' ||
         rawBlocked == '1';
 
+    final rawLocked = json['is_locked'] ?? json['isLocked'] ?? json['locked'];
+    final isLockedVal = rawLocked == true ||
+        rawLocked == 1 ||
+        rawLocked == 'true' ||
+        rawLocked == '1';
+
     return ServerChatModel(
       id: rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? 0),
       groupName:
@@ -657,6 +799,7 @@ class ServerChatModel {
       backgroundUrl: (json['background_url'] ?? json['backgroundUrl'])
           ?.toString(),
       isBlocked: isBlockedVal,
+      isLocked: isLockedVal,
     );
   }
 }
@@ -690,6 +833,9 @@ class ServerMessageModel {
   final String? callType;
   final String? callStatus;
   final int? callDuration;
+  final String? deletedAt;
+  final String? recoverUntil;
+  final int? daysLeft;
 
   ServerMessageModel({
     required this.id,
@@ -719,6 +865,9 @@ class ServerMessageModel {
     this.callType,
     this.callStatus,
     this.callDuration,
+    this.deletedAt,
+    this.recoverUntil,
+    this.daysLeft,
   });
 
   factory ServerMessageModel.fromJson(Map<String, dynamic> json) {
@@ -875,6 +1024,11 @@ class ServerMessageModel {
       callType: rawCallType,
       callStatus: rawCallStatus,
       callDuration: parsedCallDuration,
+      deletedAt: (json['deleted_at'] ?? json['deletedAt'])?.toString(),
+      recoverUntil: (json['recover_until'] ?? json['recoverUntil'])?.toString(),
+      daysLeft: json['days_left'] is int
+          ? json['days_left'] as int
+          : int.tryParse(json['days_left']?.toString() ?? ''),
     );
   }
 

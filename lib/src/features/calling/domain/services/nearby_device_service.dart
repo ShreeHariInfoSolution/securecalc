@@ -86,57 +86,6 @@ class NearbyDeviceService {
 
   // --- MERGING & DEDUPLICATION LOGIC ---
 
-  void _handleWifiDeviceDiscovered(
-      String deviceId, String displayName, String? profileImagePath, String ipAddress, int port) {
-    if (deviceId == _currentDeviceId) return; // Never show current device
-
-    // Update conversation in LocalChatStorage with peer's display name and profile image!
-    LocalChatStorage.instance.updatePeerProfile(
-      deviceId: deviceId,
-      displayName: displayName,
-      avatarUrl: profileImagePath,
-    );
-
-    final existing = _discoveredDevices[deviceId];
-
-    if (existing == null) {
-      final newDevice = NearbyDevice(
-        deviceId: deviceId,
-        displayName: displayName,
-        profileImagePath: profileImagePath,
-        ipAddress: ipAddress,
-        port: port,
-        source: DiscoverySource.wifi,
-        isWifiAvailable: true,
-        isBluetoothAvailable: false,
-        lastSeen: DateTime.now(),
-      );
-      _discoveredDevices[deviceId] = newDevice;
-      _deviceDiscoveredController.add(newDevice);
-      AppLogger.info(
-          '[NEARBY] Merged $displayName ($deviceId) - Sources: ${newDevice.source.name} (IP: $ipAddress)');
-    } else {
-      final updatedSource = existing.isBluetoothAvailable
-          ? DiscoverySource.both
-          : DiscoverySource.wifi;
-
-      final updatedDevice = existing.copyWith(
-        displayName: displayName,
-        profileImagePath: profileImagePath ?? existing.profileImagePath,
-        ipAddress: ipAddress,
-        port: port,
-        isWifiAvailable: true,
-        source: updatedSource,
-        lastSeen: DateTime.now(),
-      );
-      _discoveredDevices[deviceId] = updatedDevice;
-      AppLogger.info(
-          '[NEARBY] Merged $displayName ($deviceId) - Sources: ${updatedDevice.source.name} (IP: $ipAddress)');
-    }
-
-    _notifyUpdates();
-  }
-
   void _handleBluetoothDeviceDiscovered(String deviceId) {
     if (deviceId == _currentDeviceId) return; // Never show current device
 
@@ -167,25 +116,6 @@ class NearbyDeviceService {
       _discoveredDevices[deviceId] = updatedDevice;
       AppLogger.info(
           '[NEARBY] Merged $deviceId - Sources: ${updatedDevice.source.name}');
-    }
-
-    _notifyUpdates();
-  }
-
-  void _handleWifiDeviceLost(String deviceId) {
-    final existing = _discoveredDevices[deviceId];
-    if (existing == null) return;
-
-    if (existing.isBluetoothAvailable) {
-      final updatedDevice = existing.copyWith(
-        isWifiAvailable: false,
-        source: DiscoverySource.bluetooth,
-      );
-      _discoveredDevices[deviceId] = updatedDevice;
-      AppLogger.info('[NEARBY] $deviceId lost Wi-Fi, keeping via Bluetooth');
-    } else {
-      _discoveredDevices.remove(deviceId);
-      AppLogger.info('[NEARBY] $deviceId removed');
     }
 
     _notifyUpdates();

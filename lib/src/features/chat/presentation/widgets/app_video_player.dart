@@ -493,6 +493,10 @@ class VideoThumbnailCard extends StatefulWidget {
   final double width;
   final double height;
   final BorderRadius? borderRadius;
+  final Function(double aspectRatio, Duration duration)? onInfoResolved;
+  final Widget? bottomTrailing;
+  final Widget? bottomLeading;
+  final bool showDefaultOverlay;
 
   const VideoThumbnailCard({
     super.key,
@@ -500,6 +504,10 @@ class VideoThumbnailCard extends StatefulWidget {
     this.width = double.infinity,
     this.height = 200,
     this.borderRadius,
+    this.onInfoResolved,
+    this.bottomTrailing,
+    this.bottomLeading,
+    this.showDefaultOverlay = true,
   });
 
   @override
@@ -514,6 +522,17 @@ class _VideoThumbnailCardState extends State<VideoThumbnailCard> {
   void initState() {
     super.initState();
     _loadThumbnail();
+  }
+
+  @override
+  void didUpdateWidget(VideoThumbnailCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.mediaUrl != widget.mediaUrl) {
+      _controller?.dispose();
+      _controller = null;
+      _isInitialized = false;
+      _loadThumbnail();
+    }
   }
 
   @override
@@ -562,107 +581,160 @@ class _VideoThumbnailCardState extends State<VideoThumbnailCard> {
           _controller = controller;
           _isInitialized = true;
         });
+        if (controller.value.size.width > 0 && controller.value.size.height > 0) {
+          widget.onInfoResolved?.call(
+            controller.value.aspectRatio,
+            controller.value.duration,
+          );
+        }
       }
     } catch (e) {
       debugPrint('[VIDEO THUMBNAIL INIT ERROR] $e');
     }
   }
 
+  String _formatDuration(Duration duration) {
+    if (duration.inHours > 0) {
+      final h = duration.inHours;
+      final m = (duration.inMinutes % 60).toString().padLeft(2, '0');
+      final s = (duration.inSeconds % 60).toString().padLeft(2, '0');
+      return '$h:$m:$s';
+    } else {
+      final m = duration.inMinutes;
+      final s = (duration.inSeconds % 60).toString().padLeft(2, '0');
+      return '$m:$s';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final radius = widget.borderRadius ?? BorderRadius.circular(12);
-
-    return ClipRRect(
-      borderRadius: radius,
-      child: Container(
-        width: widget.width,
-        height: widget.height,
-        color: const Color(0xFF1C1C1E),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            if (_isInitialized && _controller != null)
-              SizedBox.expand(
-                child: FittedBox(
-                  fit: BoxFit.cover,
-                  clipBehavior: Clip.hardEdge,
-                  child: SizedBox(
-                    width: _controller!.value.size.width,
-                    height: _controller!.value.size.height,
-                    child: VideoPlayer(_controller!),
-                  ),
-                ),
-              )
-            else
-              const Center(
-                child: Icon(
-                  CupertinoIcons.videocam_fill,
-                  size: 38,
-                  color: Colors.white38,
+    final cardContent = Container(
+      width: widget.width,
+      height: widget.height,
+      color: const Color(0xFF1C1C1E),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (_isInitialized && _controller != null)
+            SizedBox.expand(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                clipBehavior: Clip.hardEdge,
+                child: SizedBox(
+                  width: _controller!.value.size.width,
+                  height: _controller!.value.size.height,
+                  child: VideoPlayer(_controller!),
                 ),
               ),
-
-            // Subtle dark overlay
-            Container(color: Colors.black.withValues(alpha: 0.25)),
-
-            // Play Button Overlay
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.65),
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white70, width: 1.5),
-              ),
-              child: const Icon(
-                Icons.play_arrow_rounded,
-                color: Colors.white,
-                size: 30,
+            )
+          else
+            const Center(
+              child: Icon(
+                CupertinoIcons.videocam_fill,
+                size: 38,
+                color: Colors.white38,
               ),
             ),
 
-            // Video Tag badge
-            Positioned(
-              bottom: 8,
-              right: 8,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.65),
-                  borderRadius: BorderRadius.circular(6),
+          // Translucent Play Button Overlay (WhatsApp style)
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.82),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.play_circle_fill_rounded,
-                      color: Colors.white,
-                      size: 11,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      _isInitialized && _controller != null
-                          ? _formatDuration(_controller!.value.duration)
-                          : 'VIDEO',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+              ],
+            ),
+            child: const Center(
+              child: Padding(
+                padding: EdgeInsets.only(left: 3),
+                child: Icon(
+                  Icons.play_arrow_rounded,
+                  color: Color(0xFF2C2C2E),
+                  size: 36,
+                ),
+              ),
+            ),
+          ),
+
+          // Bottom Gradient Overlay for text readability
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              height: 48,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.72),
                   ],
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+
+          // Bottom Leading (Duration / Video Icon)
+          if (widget.bottomLeading != null)
+            Positioned(
+              left: 10,
+              bottom: 6,
+              child: widget.bottomLeading!,
+            )
+          else if (widget.showDefaultOverlay)
+            Positioned(
+              left: 10,
+              bottom: 6,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    CupertinoIcons.videocam_fill,
+                    color: Colors.white,
+                    size: 13,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _isInitialized && _controller != null
+                        ? _formatDuration(_controller!.value.duration)
+                        : '0:00',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Bottom Trailing (Timestamp + Status Ticks)
+          if (widget.bottomTrailing != null)
+            Positioned(
+              right: 8,
+              bottom: 6,
+              child: widget.bottomTrailing!,
+            ),
+        ],
       ),
     );
-  }
 
-  String _formatDuration(Duration d) {
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$m:$s';
+    if (widget.borderRadius != null) {
+      return ClipRRect(
+        borderRadius: widget.borderRadius!,
+        child: cardContent,
+      );
+    }
+
+    return cardContent;
   }
 }

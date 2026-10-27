@@ -544,6 +544,25 @@ class _StickerDisplayWidgetState extends State<StickerDisplayWidget>
   }
 }
 
+/// Normalizes emoji strings by ensuring emojis that default to text presentation
+/// (such as U+2764 Heavy Black Heart) have Variation Selector-16 (\uFE0F) attached,
+/// forcing them to render as full-color emojis instead of monochrome text glyphs (which render white).
+String normalizeEmojiText(String text) {
+  if (text.isEmpty) return text;
+  return text
+      .replaceAll(RegExp(r'\u2764(?!\uFE0F)'), '\u2764\uFE0F')
+      .replaceAll(RegExp(r'\u2665(?!\uFE0F)'), '\u2665\uFE0F')
+      .replaceAll(RegExp(r'\u2763(?!\uFE0F)'), '\u2763\uFE0F')
+      .replaceAll(RegExp(r'\u26A1(?!\uFE0F)'), '\u26A1\uFE0F')
+      .replaceAll(RegExp(r'\u263A(?!\uFE0F)'), '\u263A\uFE0F')
+      .replaceAll(RegExp(r'\u270C(?!\uFE0F)'), '\u270C\uFE0F')
+      .replaceAll(RegExp(r'\u261D(?!\uFE0F)'), '\u261D\uFE0F')
+      .replaceAll(RegExp(r'\u270B(?!\uFE0F)'), '\u270B\uFE0F')
+      .replaceAll(RegExp(r'\u270A(?!\uFE0F)'), '\u270A\uFE0F')
+      .replaceAll(RegExp(r'\u260E(?!\uFE0F)'), '\u260E\uFE0F')
+      .replaceAll(RegExp(r'\u26A0(?!\uFE0F)'), '\u26A0\uFE0F');
+}
+
 /// Animated Jumbo Single Emoji Widget (WhatsApp & iMessage Style)
 class JumboAnimatedEmoji extends StatefulWidget {
   final String emoji;
@@ -584,10 +603,11 @@ class _JumboAnimatedEmojiState extends State<JumboAnimatedEmoji>
 
   @override
   Widget build(BuildContext context) {
+    final cleanEmoji = normalizeEmojiText(widget.emoji);
     return ScaleTransition(
       scale: _scaleAnimation,
       child: Text(
-        widget.emoji,
+        cleanEmoji,
         style: TextStyle(
           fontSize: widget.fontSize,
           height: 1.15,

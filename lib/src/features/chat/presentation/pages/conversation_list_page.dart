@@ -11,10 +11,10 @@ import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/core/widgets/vault_edge_panel_wrapper.dart';
 import 'package:securecalc/src/features/calculator/presentation/pages/calculator_page.dart';
+import 'package:securecalc/src/features/calling/presentation/pages/call_history_view.dart';
 import 'package:securecalc/src/features/private_folder/presentation/pages/private_folder_page.dart';
 
 import '../../domain/entities/chat_conversation.dart';
-import '../../domain/models/server_models.dart';
 import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/attachment_cache_service.dart';
 import '../../domain/services/server_api_service.dart';
@@ -23,14 +23,15 @@ import '../../domain/services/chat_invite_service.dart';
 import '../widgets/conversation_tile.dart';
 import '../widgets/chat_peek_preview_dialog.dart';
 import '../../domain/services/bot_assistant_service.dart';
+import '../../../calculator/domain/calculator_logic.dart';
 import 'archived_list_page.dart';
 import 'bot_chat_detail_page.dart';
 import 'chat_detail_page.dart';
 import 'deleted_chats_page.dart';
+import 'locked_chats_page.dart';
 import 'secret_settings_page.dart';
 import 'share/scan_qr_page.dart';
 import 'share/share_qr_page.dart';
-import '../../../calling/presentation/pages/call_history_view.dart';
 
 
 
@@ -45,7 +46,7 @@ class ConversationListPage extends StatefulWidget {
   State<ConversationListPage> createState() => _ConversationListPageState();
 }
 
-class _ConversationListPageState extends State<ConversationListPage> {
+class _ConversationListPageState extends State<ConversationListPage> with WidgetsBindingObserver {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
@@ -56,7 +57,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
   int _selectedTabIndex = 0;
   bool _showFilterChips = false;
   bool _isSyncing = false;
-
+  bool _isLockedChatsUnlocked = false;
 
   int _currentChatPage = 1;
   bool _hasMoreChats = true;
@@ -65,6 +66,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(initialPage: _selectedTabIndex);
     _scrollController.addListener(_onScroll);
     _searchController.addListener(_onSearchChanged);
@@ -75,6 +77,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
@@ -84,7 +87,39 @@ class _ConversationListPageState extends State<ConversationListPage> {
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      if (_isLockedChatsUnlocked) {
+        setState(() {
+          _isLockedChatsUnlocked = false;
+        });
+      }
+    }
+  }
+
   void _onSearchChanged() {
+    final query = _searchController.text.trim();
+    final secretPasscode = CalculatorLogic.secretPasscode.trim();
+
+    if (secretPasscode.isNotEmpty &&
+        (query == secretPasscode || query == '$secretPasscode=')) {
+      _searchController.clear();
+      _searchFocusNode.unfocus();
+      FocusManager.instance.primaryFocus?.unfocus();
+
+      if (!_isLockedChatsUnlocked) {
+        setState(() {
+          _isLockedChatsUnlocked = true;
+        });
+        HapticFeedback.mediumImpact();
+        AppToast.show('Locked chats revealed');
+      }
+      return;
+    }
+
     setState(() {});
   }
 
@@ -540,443 +575,6 @@ class _ConversationListPageState extends State<ConversationListPage> {
     );
   }
 
-  void _showCreateGroupSheet(BuildContext context) {
-    final groupNameController = TextEditingController();
-    final selectedUserIds = <int>{};
-    List<UserModel> users = [];
-    bool loadingUsers = true;
-    bool submitting = false;
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).brightness == Brightness.dark
-          ? AppTheme.darkSurface
-          : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) {
-          Future<void> loadUsers() async {
-            try {
-              final result = await ServerApiService.instance.getUsersPage(
-                page: 1,
-                limit: 50,
-              );
-              final meId = ServerApiService.instance.currentUserId;
-              if (sheetContext.mounted) {
-                setSheetState(() {
-                  users = result.users.where((u) => u.id != meId).toList();
-                  loadingUsers = false;
-                });
-              }
-            } catch (_) {
-              if (sheetContext.mounted) {
-                setSheetState(() => loadingUsers = false);
-              }
-            }
-          }
-
-          if (loadingUsers && users.isEmpty) {
-            unawaited(loadUsers());
-          }
-
-          Future<void> createGroup() async {
-            final nav = Navigator.of(context);
-            final name = groupNameController.text.trim();
-            if (name.isEmpty || selectedUserIds.isEmpty || submitting) return;
-            setSheetState(() => submitting = true);
-            try {
-              final serverChat = await ServerApiService.instance.createGroup(
-                groupName: name,
-                memberIds: selectedUserIds.toList(),
-              );
-              if (serverChat.id <= 0) {
-                throw Exception('Invalid group ID');
-              }
-              await LocalChatStorage.instance.createOrGetConversation(
-                deviceId: serverChat.id.toString(),
-                displayName: name,
-              );
-              if (mounted) {
-                if (sheetContext.mounted) Navigator.pop(sheetContext);
-                final currentConv =
-                    LocalChatStorage.instance.getConversationSync(
-                      serverChat.id.toString(),
-                    ) ??
-                    ChatConversation(
-                      id: serverChat.id.toString(),
-                      name: name,
-                      avatarUrl: '',
-                      lastMessage: 'Group created',
-                      lastMessageTime: 'Just now',
-                      unreadCount: 0,
-                      isGroup: true,
-                      messages: const [],
-                    );
-                nav.push(
-                  MaterialPageRoute(
-                    builder: (context) => VaultEdgePanelWrapper(
-                      isDuressMode: widget.isDuressMode,
-                      child: ChatDetailPage(conversation: currentConv),
-                    ),
-                  ),
-                );
-              }
-            } catch (err) {
-              setSheetState(() => submitting = false);
-            }
-          }
-
-          return Padding(
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
-              top: 16,
-              left: 16,
-              right: 16,
-            ),
-            child: SizedBox(
-              height: MediaQuery.of(context).size.height * 0.75,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 36,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade400,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Create Group',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(CupertinoIcons.xmark_circle_fill),
-                        onPressed: () => Navigator.pop(sheetContext),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: groupNameController,
-                    decoration: InputDecoration(
-                      hintText: 'Group Name',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Select Members:',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: loadingUsers
-                        ? const Center(child: CircularProgressIndicator())
-                        : ListView.builder(
-                            itemCount: users.length,
-                            itemBuilder: (context, index) {
-                              final u = users[index];
-                              final selected = selectedUserIds.contains(u.id);
-                              return CheckboxListTile(
-                                value: selected,
-                                title: Text(u.name),
-                                secondary: IosAvatar(
-                                  name: u.name,
-                                  imagePath: u.avatarUrl,
-                                  size: 36,
-                                ),
-                                onChanged: (val) {
-                                  setSheetState(() {
-                                    if (val == true) {
-                                      selectedUserIds.add(u.id);
-                                    } else {
-                                      selectedUserIds.remove(u.id);
-                                    }
-                                  });
-                                },
-                              );
-                            },
-                          ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: submitting ? null : createGroup,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primaryColor,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: submitting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Text(
-                              'Create Group',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                              ),
-                            ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  void _showUserSearchSheet(BuildContext context) {
-    final searchUserCtrl = TextEditingController();
-    List<UserModel> userList = [];
-    bool loading = true;
-    String query = '';
-    Timer? searchTimer;
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).brightness == Brightness.dark
-          ? AppTheme.darkSurface
-          : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) {
-          Future<void> fetchUsers() async {
-            setSheetState(() => loading = true);
-            try {
-              final result = await ServerApiService.instance.getUsersPage(
-                page: 1,
-                limit: 30,
-                query: query,
-              );
-              final meId = ServerApiService.instance.currentUserId;
-              if (sheetContext.mounted) {
-                setSheetState(() {
-                  userList = result.users.where((u) => u.id != meId).toList();
-                  loading = false;
-                });
-              }
-            } catch (_) {
-              if (sheetContext.mounted) {
-                setSheetState(() => loading = false);
-              }
-            }
-          }
-
-          if (loading && userList.isEmpty) {
-            unawaited(fetchUsers());
-          }
-
-          return DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.85,
-            maxChildSize: 0.95,
-            minChildSize: 0.5,
-            builder: (context, scrollCtrl) {
-              final isDark = Theme.of(context).brightness == Brightness.dark;
-              return Container(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade400,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'New Chat',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(CupertinoIcons.xmark_circle_fill),
-                          onPressed: () => Navigator.pop(sheetContext),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      height: 38,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0xFF1C1C1E)
-                            : const Color(0xFFF0F0F2),
-                        borderRadius: BorderRadius.circular(19),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            CupertinoIcons.search,
-                            size: 18,
-                            color: AppTheme.secondaryText(isDark),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: searchUserCtrl,
-                              textCapitalization: TextCapitalization.sentences,
-                              textInputAction: TextInputAction.search,
-                              keyboardType: TextInputType.text,
-                              onSubmitted: (_) => FocusScope.of(context).unfocus(),
-                              onChanged: (val) {
-                                searchTimer?.cancel();
-                                searchTimer = Timer(
-                                  const Duration(milliseconds: 300),
-                                  () {
-                                    query = val.trim();
-                                    fetchUsers();
-                                  },
-                                );
-                              },
-                              style: TextStyle(
-                                fontSize: 15,
-                                color: AppTheme.primaryText(isDark),
-                              ),
-                              decoration: const InputDecoration(
-                                hintText: 'Search user...',
-                                border: InputBorder.none,
-                                isDense: true,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: loading
-                          ? const Center(child: CircularProgressIndicator())
-                          : userList.isEmpty
-                          ? const Center(child: Text('No users found'))
-                          : ListView.builder(
-                              controller: scrollCtrl,
-                              itemCount: userList.length,
-                              itemBuilder: (context, index) {
-                                final u = userList[index];
-                                return ListTile(
-                                  leading: IosAvatar(
-                                    name: u.name,
-                                    imagePath: u.avatarUrl,
-                                    size: 42,
-                                  ),
-                                  title: Text(
-                                    u.name,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  subtitle: Text(
-                                    u.isOnline ? 'Online' : 'Last seen recently',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: u.isOnline
-                                          ? Colors.green
-                                          : Colors.grey,
-                                    ),
-                                  ),
-                                  onTap: () async {
-                                    final nav = Navigator.of(context);
-                                    Navigator.pop(sheetContext);
-                                    try {
-                                      final directChat = await ServerApiService
-                                          .instance
-                                          .createDirectChat(u.id);
-                                      await LocalChatStorage.instance
-                                          .createOrGetConversation(
-                                            deviceId: directChat.id.toString(),
-                                            displayName: u.name,
-                                            avatarUrl: u.avatarUrl,
-                                            peerUserId: u.id,
-                                          );
-                                      if (mounted) {
-                                        final currentConv =
-                                            LocalChatStorage.instance
-                                                .getConversationSync(
-                                                  directChat.id.toString(),
-                                                ) ??
-                                            ChatConversation(
-                                              id: directChat.id.toString(),
-                                              name: u.name,
-                                              avatarUrl: u.avatarUrl,
-                                              lastMessage: '',
-                                              lastMessageTime: 'Just now',
-                                              unreadCount: 0,
-                                              peerUserId: u.id,
-                                              messages: const [],
-                                            );
-                                        nav.push(
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                VaultEdgePanelWrapper(
-                                                  isDuressMode:
-                                                      widget.isDuressMode,
-                                                  child: ChatDetailPage(
-                                                    conversation: currentConv,
-                                                  ),
-                                                ),
-                                          ),
-                                        );
-                                      }
-                                    } catch (_) {}
-                                  },
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-
   void _showChatPeekPreview(BuildContext context, ChatConversation conv) {
     showGeneralDialog(
       context: context,
@@ -1066,13 +664,18 @@ class _ConversationListPageState extends State<ConversationListPage> {
                     ),
                   ),
                   Expanded(
-                    child: _buildBottomBarNavItem(
-                      index: 1,
-                      icon: CupertinoIcons.phone_fill,
-                      inactiveIcon: CupertinoIcons.phone,
-                      label: 'Calls',
-                      badgeCount: 0,
-                      isDark: isDark,
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: CallHistoryViewState.missedCallsNotifier,
+                      builder: (context, missedCallsCount, _) {
+                        return _buildBottomBarNavItem(
+                          index: 1,
+                          icon: CupertinoIcons.phone_fill,
+                          inactiveIcon: CupertinoIcons.phone,
+                          label: 'Calls',
+                          badgeCount: missedCallsCount,
+                          isDark: isDark,
+                        );
+                      },
                     ),
                   ),
                   Expanded(
@@ -1140,6 +743,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
         if (_selectedTabIndex != index) {
           setState(() {
             _selectedTabIndex = index;
+            _isLockedChatsUnlocked = false;
           });
           _pageController.animateToPage(
             index,
@@ -1224,8 +828,11 @@ class _ConversationListPageState extends State<ConversationListPage> {
     List<ChatConversation> conversations,
   ) {
     final activeConversations = conversations
-        .where((c) => !c.isArchived)
+        .where((c) => !c.isArchived && !c.isLocked)
         .toList();
+    final lockedTotal = conversations
+        .where((c) => c.isLocked)
+        .length;
     final archivedTotal = conversations
         .where((c) => c.isArchived)
         .length;
@@ -1300,8 +907,8 @@ class _ConversationListPageState extends State<ConversationListPage> {
         // Cupertino Pull-to-Refresh
         CupertinoSliverRefreshControl(onRefresh: _refreshServerChats),
 
-        // Conversation Tiles List + Archived Row
-        if (filtered.isEmpty && archivedTotal == 0)
+        // Conversation Tiles List + Locked Chats Banner + Archived Row
+        if (filtered.isEmpty && archivedTotal == 0 && !_isLockedChatsUnlocked)
           SliverFillRemaining(
             hasScrollBody: false,
             child: Center(
@@ -1346,8 +953,93 @@ class _ConversationListPageState extends State<ConversationListPage> {
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
-                  // Index 0: Archived Row
-                  if (index == 0) {
+                  final int lockedOffset = _isLockedChatsUnlocked ? 1 : 0;
+
+                  // Locked Chats Banner (when passcode is typed in search)
+                  if (_isLockedChatsUnlocked && index == 0) {
+                    return Column(
+                      children: [
+                        InkWell(
+                          onTap: () async {
+                            await Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) => LockedChatsPage(
+                                  isDuressMode: widget.isDuressMode,
+                                ),
+                              ),
+                            );
+                            if (mounted) {
+                              setState(() {
+                                _isLockedChatsUnlocked = false;
+                              });
+                            }
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16.0,
+                              vertical: 12.0,
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: const BoxDecoration(
+                                    color: AppTheme.primaryColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    CupertinoIcons.lock_fill,
+                                    size: 16,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Locked Chats',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppTheme.primaryText(isDark),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        lockedTotal > 0
+                                            ? '$lockedTotal locked conversation${lockedTotal == 1 ? "" : "s"}'
+                                            : 'Tap to view locked chats',
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          color: AppTheme.secondaryText(isDark),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  CupertinoIcons.chevron_right,
+                                  size: 16,
+                                  color: AppTheme.secondaryText(isDark),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Divider(
+                          height: 0.5,
+                          thickness: 0.5,
+                          color: AppTheme.listDivider(isDark),
+                          indent: 54,
+                        ),
+                      ],
+                    );
+                  }
+
+                  // Archived Row
+                  if (index == lockedOffset) {
                     return Column(
                       children: [
                         InkWell(
@@ -1428,7 +1120,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                     );
                   }
 
-                  final convIndex = index - 1;
+                  final convIndex = index - 1 - lockedOffset;
                   if (convIndex == filtered.length) {
                     return const Padding(
                       padding: EdgeInsets.symmetric(vertical: 20),
@@ -1477,7 +1169,7 @@ class _ConversationListPageState extends State<ConversationListPage> {
                   );
                 },
                 childCount:
-                    1 + filtered.length + (_isLoadingMoreChats ? 1 : 0),
+                    1 + (_isLockedChatsUnlocked ? 1 : 0) + filtered.length + (_isLoadingMoreChats ? 1 : 0),
               ),
             ),
           ),

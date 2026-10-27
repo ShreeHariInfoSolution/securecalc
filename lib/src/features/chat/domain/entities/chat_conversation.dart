@@ -20,6 +20,7 @@ class ChatConversation {
   final bool isArchived;
   final bool isBlocked;
   final bool isProfileHidden;
+  final bool isLocked;
   final String? backgroundUrl;
   final List<ChatMessage> messages;
 
@@ -43,6 +44,7 @@ class ChatConversation {
     this.isArchived = false,
     this.isBlocked = false,
     this.isProfileHidden = false,
+    this.isLocked = false,
     this.backgroundUrl,
     required this.messages,
   });
@@ -67,6 +69,7 @@ class ChatConversation {
     bool? isArchived,
     bool? isBlocked,
     bool? isProfileHidden,
+    bool? isLocked,
     String? backgroundUrl,
     List<ChatMessage>? messages,
   }) {
@@ -90,6 +93,7 @@ class ChatConversation {
       isArchived: isArchived ?? this.isArchived,
       isBlocked: isBlocked ?? this.isBlocked,
       isProfileHidden: isProfileHidden ?? this.isProfileHidden,
+      isLocked: isLocked ?? this.isLocked,
       backgroundUrl: backgroundUrl ?? this.backgroundUrl,
       messages: messages ?? this.messages,
     );
