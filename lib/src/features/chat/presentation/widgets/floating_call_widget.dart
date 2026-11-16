@@ -271,8 +271,8 @@ class _FloatingCallWidgetState extends State<FloatingCallWidget> {
                           callService.hasFirstRemoteFrame)
                       ? RTCVideoView(
                           callService.remoteRenderer,
-                          key: ValueKey('remote_${callService.callId}_${callService.remoteIsFrontCamera}_${callService.remoteRenderer.srcObject?.id}'),
-                          mirror: callService.remoteIsFrontCamera,
+                          key: ValueKey('remote_${callService.callId}_${callService.remoteRenderer.srcObject?.id}'),
+                          mirror: false,
                           objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                         )
                       : ((callService.camOn &&

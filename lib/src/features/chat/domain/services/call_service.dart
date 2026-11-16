@@ -20,6 +20,8 @@ enum CallState { idle, outgoingRinging, incomingRinging, connecting, active, end
 
 enum CallType { voice, video }
 
+enum CallNetworkQuality { unknown, good, medium, poor }
+
 enum AudioRoute { earpiece, speaker, bluetooth }
 
 class AudioOutputOption {
@@ -106,6 +108,8 @@ class CallService extends ChangeNotifier {
   bool isUltraWideActive = false;
   String? _currentVideoDeviceId;
   String? get currentVideoDeviceId => _currentVideoDeviceId;
+
+  CallNetworkQuality networkQuality = CallNetworkQuality.unknown;
 
   final StreamController<CallEndInfo> _endCtrl = StreamController.broadcast();
   Stream<CallEndInfo> get onCallEnded => _endCtrl.stream;
@@ -547,9 +551,9 @@ class CallService extends ChangeNotifier {
           'audio': false,
           'video': {
             'facingMode': 'user',
-            'width': {'ideal': 1080, 'min': 720},
-            'height': {'ideal': 1920, 'min': 1280},
-            'frameRate': 30,
+            'width': {'ideal': 1920, 'min': 480},
+            'height': {'ideal': 1080, 'min': 480},
+            'frameRate': {'ideal': 30, 'max': 30, 'min': 15},
           },
         });
         if (videoStream.getVideoTracks().isNotEmpty) {
@@ -565,6 +569,7 @@ class CallService extends ChangeNotifier {
             if (id != null) {
               await _setLocalDescriptionAndSignal(_pc!, offer, id);
             }
+            await _optimizeSenderParameters(_pc!);
           }
         }
       }
@@ -1452,18 +1457,48 @@ class CallService extends ChangeNotifier {
     bool inVideoSection = false;
     bool inAudioSection = false;
 
+    // Extract H264 payload types to prioritize hardware acceleration
+    final h264Payloads = <String>[];
+    for (final line in lines) {
+      if (line.startsWith('a=rtpmap:') && line.contains('H264/90000')) {
+        final match = RegExp(r'a=rtpmap:(\d+)\s+H264/90000').firstMatch(line);
+        if (match != null) {
+          h264Payloads.add(match.group(1)!);
+        }
+      }
+    }
+
     for (final line in lines) {
       if (line.startsWith('m=video')) {
         inVideoSection = true;
         inAudioSection = false;
-        newLines.add(line);
+
+        String mLine = line;
+        if (h264Payloads.isNotEmpty) {
+          final parts = line.split(' ');
+          if (parts.length > 3) {
+            final prefix = parts.sublist(0, 3);
+            final pts = parts.sublist(3);
+            final reordered = <String>[];
+            for (final h in h264Payloads) {
+              if (pts.contains(h)) reordered.add(h);
+            }
+            for (final p in pts) {
+              if (!reordered.contains(p)) reordered.add(p);
+            }
+            mLine = '${prefix.join(' ')} ${reordered.join(' ')}';
+          }
+        }
+        newLines.add(mLine);
         newLines.add('b=AS:4500');
+        newLines.add('b=TIAS:4500000');
         continue;
       } else if (line.startsWith('m=audio')) {
         inAudioSection = true;
         inVideoSection = false;
         newLines.add(line);
         newLines.add('b=AS:128');
+        newLines.add('b=TIAS:128000');
         continue;
       } else if (line.startsWith('m=')) {
         inVideoSection = false;
@@ -1471,8 +1506,10 @@ class CallService extends ChangeNotifier {
       }
 
       if (inAudioSection && line.startsWith('a=fmtp:')) {
-        if (!line.contains('stereo=')) {
-          newLines.add('$line;stereo=1;sprop-stereo=1;useinbandfec=1;maxaveragebitrate=128000');
+        if (!line.contains('maxaveragebitrate=')) {
+          newLines.add(
+            '$line;stereo=1;sprop-stereo=1;useinbandfec=1;usedtx=1;cbr=0;maxaveragebitrate=128000;maxplaybackrate=48000;sprop-maxcapturerate=48000',
+          );
         } else {
           newLines.add(line);
         }
@@ -1481,7 +1518,9 @@ class CallService extends ChangeNotifier {
 
       if (inVideoSection && line.startsWith('a=fmtp:')) {
         if (!line.contains('x-google-min-bitrate')) {
-          newLines.add('$line;x-google-min-bitrate=150;x-google-start-bitrate=1200;x-google-max-bitrate=4500');
+          newLines.add(
+            '$line;x-google-min-bitrate=150;x-google-start-bitrate=1200;x-google-max-bitrate=4500',
+          );
         } else {
           newLines.add(line);
         }
@@ -1520,9 +1559,11 @@ class CallService extends ChangeNotifier {
           params.degradationPreference = RTCDegradationPreference.BALANCED;
           if (params.encodings != null && params.encodings!.isNotEmpty) {
             for (final encoding in params.encodings!) {
-              encoding.maxBitrate = 4500000; // Uncapped 4.5 Mbps max for 1080p 60fps HD on fast internet
-              encoding.minBitrate = 150000;  // 150 Kbps floor when internet slows down
-              encoding.maxFramerate = 60;
+              encoding.maxBitrate = 4500000; // 4.5 Mbps HD cap
+              encoding.minBitrate = 150000;  // 150 Kbps floor when network is slow
+              encoding.maxFramerate = 30;    // 30 fps produces sharper clarity on mobile
+              encoding.scaleResolutionDownBy = 1.0;
+              encoding.networkPriority = RTCPriorityType.high;
             }
           }
           await sender.setParameters(params);
@@ -1530,7 +1571,9 @@ class CallService extends ChangeNotifier {
           final params = sender.parameters;
           if (params.encodings != null && params.encodings!.isNotEmpty) {
             for (final encoding in params.encodings!) {
-              encoding.maxBitrate = 96000;
+              encoding.maxBitrate = 128000; // 128 Kbps HD audio
+              encoding.minBitrate = 24000;  // 24 Kbps floor for slow networks
+              encoding.networkPriority = RTCPriorityType.high;
             }
           }
           await sender.setParameters(params);
@@ -1539,6 +1582,67 @@ class CallService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[CALL] _optimizeSenderParameters error: $e');
     }
+  }
+
+  int _statsCheckCounter = 0;
+
+  Future<void> _checkNetworkQuality() async {
+    final pc = _pc;
+    if (pc == null || state != CallState.active) return;
+    if (++_statsCheckCounter % 2 != 0) return;
+
+    try {
+      final reports = await pc.getStats();
+      double? rtt;
+      double? lossRatio;
+
+      for (final report in reports) {
+        if (report.type == 'candidate-pair') {
+          final values = report.values;
+          final state = values['state'];
+          final nominated = values['nominated'];
+          if (state == 'succeeded' ||
+              state == 'in-progress' ||
+              nominated == true ||
+              nominated == 'true') {
+            final crtt =
+                values['currentRoundTripTime'] ?? values['roundTripTime'];
+            if (crtt != null) {
+              final val = double.tryParse(crtt.toString());
+              if (val != null && val > 0) {
+                rtt = val > 5 ? val / 1000.0 : val;
+              }
+            }
+          }
+        } else if (report.type == 'inbound-rtp' ||
+            report.type == 'remote-inbound-rtp') {
+          final values = report.values;
+          final lost = int.tryParse(values['packetsLost']?.toString() ?? '');
+          final received =
+              int.tryParse(values['packetsReceived']?.toString() ?? '');
+          if (lost != null && received != null && (received + lost) > 30) {
+            lossRatio = lost / (received + lost);
+          }
+        }
+      }
+
+      CallNetworkQuality newQuality = CallNetworkQuality.good;
+      if (rtt != null || lossRatio != null) {
+        if ((rtt != null && rtt > 0.35) || (lossRatio != null && lossRatio > 0.08)) {
+          newQuality = CallNetworkQuality.poor;
+        } else if ((rtt != null && rtt > 0.18) ||
+            (lossRatio != null && lossRatio > 0.03)) {
+          newQuality = CallNetworkQuality.medium;
+        } else {
+          newQuality = CallNetworkQuality.good;
+        }
+      }
+
+      if (networkQuality != newQuality) {
+        networkQuality = newQuality;
+        notifyListeners();
+      }
+    } catch (_) {}
   }
 
   Future<void> _onAccepted(Map<String, dynamic> d) async {
@@ -1608,6 +1712,7 @@ class CallService extends ChangeNotifier {
         await pc.setRemoteDescription(RTCSessionDescription(data['sdp'], data['type']));
         _remoteDescSet = true;
         await _flushIce();
+        await _optimizeSenderParameters(pc);
         break;
 
       case 'ice':
@@ -1764,12 +1869,14 @@ class CallService extends ChangeNotifier {
           'echoCancellation': true,
           'noiseSuppression': true,
           'autoGainControl': true,
+          'highpassFilter': true,
+          'typingNoiseDetection': true,
         },
         'video': type == CallType.video
             ? {
                 'facingMode': isFrontCamera ? 'user' : 'environment',
-                'width': {'ideal': 1080, 'min': 480},
-                'height': {'ideal': 1920, 'min': 640},
+                'width': {'ideal': 1920, 'min': 640},
+                'height': {'ideal': 1080, 'min': 480},
                 'frameRate': {'ideal': 30, 'max': 30, 'min': 15},
               }
             : false,
@@ -1778,20 +1885,28 @@ class CallService extends ChangeNotifier {
       debugPrint('[CALL] Primary getUserMedia error: $e. Retrying with basic constraints...');
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          'audio': true,
+          'audio': {
+            'echoCancellation': true,
+            'noiseSuppression': true,
+            'autoGainControl': true,
+          },
           'video': type == CallType.video
               ? {
                   'facingMode': isFrontCamera ? 'user' : 'environment',
-                  'width': {'ideal': 720},
-                  'height': {'ideal': 1280},
-                  'frameRate': 30,
+                  'width': {'ideal': 1280, 'min': 480},
+                  'height': {'ideal': 720, 'min': 360},
+                  'frameRate': {'ideal': 30, 'max': 30, 'min': 15},
                 }
               : false,
         });
       } catch (err) {
         debugPrint('[CALL] Secondary getUserMedia error: $err. Falling back to audio stream...');
         stream = await navigator.mediaDevices.getUserMedia({
-          'audio': true,
+          'audio': {
+            'echoCancellation': true,
+            'noiseSuppression': true,
+            'autoGainControl': true,
+          },
           'video': false,
         });
         camOn = false;
@@ -1864,7 +1979,10 @@ class CallService extends ChangeNotifier {
         if (state != CallState.active) {
           activeSince = DateTime.now();
           _tick?.cancel();
-          _tick = Timer.periodic(const Duration(seconds: 1), (_) => notifyListeners());
+          _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+            notifyListeners();
+            _checkNetworkQuality();
+          });
           _setState(CallState.active);
           if (defaultTargetPlatform == TargetPlatform.iOS) {
             unawaited(_native('ensureAudioEnabled'));
@@ -1872,6 +1990,7 @@ class CallService extends ChangeNotifier {
           }
           _sendMediaState();
           _sendFacing();
+          unawaited(_optimizeSenderParameters(pc));
         }
       } else if (s == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
         if (state == CallState.active) {
@@ -2027,6 +2146,8 @@ class CallService extends ChangeNotifier {
     callId = null;
     chatHeadId = null;
     peerId = null;
+    networkQuality = CallNetworkQuality.unknown;
+    _statsCheckCounter = 0;
     pendingVideoSwitchCaller = null;
     pendingUpgradeRequest = null;
     endReasonMessage = null;

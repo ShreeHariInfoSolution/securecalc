@@ -76,19 +76,6 @@ class ConversationTile extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  // Dynamic Far Left Unread Indicator Blue Dot
-                  if (hasUnread) ...[
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: const BoxDecoration(
-                        color: AppTheme.primaryColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-
                   // iOS Avatar
                   ValueListenableBuilder<Map<int, PresenceState>>(
                     valueListenable: PresenceStore.instance.presenceNotifier,
@@ -117,7 +104,7 @@ class ConversationTile extends StatelessWidget {
                       children: [
                         // Top Row: Name + Timestamp
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             Expanded(
                               child: Row(
@@ -168,54 +155,23 @@ class ConversationTile extends StatelessWidget {
                             Text(
                               formattedTime,
                               style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w400,
+                                fontSize: 12.5,
+                                fontWeight: hasUnread
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
                                 color: hasUnread
-                                    ? AppTheme.primaryText(isDark)
+                                    ? AppTheme.primaryColor
                                     : AppTheme.secondaryText(isDark),
                               ),
                             ),
-                            const SizedBox(width: 4),
-                            Icon(
-                              CupertinoIcons.chevron_right,
-                              size: 14,
-                              color: AppTheme.secondaryText(isDark)
-                                  .withValues(alpha: 0.6),
-                            ),
                           ],
                         ),
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 4),
 
                         // Bottom Row: Message Preview / Typing / Icons + Badge
                         Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            if (conversation.isPinned)
-                              const Padding(
-                                padding: EdgeInsets.only(right: 4.0),
-                                child: Icon(
-                                  CupertinoIcons.pin_fill,
-                                  size: 12,
-                                  color: Colors.amber,
-                                ),
-                              ),
-                            if (conversation.isMuted)
-                              Padding(
-                                padding: const EdgeInsets.only(right: 4.0),
-                                child: Icon(
-                                  CupertinoIcons.bell_slash_fill,
-                                  size: 12,
-                                  color: AppTheme.secondaryText(isDark),
-                                ),
-                              ),
-                            if (conversation.isProfileHidden)
-                              Padding(
-                                padding: const EdgeInsets.only(right: 4.0),
-                                child: Icon(
-                                  CupertinoIcons.eye_slash_fill,
-                                  size: 12,
-                                  color: Colors.orange.shade700,
-                                ),
-                              ),
                             Expanded(
                               child: showTyping
                                   ? Row(
@@ -291,30 +247,70 @@ class ConversationTile extends StatelessWidget {
                                       ],
                                     ),
                             ),
-                            if (hasUnread && conversation.unreadCount > 1) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                constraints: const BoxConstraints(
-                                  minWidth: 18,
-                                  minHeight: 18,
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 5,
-                                  vertical: 1,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.primaryColor,
-                                  borderRadius: BorderRadius.circular(9),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  '${conversation.unreadCount}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
+                            if (conversation.isProfileHidden ||
+                                conversation.isMuted ||
+                                conversation.isPinned ||
+                                hasUnread) ...[
+                              const SizedBox(width: 8),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  if (conversation.isProfileHidden)
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 4.0),
+                                      child: Icon(
+                                        CupertinoIcons.eye_slash_fill,
+                                        size: 13,
+                                        color: Colors.orange.shade700,
+                                      ),
+                                    ),
+                                  if (conversation.isMuted)
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 4.0),
+                                      child: Icon(
+                                        CupertinoIcons.bell_slash_fill,
+                                        size: 13,
+                                        color: AppTheme.secondaryText(isDark),
+                                      ),
+                                    ),
+                                  if (conversation.isPinned)
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 4.0),
+                                      child: Icon(
+                                        CupertinoIcons.pin_fill,
+                                        size: 13,
+                                        color: Colors.amber.shade700,
+                                      ),
+                                    ),
+                                  if (hasUnread)
+                                    Container(
+                                      constraints: const BoxConstraints(
+                                        minWidth: 20,
+                                        minHeight: 20,
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 5.5,
+                                        vertical: 1.5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.primaryColor,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      alignment: Alignment.center,
+                                      child: Text(
+                                        conversation.unreadCount > 99
+                                            ? '99+'
+                                            : '${conversation.unreadCount}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          height: 1.1,
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ],
                           ],
@@ -327,7 +323,7 @@ class ConversationTile extends StatelessWidget {
             ),
             if (showDivider)
               Padding(
-                padding: const EdgeInsets.only(left: 84.0),
+                padding: const EdgeInsets.only(left: 80.0),
                 child: Divider(
                   height: 0.5,
                   thickness: 0.5,

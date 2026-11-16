@@ -90,7 +90,12 @@ class _VoiceCallPageState extends State<VoiceCallPage>
       case CallState.connecting:
         return 'Connecting…';
       case CallState.active:
-        return _formatDuration(_callService.duration);
+        final duration = _formatDuration(_callService.duration);
+        final q = _callService.networkQuality;
+        if (q == CallNetworkQuality.poor) {
+          return '$duration • Weak connection';
+        }
+        return '$duration • HD Audio';
       case CallState.ended:
         return 'Call ended';
       case CallState.idle:
@@ -306,7 +311,9 @@ class _VoiceCallPageState extends State<VoiceCallPage>
                     style: TextStyle(
                       color: ended
                           ? const Color(0xFFFF5A52)
-                          : Colors.white.withValues(alpha: 0.7),
+                          : (_callService.networkQuality == CallNetworkQuality.poor
+                              ? const Color(0xFFFF9F0A)
+                              : Colors.white.withValues(alpha: 0.7)),
                       fontSize: 15,
                       fontWeight: FontWeight.w500,
                       fontFeatures: const [FontFeature.tabularFigures()],

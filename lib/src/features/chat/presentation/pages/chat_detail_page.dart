@@ -3229,7 +3229,11 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   double get _bottomInset {
-    return (_composerCtl.bottomSpace.value ?? _composerHeight.value) + 8.0;
+    final kb = MediaQuery.viewInsetsOf(context).bottom;
+    final composerSpace =
+        _composerCtl.bottomSpace.value ?? _composerHeight.value;
+    final baseBottom = math.max(composerSpace, kb > 0 ? kb + 54.0 : 0.0);
+    return baseBottom + 8.0;
   }
 
   String? _highlightedMessageId;
@@ -3276,8 +3280,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     // 3. Coarse Jump
     final reversedIndex = (_messages.length - 1) - index;
     final viewportHeight = _scrollController.position.viewportDimension;
-    final centeredOffset =
-        (reversedIndex * 78.0) - (viewportHeight / 2) + 39.0;
+    final T = _topInset;
+    final B = _bottomInset;
+    final visibleCenter = (viewportHeight + B - T) / 2;
+    final centeredOffset = (reversedIndex * 78.0) - visibleCenter + 39.0;
     final targetOffset = centeredOffset.clamp(
       0.0,
       _scrollController.position.maxScrollExtent,
@@ -3308,10 +3314,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       final visibleArea = V - T - B;
 
       double alignment;
-      if (H > visibleArea) {
+      if (H >= visibleArea) {
         alignment = (V - T - H) / (V - H);
       } else {
-        alignment = (V - T + B - H) / 2 / (V - H);
+        alignment = (V + B - T - H) / (2 * (V - H));
       }
       alignment = alignment.clamp(0.0, 1.0);
 
@@ -3677,7 +3683,13 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   Future<void> _recenterPendingScrollTarget() async {
-    final targetId = _pendingScrollTargetId;
+    final targetId = _pendingScrollTargetId ??
+        (_isSearchingMessages &&
+                _searchResults.isNotEmpty &&
+                _currentSearchIndex >= 0 &&
+                _currentSearchIndex < _searchResults.length
+            ? _searchResults[_currentSearchIndex].id
+            : null);
     if (targetId == null) return;
     if (_scrollTargetKey.currentContext != null) {
       final box = _scrollTargetKey.currentContext!.findRenderObject() as RenderBox?;
@@ -3689,10 +3701,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         final visibleArea = V - T - B;
 
         double alignment;
-        if (H > visibleArea) {
+        if (H >= visibleArea) {
           alignment = (V - T - H) / (V - H);
         } else {
-          alignment = (V - T + B - H) / 2 / (V - H);
+          alignment = (V + B - T - H) / (2 * (V - H));
         }
         alignment = alignment.clamp(0.0, 1.0);
 
@@ -3802,7 +3814,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                                 return ListenableBuilder(
                                   listenable: Listenable.merge([_composerHeight, _composerCtl.bottomSpace]),
                                   builder: (context, _) {
-                                    final composerH = _composerCtl.bottomSpace.value ?? _composerHeight.value;
+                                    final kb = MediaQuery.viewInsetsOf(context).bottom;
+                                    final composerSpace = _composerCtl.bottomSpace.value ?? _composerHeight.value;
+                                    final composerH = math.max(composerSpace, kb > 0 ? kb + 54.0 : 0.0);
                                     return ChatMessageList(
                                       messages: _messages,
                                       hiddenMessageId: _hiddenMsgId,

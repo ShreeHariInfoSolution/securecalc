@@ -114,6 +114,78 @@ class _VideoCallPageState extends State<VideoCallPage> {
     }
   }
 
+  Widget _buildQualityPill() {
+    final quality = _callService.networkQuality;
+    final isPoor = quality == CallNetworkQuality.poor;
+    final isGood = quality == CallNetworkQuality.good;
+
+    final badgeColor = isPoor
+        ? const Color(0xFFFF9F0A)
+        : (isGood ? const Color(0xFF30D158) : const Color(0xFF64D2FF));
+    final badgeText = isPoor ? 'Weak Net' : 'HD';
+
+    final duration = _callService.duration;
+    final m = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final timeStr = duration.inHours > 0
+        ? '${duration.inHours.toString().padLeft(2, '0')}:$m:$s'
+        : '$m:$s';
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(30),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          height: 50,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: const Color(0x60404040),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.24),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: badgeColor.withValues(alpha: 0.22),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: badgeColor.withValues(alpha: 0.7),
+                    width: 0.8,
+                  ),
+                ),
+                child: Text(
+                  badgeText,
+                  style: TextStyle(
+                    color: badgeColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                timeStr,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildRemoteVideoWidget() {
     if (!_callService.remoteVideoOn ||
         _callService.state != CallState.active ||
@@ -159,8 +231,8 @@ class _VideoCallPageState extends State<VideoCallPage> {
     }
     return RTCVideoView(
       _callService.remoteRenderer,
-      key: ValueKey('remote_${_callService.callId}_${_callService.remoteIsFrontCamera}_${_callService.remoteRenderer.srcObject?.id}'),
-      mirror: _callService.remoteIsFrontCamera,
+      key: ValueKey('remote_${_callService.callId}_${_callService.remoteRenderer.srcObject?.id}'),
+      mirror: false,
       objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
     );
   }
@@ -519,6 +591,8 @@ class _VideoCallPageState extends State<VideoCallPage> {
                         ),
                       ),
                     ),
+                    if (_callService.state == CallState.active)
+                      _buildQualityPill(),
                   ],
                 ),
               ),

@@ -1686,11 +1686,67 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
+  List<InlineSpan> _buildSpansWithSearch(
+    String plainText,
+    TextStyle baseStyle,
+    bool isDark,
+  ) {
+    final query = widget.searchQuery?.trim();
+    if (query == null || query.isEmpty) {
+      return buildEmojiSpans(plainText, textStyle: baseStyle);
+    }
+
+    final spans = <InlineSpan>[];
+    final qLower = query.toLowerCase();
+    final textLower = plainText.toLowerCase();
+
+    final highlightStyle = baseStyle.copyWith(
+      backgroundColor: widget.isHighlighted
+          ? const Color(0xFFFF9500)
+          : (isDark ? const Color(0xCCFFD60A) : const Color(0xFFFFD60A)),
+      color: Colors.black,
+      fontWeight: FontWeight.w700,
+    );
+
+    int lastIndex = 0;
+    while (true) {
+      final matchIndex = textLower.indexOf(qLower, lastIndex);
+      if (matchIndex == -1) break;
+
+      if (matchIndex > lastIndex) {
+        spans.addAll(buildEmojiSpans(
+          plainText.substring(lastIndex, matchIndex),
+          textStyle: baseStyle,
+        ));
+      }
+
+      final matchedText =
+          plainText.substring(matchIndex, matchIndex + qLower.length);
+      spans.add(
+        TextSpan(
+          text: matchedText,
+          style: highlightStyle,
+        ),
+      );
+
+      lastIndex = matchIndex + qLower.length;
+    }
+
+    if (lastIndex < plainText.length) {
+      spans.addAll(buildEmojiSpans(
+        plainText.substring(lastIndex),
+        textStyle: baseStyle,
+      ));
+    }
+
+    return spans;
+  }
+
   List<InlineSpan> _buildHighlightedTextSpans(
-      String text,
-      Color textColor,
-      bool isDark,
-      ) {
+    String text,
+    Color textColor,
+    bool isDark,
+  ) {
     final spans = <InlineSpan>[];
     final linkColor = widget.isMe
         ? Colors.white
@@ -1700,15 +1756,16 @@ class _ChatBubbleState extends State<ChatBubble>
     final baseStyle = TextStyle(color: textColor);
 
     if (matches.isEmpty) {
-      return buildEmojiSpans(text, textStyle: baseStyle);
+      return _buildSpansWithSearch(text, baseStyle, isDark);
     }
 
     int lastIndex = 0;
     for (final match in matches) {
       if (match.start > lastIndex) {
-        spans.addAll(buildEmojiSpans(
+        spans.addAll(_buildSpansWithSearch(
           text.substring(lastIndex, match.start),
-          textStyle: baseStyle,
+          baseStyle,
+          isDark,
         ));
       }
 
@@ -1730,9 +1787,10 @@ class _ChatBubbleState extends State<ChatBubble>
     }
 
     if (lastIndex < text.length) {
-      spans.addAll(buildEmojiSpans(
+      spans.addAll(_buildSpansWithSearch(
         text.substring(lastIndex),
-        textStyle: baseStyle,
+        baseStyle,
+        isDark,
       ));
     }
 
@@ -3137,9 +3195,6 @@ class _ChatBubbleState extends State<ChatBubble>
     }
 
     final sentColor = AppPreferences.getChatBubbleColor(chatId: widget.chatId);
-    final highlightBorderColor = isDark
-        ? const Color(0xFFFFD60A)
-        : const Color(0xFFFF9500);
 
     final bubbleColor =
     widget.isMe ? sentColor : AppTheme.receivedBubble(isDark);
@@ -3174,7 +3229,13 @@ class _ChatBubbleState extends State<ChatBubble>
         (widget.status ?? '').toLowerCase() == 'failed' &&
         !hasMedia; // attachments keep their own retry overlay
 
-    final Widget bubbleBody = Padding(
+    final Widget bubbleBody = AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      color: widget.isHighlighted
+          ? (isDark
+              ? const Color(0xFFFFD60A).withValues(alpha: 0.10)
+              : const Color(0xFFFF9500).withValues(alpha: 0.08))
+          : Colors.transparent,
       padding: const EdgeInsets.symmetric(vertical: 5.0, horizontal: 12.0),
       child: Column(
         crossAxisAlignment: widget.isMe
@@ -3215,30 +3276,13 @@ class _ChatBubbleState extends State<ChatBubble>
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onTap: failedText ? widget.onFailedTap : null,
-                          child: Container(
-                            decoration: widget.isHighlighted
-                                ? BoxDecoration(
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: highlightBorderColor,
-                                width: 2.2,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: highlightBorderColor.withValues(alpha: 0.55),
-                                  blurRadius: 14,
-                                  spreadRadius: 2,
-                                ),
-                              ],
-                            )
-                                : null,
-                            child: Padding(
-                              // margin lives OUTSIDE the painter
-                              padding: EdgeInsets.only(
-                                left: widget.isMe ? 0 : (widget.showTail ? 0 : 6.0),
-                                right: widget.isMe ? (widget.showTail ? 0 : 6.0) : 0,
-                              ),
-                              child: CustomPaint(
+                          child: Padding(
+                            // margin lives OUTSIDE the painter
+                            padding: EdgeInsets.only(
+                              left: widget.isMe ? 0 : (widget.showTail ? 0 : 6.0),
+                              right: widget.isMe ? (widget.showTail ? 0 : 6.0) : 0,
+                            ),
+                            child: CustomPaint(
                                 painter: IMessageBubblePainter(
                                   color: ((_isImage || _isVideo) && !isMediaWithCaption)
                                       ? Colors.transparent
@@ -3281,7 +3325,6 @@ class _ChatBubbleState extends State<ChatBubble>
                             ),
                           ),
                         ),
-                      ),
                       if (!widget.isMe && mediaUrl != null && mediaUrl.trim().isNotEmpty)
                         _buildQuickForwardButton(isDark),
                     ],

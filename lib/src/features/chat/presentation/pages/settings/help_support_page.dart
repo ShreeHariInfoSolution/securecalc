@@ -12,6 +12,7 @@ import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
 import 'package:securecalc/src/features/calling/domain/services/device_identity_service.dart';
+import 'package:securecalc/src/features/chat/domain/services/backup_crypto_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/bot_assistant_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_chat_manager.dart';
@@ -255,29 +256,394 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
     );
   }
 
-  /// Feature 1: Export / Download Backup Key File
+  /// Shows password creation dialog when exporting backup
+  Future<String?> _showSetBackupPasswordDialog(BuildContext context) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final passwordController = TextEditingController();
+    final confirmController = TextEditingController();
+    bool obscurePassword = true;
+    bool obscureConfirm = true;
+    String? errorText;
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    padding: const EdgeInsets.all(22),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xFF1C1C1E).withValues(alpha: 0.90)
+                          : Colors.white.withValues(alpha: 0.94),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                        color: isDark ? Colors.white12 : Colors.black12,
+                        width: 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 24,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryColor.withValues(alpha: 0.15),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: AppTheme.primaryColor.withValues(alpha: 0.3),
+                              width: 1.5,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.lock_outline_rounded,
+                            size: 32,
+                            color: AppTheme.primaryColor,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Protect Backup File',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Set a password to encrypt this backup file. You will need this exact password to unlock and restore your account on your new device.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.35,
+                            color: isDark ? Colors.white70 : Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: passwordController,
+                          obscureText: obscurePassword,
+                          autofocus: true,
+                          style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 14),
+                          decoration: InputDecoration(
+                            labelText: 'Backup Password',
+                            hintText: 'Enter password (min 4 chars)',
+                            prefixIcon: const Icon(Icons.password_rounded, size: 20),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                                size: 20,
+                              ),
+                              onPressed: () => setDialogState(() => obscurePassword = !obscurePassword),
+                            ),
+                            filled: true,
+                            fillColor: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: confirmController,
+                          obscureText: obscureConfirm,
+                          style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 14),
+                          decoration: InputDecoration(
+                            labelText: 'Confirm Password',
+                            hintText: 'Re-enter password',
+                            prefixIcon: const Icon(Icons.check_circle_outline_rounded, size: 20),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                obscureConfirm ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                                size: 20,
+                              ),
+                              onPressed: () => setDialogState(() => obscureConfirm = !obscureConfirm),
+                            ),
+                            filled: true,
+                            fillColor: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                          ),
+                        ),
+                        if (errorText != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            errorText!,
+                            style: const TextStyle(color: Color(0xFFFF453A), fontSize: 12, fontWeight: FontWeight.w600),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                        const SizedBox(height: 18),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextButton(
+                                onPressed: () => Navigator.of(dialogCtx).pop(null),
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                                child: Text(
+                                  'Cancel',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDark ? Colors.white60 : Colors.black54,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.primaryColor,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                                onPressed: () {
+                                  final p1 = passwordController.text.trim();
+                                  final p2 = confirmController.text.trim();
+                                  if (p1.isEmpty) {
+                                    setDialogState(() => errorText = 'Please enter a password');
+                                    return;
+                                  }
+                                  if (p1.length < 4) {
+                                    setDialogState(() => errorText = 'Password must be at least 4 characters');
+                                    return;
+                                  }
+                                  if (p1 != p2) {
+                                    setDialogState(() => errorText = 'Passwords do not match');
+                                    return;
+                                  }
+                                  Navigator.of(dialogCtx).pop(p1);
+                                },
+                                child: const Text(
+                                  'Encrypt & Save',
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Shows password input dialog when unlocking encrypted backup
+  Future<String?> _showEnterBackupPasswordDialog(
+    BuildContext context, {
+    String? initialError,
+  }) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final passwordController = TextEditingController();
+    bool obscurePassword = true;
+    String? errorText = initialError;
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    padding: const EdgeInsets.all(22),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xFF1C1C1E).withValues(alpha: 0.90)
+                          : Colors.white.withValues(alpha: 0.94),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                        color: isDark ? Colors.white12 : Colors.black12,
+                        width: 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 24,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF9500).withValues(alpha: 0.15),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFFFF9500).withValues(alpha: 0.3),
+                              width: 1.5,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.lock_open_rounded,
+                            size: 32,
+                            color: Color(0xFFFF9500),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Encrypted Backup',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'This backup file is protected with a password. Enter the password you used when creating it.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.35,
+                            color: isDark ? Colors.white70 : Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: passwordController,
+                          obscureText: obscurePassword,
+                          autofocus: true,
+                          style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 14),
+                          decoration: InputDecoration(
+                            labelText: 'Backup Password',
+                            hintText: 'Enter password to unlock',
+                            prefixIcon: const Icon(Icons.key_rounded, size: 20),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                                size: 20,
+                              ),
+                              onPressed: () => setDialogState(() => obscurePassword = !obscurePassword),
+                            ),
+                            filled: true,
+                            fillColor: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                          ),
+                        ),
+                        if (errorText != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            errorText!,
+                            style: const TextStyle(color: Color(0xFFFF453A), fontSize: 12, fontWeight: FontWeight.w600),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                        const SizedBox(height: 18),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextButton(
+                                onPressed: () => Navigator.of(dialogCtx).pop(null),
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                                child: Text(
+                                  'Cancel',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDark ? Colors.white60 : Colors.black54,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFFF9500),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                                onPressed: () {
+                                  final p = passwordController.text.trim();
+                                  if (p.isEmpty) {
+                                    setDialogState(() => errorText = 'Please enter password');
+                                    return;
+                                  }
+                                  Navigator.of(dialogCtx).pop(p);
+                                },
+                                child: const Text(
+                                  'Unlock & Restore',
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Feature 1: Export / Download Encrypted Backup Key File
   Future<void> _exportBackupFile() async {
     if (_deviceId == null || _deviceId!.isEmpty || _deviceId == 'Unavailable') {
       _showToast('Device key unavailable', isError: true);
       return;
     }
 
-    final confirmed = await _showGlassWarningDialog(
-      context: context,
-      title: 'Security Warning',
-      message:
-          'If you send or share this backup key file with someone else, they can access your account and secret data on their device!\n\nPlease DO NOT share this file with anyone.',
-      icon: Icons.shield_outlined,
-      iconColor: Colors.amber,
-      confirmButtonText: 'I Understand & Export',
-      confirmButtonColor: AppTheme.primaryColor,
-    );
-
-    if (confirmed != true) return;
+    final password = await _showSetBackupPasswordDialog(context);
+    if (password == null || password.trim().isEmpty) {
+      // User cancelled
+      return;
+    }
 
     AppPreferences.isPickerActive = true;
     try {
-      final backupData = {
+      final plainPayload = {
         'app': 'SecureCalc',
         'backup_type': 'device_identity',
         'old_device_key': _deviceId,
@@ -285,7 +651,13 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
         'exported_at': DateTime.now().toIso8601String(),
       };
 
-      final jsonString = const JsonEncoder.withIndent('  ').convert(backupData);
+      // Encrypt with password using PBKDF2 + AES-256 + HMAC-SHA256
+      final encryptedBackupData = BackupCryptoService.encryptBackupPayload(
+        payload: plainPayload,
+        password: password,
+      );
+
+      final jsonString = const JsonEncoder.withIndent('  ').convert(encryptedBackupData);
       final tempDir = await getTemporaryDirectory();
       final keyShort =
           _deviceId!.length >= 8 ? _deviceId!.substring(0, 8) : _deviceId;
@@ -294,10 +666,10 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
 
       await Share.shareXFiles(
         [XFile(file.path)],
-        text: 'SecureCalc Device Key Backup File',
+        text: 'SecureCalc Password-Protected Backup File',
       );
 
-      _showToast('Backup key file generated! Keep it private.');
+      _showToast('Encrypted backup generated! Keep your password safe.');
     } catch (e) {
       _showToast('Failed to export backup file: $e', isError: true);
     } finally {
@@ -335,22 +707,56 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
       final fileContent = await File(filePath).readAsString();
       String? extractedOldKey;
 
+      dynamic decodedJson;
       try {
-        final decoded = jsonDecode(fileContent);
-        if (decoded is Map<String, dynamic>) {
-          extractedOldKey = decoded['old_device_key']?.toString() ??
-              decoded['device_key']?.toString();
-        }
+        decodedJson = jsonDecode(fileContent);
       } catch (_) {
+        // Not a JSON file, check if plain text key
         final trimmed = fileContent.trim();
         if (trimmed.length >= 16) {
           extractedOldKey = trimmed;
         }
       }
 
+      if (decodedJson is Map<String, dynamic>) {
+        if (BackupCryptoService.isEncryptedBackup(decodedJson)) {
+          if (!mounted) return;
+          // Encrypted backup file: loop until correct password or cancel
+          String? errorMessage;
+          while (mounted) {
+            final password = await _showEnterBackupPasswordDialog(
+              context,
+              initialError: errorMessage,
+            );
+            if (password == null || !mounted) {
+              // User cancelled password prompt
+              return;
+            }
+
+            try {
+              final decryptedPayload = BackupCryptoService.decryptBackupPayload(
+                encryptedBackup: decodedJson,
+                password: password,
+              );
+              extractedOldKey = decryptedPayload['old_device_key']?.toString() ??
+                  decryptedPayload['device_key']?.toString();
+              break; // Decryption succeeded!
+            } on BackupCryptoException catch (err) {
+              errorMessage = err.message;
+            } catch (_) {
+              errorMessage = 'Incorrect password. Please verify and try again.';
+            }
+          }
+        } else {
+          // Legacy unencrypted backup file backward compatibility
+          extractedOldKey = decodedJson['old_device_key']?.toString() ??
+              decodedJson['device_key']?.toString();
+        }
+      }
+
       if (extractedOldKey == null || extractedOldKey.trim().length < 16) {
         _showToast(
-          'Invalid backup file. Could not find a valid old device key (min 16 characters).',
+          'Invalid backup file. Could not find a valid device key (min 16 characters).',
           isError: true,
         );
         return;
@@ -703,9 +1109,9 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
                           _buildBackupGuideItem(
                             isDark: isDark,
                             step: 'STEP 1',
-                            title: 'Export Backup Key File',
+                            title: 'Export & Encrypt Backup',
                             description:
-                                'On your old device, tap "Download Backup Key File" to generate and save your secure device backup file.',
+                                'On your old device, tap "Download Backup Key File" and set a password to encrypt and save your backup file.',
                             icon: Icons.file_download_outlined,
                           ),
                           Divider(
@@ -717,9 +1123,9 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
                           _buildBackupGuideItem(
                             isDark: isDark,
                             step: 'STEP 2',
-                            title: 'Keep File Private',
+                            title: 'Keep Password Safe',
                             description:
-                                'Transfer or store your backup file safely. Do NOT share this file with anyone else as it grants access to your account data.',
+                                'Remember your password! The backup file is AES-256 encrypted and cannot be opened or restored without your password.',
                             icon: Icons.security_rounded,
                           ),
                           Divider(
@@ -731,9 +1137,9 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
                           _buildBackupGuideItem(
                             isDark: isDark,
                             step: 'STEP 3',
-                            title: 'Restore on New Device',
+                            title: 'Unlock on New Device',
                             description:
-                                'On your new device, tap "Restore Data from Backup File" and select your saved backup file to restore your account and chats.',
+                                'On your new device, tap "Restore Data from Backup File", select your backup file, and enter your password to restore your account.',
                             icon: Icons.restore_page_rounded,
                           ),
                         ],

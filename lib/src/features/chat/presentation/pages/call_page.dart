@@ -173,8 +173,8 @@ class _CallPageState extends State<CallPage> {
     }
     return RTCVideoView(
       _callService.remoteRenderer,
-      key: ValueKey('remote_${_callService.callId}_${_callService.remoteIsFrontCamera}'),
-      mirror: _callService.remoteIsFrontCamera,
+      key: ValueKey('remote_${_callService.callId}'),
+      mirror: false,
       objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
     );
   }
