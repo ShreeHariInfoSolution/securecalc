@@ -10,6 +10,7 @@ class SceneDelegate: FlutterSceneDelegate {
     super.scene(scene, willConnectTo: session, options: connectionOptions)
     if let controller = window?.rootViewController as? FlutterViewController {
       AppDelegate.setupSecurityChannel(with: controller.binaryMessenger)
+      AppDelegate.setupAudioChannel(with: controller.binaryMessenger)
     }
   }
 }

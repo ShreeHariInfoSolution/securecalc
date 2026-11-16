@@ -8,6 +8,7 @@ import '../../../../core/config/app_preferences.dart';
 import '../entities/chat_conversation.dart';
 import '../entities/chat_message.dart';
 import '../models/server_models.dart';
+import '../utils/forward_marker.dart';
 import 'e2e_crypto_service.dart';
 import 'local_chat_storage.dart';
 import 'presence_store.dart';
@@ -155,12 +156,18 @@ class ServerChatManager {
       return LocalChatStorage.instance.conversationsNotifier.value;
     }
 
-    final serverChats = pageRes.chats;
+    final allServerChats = <ServerChatModel>[];
+    allServerChats.addAll(pageRes.chats);
 
     Set<String> lockedChatIds = {};
     try {
       final lockedPage = await ServerApiService.instance.getLockedChats(limit: 100);
-      lockedChatIds = {for (final lc in lockedPage.chats) lc.id.toString()};
+      for (final lc in lockedPage.chats) {
+        lockedChatIds.add(lc.id.toString());
+        if (!allServerChats.any((sc) => sc.id == lc.id)) {
+          allServerChats.add(lc);
+        }
+      }
     } catch (_) {}
 
     if (currentSyncSeq != _syncSequence ||
@@ -180,7 +187,7 @@ class ServerChatManager {
 
     final newConversations = <ChatConversation>[];
 
-    for (final sc in serverChats) {
+    for (final sc in allServerChats) {
       final chatIdStr = sc.id.toString();
       final liveLocal = liveById[chatIdStr];
 
@@ -295,15 +302,24 @@ class ServerChatManager {
         if (apiText.isEmpty && sc.lastMessageFilePath != null) {
           apiText = sc.lastMessageFileName ?? 'Attachment';
         } else if (apiText.isNotEmpty) {
-          apiText = E2eCryptoService.instance.decryptText(
+          apiText = stripFwdMarker(E2eCryptoService.instance.decryptText(
             apiText,
             'chat_key_${sc.id}',
-          );
+          ));
         }
         if (apiText.isEmpty) {
           apiText = newestCachedMessage?.previewText.isNotEmpty == true
               ? newestCachedMessage!.previewText
               : 'No messages yet';
+        }
+        if (apiText.trim().startsWith('{') &&
+            (apiText.contains('"latitude"') || apiText.contains('"location_id"'))) {
+          final isLive = apiText.contains('"is_live":true') ||
+              apiText.contains('"isLive":true') ||
+              sc.lastMessageMsgType == 'live_location';
+          apiText = isLive ? '📍 Live location' : '📍 Location';
+        } else if (sc.lastMessageMsgType == 'location' || sc.lastMessageMsgType == 'live_location') {
+          apiText = sc.lastMessageMsgType == 'live_location' ? '📍 Live location' : '📍 Location';
         }
         lastMsgText = apiText;
       }
@@ -363,9 +379,7 @@ class ServerChatManager {
       final isProfileHidden = liveLocal != null
           ? liveLocal.isProfileHidden
           : (peer != null ? !peer.profileVisible : false);
-      final isLocked = sc.isLocked ||
-          lockedChatIds.contains(chatIdStr) ||
-          (liveLocal?.isLocked ?? false);
+      final isLocked = lockedChatIds.contains(chatIdStr) || sc.isLocked;
 
       final conversation = ChatConversation(
         id: chatIdStr,
@@ -405,11 +419,11 @@ class ServerChatManager {
     // so no conversation is ever lost!
     final mergedMap = <String, ChatConversation>{
       for (final c in liveConversations)
-        c.id: lockedChatIds.contains(c.id) ? c.copyWith(isLocked: true) : c,
+        c.id: c.copyWith(isLocked: lockedChatIds.contains(c.id)),
     };
 
     for (final c in newConversations) {
-      mergedMap[c.id] = lockedChatIds.contains(c.id) ? c.copyWith(isLocked: true) : c;
+      mergedMap[c.id] = c;
     }
 
     final finalConversations = mergedMap.values.toList();
@@ -532,13 +546,14 @@ class ServerChatManager {
         final rawFilePath = sm.filePath?.trim();
         final rawFileName = sm.fileName?.trim();
 
-        final msgContent = sm.isDeleted
+        final rawMsgContent = sm.isDeleted
             ? 'This message was deleted'
             : (plaintext.isEmpty
                 ? (cachedMessage?.content.isNotEmpty == true
                     ? cachedMessage!.content
                     : (sm.message ?? ''))
                 : plaintext);
+        final msgContent = cleanMessageContentString(rawMsgContent);
 
         final msgText = msgContent.trim();
         final isGifContent = smFileType == 'image/gif' ||
@@ -593,9 +608,9 @@ class ServerChatManager {
               : ((sm.fileName != null && sm.fileName!.trim().isNotEmpty)
                   ? sm.fileName
                   : cachedMessage?.fileName),
-          isRead: isMe ? sm.isRead : true,
+          isRead: isMe ? sm.isRead : (cachedMessage?.isRead ?? sm.isRead),
           isDelivered: isMe ? (sm.isDelivered || sm.isRead) : true,
-          status: isMe ? sm.status : 'read',
+          status: isMe ? sm.status : ((cachedMessage?.isRead ?? sm.isRead) ? 'read' : sm.status),
           isEdited: sm.isEdited,
           isDeleted: sm.isDeleted,
           isSaved: sm.isSaved,
@@ -609,6 +624,8 @@ class ServerChatManager {
           callType: sm.callType,
           callStatus: sm.callStatus,
           callDuration: sm.callDuration,
+          isForwarded: sm.forwardedFlag('chat_key_$targetChatId') ||
+              (cachedMessage?.isForwarded ?? false),
         );
 
         if (!isMessageExpired(
@@ -693,6 +710,7 @@ class ServerChatManager {
     String? fileType,
     int? peerUserId,
     int? replyToId,
+    bool forwarded = false,
   }) async {
     final requestUserId = ServerApiService.instance.currentUserId;
     final requestToken = ServerApiService.instance.authToken;
@@ -701,7 +719,7 @@ class ServerChatManager {
     final clientId = 'local_${DateTime.now().millisecondsSinceEpoch}';
 
     final encryptedText = E2eCryptoService.instance.encryptText(
-      text,
+      forwarded ? addFwdMarker(text) : text,
       'chat_key_$chatId',
     );
 
@@ -767,6 +785,7 @@ class ServerChatManager {
       status: serverMessage?.status ?? 'sent',
       isEdited: serverMessage?.isEdited ?? false,
       replyToId: serverMessage?.replyToId ?? replyToId,
+      isForwarded: forwarded,
     );
 
     await LocalChatStorage.instance.saveMessage(
@@ -855,7 +874,7 @@ class ServerChatManager {
     var updated = false;
     for (var i = 0; i < conversations.length; i++) {
       final c = conversations[i];
-      if (c.id == chatIdStr || c.peerUserId == chatId) {
+      if (c.id == chatIdStr) {
         conversations[i] = c.copyWith(isLocked: true);
         updated = true;
       }
@@ -877,7 +896,7 @@ class ServerChatManager {
     var updated = false;
     for (var i = 0; i < conversations.length; i++) {
       final c = conversations[i];
-      if (c.id == chatIdStr || c.peerUserId == chatId) {
+      if (c.id == chatIdStr) {
         conversations[i] = c.copyWith(isLocked: false);
         updated = true;
       }
@@ -945,13 +964,14 @@ class ServerChatManager {
     final rawText = rawValue is String ? rawValue : null;
     if (messageId == null || chatId == null || rawText == null) return;
 
-    final decryptedText = E2eCryptoService.instance.decryptText(
+    final rawDecrypted = E2eCryptoService.instance.decryptText(
       rawText,
       'chat_key_$chatId',
     );
+    final decryptedText = stripFwdMarker(rawDecrypted);
     // A failed encrypted decode returns the original ciphertext. Keeping the
     // previous local plaintext is safer than persisting ciphertext to disk.
-    if (rawText.startsWith('ENC:v1:') && decryptedText == rawText) return;
+    if (rawText.startsWith('ENC:v1:') && rawDecrypted == rawText) return;
 
     final messages = await LocalChatStorage.instance.loadMessages(chatId);
     final index = messages.indexWhere((message) => message.id == messageId);
@@ -1210,9 +1230,10 @@ class ServerChatManager {
         final rawFilePath = sm.filePath?.trim();
         final rawFileName = sm.fileName?.trim();
 
-        final msgContent = sm.isDeleted
+        final rawMsgContent = sm.isDeleted
             ? 'This message was deleted'
             : (plaintext.isEmpty ? (sm.message ?? '') : plaintext);
+        final msgContent = cleanMessageContentString(rawMsgContent);
 
         final msgText = msgContent.trim();
         final isGifContent = smFileType == 'image/gif' ||
@@ -1283,6 +1304,7 @@ class ServerChatManager {
           callType: sm.callType,
           callStatus: sm.callStatus,
           callDuration: sm.callDuration,
+          isForwarded: sm.forwardedFlag('chat_key_${sm.chatHeadId}'),
         );
 
         final conversations =

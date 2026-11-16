@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../domain/services/call_island_manager.dart';
 import '../../domain/services/call_service.dart';
-import '../pages/call_page.dart';
+import '../pages/video_call_page.dart';
+import '../pages/voice_call_page.dart';
 import 'floating_call_widget.dart';
 import 'minimized_call_bar.dart';
 
@@ -101,6 +104,8 @@ class _GlobalCallOverlayState extends State<GlobalCallOverlay> {
                     child: TopAppBarCallBanner(
                       callService: _callService,
                       onTapExpand: () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
                         _callService.setMinimized(false);
                       },
                     ),
@@ -111,14 +116,16 @@ class _GlobalCallOverlayState extends State<GlobalCallOverlay> {
                   FloatingCallWidget(
                     callService: _callService,
                     onTap: () {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
                       _callService.setMinimized(false);
                     },
                   ),
 
                 // Full Screen Call Page Overlay
                 if (showFullCallPage)
-                  const Positioned.fill(
-                    child: CallPage(),
+                  Positioned.fill(
+                    child: isVideoCall ? const VideoCallPage() : const VoiceCallPage(),
                   ),
               ],
             );
@@ -128,3 +135,4 @@ class _GlobalCallOverlayState extends State<GlobalCallOverlay> {
     );
   }
 }
+

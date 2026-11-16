@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
 import '../models/server_models.dart';
@@ -16,6 +16,19 @@ class SocketChatService {
 
   IO.Socket? _socket;
   IO.Socket? get rawSocket => _socket;
+
+  void _emitOnlineIfForeground() {
+    final state = WidgetsBinding.instance.lifecycleState;
+    // null = not yet known (cold start); treat only `resumed` as truly foreground
+    if (state != AppLifecycleState.resumed) {
+      debugPrint('[SOCKET] Skipping online presence, app state: $state');
+      return;
+    }
+    try {
+      _socket?.emit('presence', {'status': 'online', 'is_online': true});
+      _socket?.emit('user_online', {'is_online': true});
+    } catch (_) {}
+  }
 
   // Stream controllers for incoming server events
   final _messageStreamController =
@@ -36,6 +49,10 @@ class SocketChatService {
       StreamController<Map<String, dynamic>>.broadcast();
   final _presenceStreamController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _liveLocationUpdateStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _liveLocationEndedStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<ServerMessageModel> get onNewMessage =>
       _messageStreamController.stream;
@@ -53,6 +70,10 @@ class SocketChatService {
   Stream<Map<String, dynamic>> get onTyping => _typingStreamController.stream;
   Stream<Map<String, dynamic>> get onPresence =>
       _presenceStreamController.stream;
+  Stream<Map<String, dynamic>> get onLiveLocationUpdate =>
+      _liveLocationUpdateStreamController.stream;
+  Stream<Map<String, dynamic>> get onLiveLocationEnded =>
+      _liveLocationEndedStreamController.stream;
 
   bool get isConnected => _socket?.connected == true;
 
@@ -74,10 +95,7 @@ class SocketChatService {
       if (currentSocketToken == token && _socket!.connected) {
         debugPrint('[SOCKET] Already connected with active user token. Re-emitting presence...');
         connectionStateNotifier.value = true;
-        try {
-          _socket!.emit('presence', {'status': 'online', 'is_online': true});
-          _socket!.emit('user_online', {'is_online': true});
-        } catch (_) {}
+        _emitOnlineIfForeground();
         return;
       }
       debugPrint(
@@ -103,10 +121,7 @@ class SocketChatService {
       debugPrint('[SOCKET] Connected successfully! Socket ID: ${_socket!.id}');
       connectionStateNotifier.value = true;
       PresenceStore.instance.startTimer();
-      try {
-        _socket!.emit('presence', {'status': 'online', 'is_online': true});
-        _socket!.emit('user_online', {'is_online': true});
-      } catch (_) {}
+      _emitOnlineIfForeground();
       unawaited(CallService.instance.init().then((_) {
         if (_socket != null) CallService.instance.attachSocket(_socket!);
       }));
@@ -129,6 +144,8 @@ class SocketChatService {
 
     // ─── Server -> Client Event Listeners ────────────────────────────────────
 
+    final Set<int> recentlyProcessedMessageIds = <int>{};
+
     void handleNewMessage(dynamic data) {
       debugPrint('[SOCKET] Incoming message event: $data');
       final eventData = data is List && data.isNotEmpty ? data.first : data;
@@ -150,12 +167,21 @@ class SocketChatService {
               break;
             }
           }
-          if (payload['id'] == null &&
-              payload['message_id'] == null &&
-              payload['messageId'] == null) {
+          final rawId = payload['id'] ?? payload['message_id'] ?? payload['messageId'];
+          final msgId = int.tryParse(rawId?.toString() ?? '');
+          if (msgId == null) {
             debugPrint('[SOCKET] Incoming message payload has no message id.');
             return;
           }
+          if (recentlyProcessedMessageIds.contains(msgId)) {
+            debugPrint('[SOCKET] Duplicate socket message event ignored for id: $msgId');
+            return;
+          }
+          recentlyProcessedMessageIds.add(msgId);
+          if (recentlyProcessedMessageIds.length > 200) {
+            recentlyProcessedMessageIds.remove(recentlyProcessedMessageIds.first);
+          }
+
           _messageStreamController.add(ServerMessageModel.fromJson(payload));
         } catch (error) {
           debugPrint('[SOCKET] Could not parse incoming message: $error');
@@ -166,6 +192,7 @@ class SocketChatService {
     _socket!.on('realtime.newMessage', handleNewMessage);
     _socket!.on('new_message', handleNewMessage);
     _socket!.on('newMessage', handleNewMessage);
+    _socket!.on('message_new', handleNewMessage);
 
     // Socket.IO catch-all listener for non-standard event names across backend deployments.
     _socket!.onAny((event, data) {
@@ -194,9 +221,12 @@ class SocketChatService {
             !normalized.contains('pin') &&
             !normalized.contains('mute') &&
             !normalized.contains('deliver') &&
+            !normalized.contains('newmessage') &&
+            !normalized.contains('new_message') &&
             eventName != 'realtime.newMessage' &&
             eventName != 'new_message' &&
-            eventName != 'newMessage') {
+            eventName != 'newMessage' &&
+            eventName != 'message_new') {
           handleNewMessage(data);
         }
       }
@@ -294,6 +324,26 @@ class SocketChatService {
         _presenceStreamController.add(mapData);
       }
     });
+
+    // 8. Live Location Updates & Ended Events
+    void handleLiveLocationUpdate(dynamic data) {
+      debugPrint('[SOCKET] Event live_location_update: $data');
+      if (data is Map) {
+        _liveLocationUpdateStreamController.add(Map<String, dynamic>.from(data));
+      }
+    }
+
+    void handleLiveLocationEnded(dynamic data) {
+      debugPrint('[SOCKET] Event live_location_ended: $data');
+      if (data is Map) {
+        _liveLocationEndedStreamController.add(Map<String, dynamic>.from(data));
+      }
+    }
+
+    _socket!.on('live_location_update', handleLiveLocationUpdate);
+    _socket!.on('liveLocationUpdate', handleLiveLocationUpdate);
+    _socket!.on('live_location_ended', handleLiveLocationEnded);
+    _socket!.on('liveLocationEnded', handleLiveLocationEnded);
 
     _socket!.connect();
   }

@@ -30,6 +30,15 @@ class _VaultHomePageState extends State<VaultHomePage> {
   }
 
   Future<void> _checkAuth() async {
+    if (widget.isDuressMode) {
+      if (mounted) {
+        setState(() {
+          _isLoggingIn = false;
+        });
+      }
+      return;
+    }
+
     final isAuthenticated = ServerApiService.instance.authToken != null;
     if (!isAuthenticated) {
       setState(() {

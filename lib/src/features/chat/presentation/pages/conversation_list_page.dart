@@ -575,22 +575,25 @@ class _ConversationListPageState extends State<ConversationListPage> with Widget
     );
   }
 
-  void _showChatPeekPreview(BuildContext context, ChatConversation conv) {
+  void _showChatPeekPreview(BuildContext context, ChatConversation conv, Rect origin) {
     showGeneralDialog(
       context: context,
-      barrierDismissible: true,
+      useRootNavigator: true,
+      barrierDismissible: false,
       barrierLabel: 'Dismiss',
       barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 250),
-      pageBuilder: (dialogContext, anim1, anim2) {
+      transitionDuration: Duration.zero,
+      pageBuilder: (dialogContext, _, __) {
         return ChatPeekPreviewDialog(
           conversation: conv,
+          originRect: origin,
+          hostContext: context,
           isDuressMode: widget.isDuressMode,
           onOpenChat: () {
             Navigator.of(dialogContext).pop();
             Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (context) => VaultEdgePanelWrapper(
+                builder: (_) => VaultEdgePanelWrapper(
                   isDuressMode: widget.isDuressMode,
                   child: ChatDetailPage(conversation: conv),
                 ),
@@ -599,20 +602,14 @@ class _ConversationListPageState extends State<ConversationListPage> with Widget
           },
         );
       },
-      transitionBuilder: (context, anim1, anim2, child) {
-        final curve = CurvedAnimation(
-          parent: anim1,
-          curve: Curves.easeOutCubic,
-        );
-        return Transform.scale(
-          scale: 0.88 + (0.12 * curve.value),
-          child: FadeTransition(opacity: curve, child: child),
-        );
-      },
     );
   }
 
   Widget _buildFloatingGlassBottomBar(bool isDark, int unreadTotal) {
+    if (widget.isDuressMode) {
+      return const SizedBox.shrink();
+    }
+
     final bottomPadding = MediaQuery.paddingOf(context).bottom;
     final currentUser = ServerApiService.instance.currentUser;
     final profileImage = currentUser?.avatarUrl ?? AppPreferences.getProfileImagePath();
@@ -751,6 +748,7 @@ class _ConversationListPageState extends State<ConversationListPage> with Widget
             curve: Curves.easeOutCubic,
           );
           if (index == 1) {
+            CallHistoryViewState.markMissedCallsAsSeen();
             _callHistoryKey.currentState?.loadCallHistory();
           }
         }
@@ -830,8 +828,12 @@ class _ConversationListPageState extends State<ConversationListPage> with Widget
     final activeConversations = conversations
         .where((c) => !c.isArchived && !c.isLocked)
         .toList();
-    final lockedTotal = conversations
+    final lockedConversations = conversations
         .where((c) => c.isLocked)
+        .toList();
+    final lockedTotal = lockedConversations.length;
+    final lockedUnreadChatsCount = lockedConversations
+        .where((c) => c.unreadCount > 0)
         .length;
     final archivedTotal = conversations
         .where((c) => c.isArchived)
@@ -892,6 +894,7 @@ class _ConversationListPageState extends State<ConversationListPage> with Widget
             topPadding: MediaQuery.paddingOf(context).top,
             isDark: isDark,
             isSyncing: _isSyncing,
+            isDuressMode: widget.isDuressMode,
             unreadTotal: unreadTotal,
             groupTotal: groupTotal,
             filter: _filter,
@@ -933,15 +936,17 @@ class _ConversationListPageState extends State<ConversationListPage> with Widget
                         color: AppTheme.secondaryText(isDark),
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Tap the + button above to search users and start messaging.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppTheme.secondaryText(isDark),
+                    if (!widget.isDuressMode) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Tap the + button above to search users and start messaging.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppTheme.secondaryText(isDark),
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -1019,6 +1024,37 @@ class _ConversationListPageState extends State<ConversationListPage> with Widget
                                     ],
                                   ),
                                 ),
+                                if (lockedUnreadChatsCount > 0) ...[
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 7,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.primaryColor,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '$lockedUnreadChatsCount',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                ] else if (lockedTotal > 0) ...[
+                                  Text(
+                                    '$lockedTotal',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                      color: AppTheme.secondaryText(isDark),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                ],
                                 Icon(
                                   CupertinoIcons.chevron_right,
                                   size: 16,
@@ -1140,10 +1176,17 @@ class _ConversationListPageState extends State<ConversationListPage> with Widget
                   }
 
                   final conv = filtered[convIndex];
-                  return GestureDetector(
-                    onLongPress: () =>
-                        _showChatPeekPreview(context, conv),
-                    child: ConversationTile(
+                  return Builder(
+                    builder: (tileCtx) => GestureDetector(
+                      onLongPress: () {
+                        final box = tileCtx.findRenderObject() as RenderBox?;
+                        final rect = box != null
+                            ? (box.localToGlobal(Offset.zero) & box.size)
+                            : Rect.zero;
+                        HapticFeedback.mediumImpact();
+                        _showChatPeekPreview(context, conv, rect);
+                      },
+                      child: ConversationTile(
                       conversation: conv,
                       isTyping: conv.isTyping,
                       showDivider: convIndex < filtered.length - 1,
@@ -1166,7 +1209,8 @@ class _ConversationListPageState extends State<ConversationListPage> with Widget
                         );
                       },
                     ),
-                  );
+                  ),
+                );
                 },
                 childCount:
                     1 + (_isLockedChatsUnlocked ? 1 : 0) + filtered.length + (_isLoadingMoreChats ? 1 : 0),
@@ -1234,6 +1278,7 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
   final double topPadding;
   final bool isDark;
   final bool isSyncing;
+  final bool isDuressMode;
   final int unreadTotal;
   final int groupTotal;
   final ConversationFilter filter;
@@ -1248,6 +1293,7 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.topPadding,
     required this.isDark,
     required this.isSyncing,
+    required this.isDuressMode,
     required this.unreadTotal,
     required this.groupTotal,
     required this.filter,
@@ -1263,7 +1309,8 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
   double get minExtent => 56.0 + topPadding;
 
   @override
-  double get maxExtent => (showFilterChips ? 208.0 : 160.0) + topPadding;
+  double get maxExtent =>
+      ((showFilterChips && !isDuressMode) ? 208.0 : 160.0) + topPadding;
 
   @override
   Widget build(
@@ -1307,24 +1354,27 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         // Left: More actions button
-                        GestureDetector(
-                          onTap: onMoreTap,
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: isDark
-                                  ? const Color(0xFF2C2C2E)
-                                  : const Color(0xFFE9E9EF),
-                              shape: BoxShape.circle,
+                        if (!isDuressMode)
+                          GestureDetector(
+                            onTap: onMoreTap,
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: isDark
+                                    ? const Color(0xFF2C2C2E)
+                                    : const Color(0xFFE9E9EF),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                CupertinoIcons.ellipsis,
+                                size: 21,
+                                color: AppTheme.primaryText(isDark),
+                              ),
                             ),
-                            child: Icon(
-                              CupertinoIcons.ellipsis,
-                              size: 21,
-                              color: AppTheme.primaryText(isDark),
-                            ),
-                          ),
-                        ),
+                          )
+                        else
+                          const SizedBox(width: 40),
 
                         // Centered Small Title "Chats" (Fades in on scroll)
                         Opacity(
@@ -1341,22 +1391,25 @@ class _IosMessagesHeaderDelegate extends SliverPersistentHeaderDelegate {
                         ),
 
                         // Right: Compose button
-                        GestureDetector(
-                          onTap: onNewChatTap,
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: const BoxDecoration(
-                              color: AppTheme.primaryColor,
-                              shape: BoxShape.circle,
+                        if (!isDuressMode)
+                          GestureDetector(
+                            onTap: onNewChatTap,
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: const BoxDecoration(
+                                color: AppTheme.primaryColor,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                CupertinoIcons.add,
+                                size: 23,
+                                color: Colors.white,
+                              ),
                             ),
-                            child: const Icon(
-                              CupertinoIcons.add,
-                              size: 23,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
+                          )
+                        else
+                          const SizedBox(width: 40),
                       ],
                     ),
                   ),

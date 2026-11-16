@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../../../core/utils/app_logger.dart';
-import '../../../chat/domain/services/local_chat_storage.dart';
 import '../models/nearby_device.dart';
 import 'bluetooth_discovery_service.dart';
 import 'device_identity_service.dart';

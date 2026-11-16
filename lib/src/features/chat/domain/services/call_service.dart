@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -13,12 +14,31 @@ import 'call_kit_service.dart';
 import 'local_chat_storage.dart';
 import 'server_api_service.dart';
 import 'socket_chat_service.dart';
+import 'package:securecalc/src/features/calling/presentation/pages/call_history_view.dart';
 
 enum CallState { idle, outgoingRinging, incomingRinging, connecting, active, ended }
 
 enum CallType { voice, video }
 
 enum AudioRoute { earpiece, speaker, bluetooth }
+
+class AudioOutputOption {
+  final String id;
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  final AudioRoute route;
+  final MediaDeviceInfo? rawDevice;
+
+  const AudioOutputOption({
+    required this.id,
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+    required this.route,
+    this.rawDevice,
+  });
+}
 
 class CallException implements Exception {
   final int status;
@@ -39,6 +59,7 @@ class CallEndInfo {
 class CallService extends ChangeNotifier {
   CallService._();
   static final CallService instance = CallService._();
+  static const MethodChannel _nativeAudioChannel = MethodChannel('com.shis.securecalc/audio');
 
   // ---------- public state ----------
   CallState state = CallState.idle;
@@ -49,14 +70,22 @@ class CallService extends ChangeNotifier {
   String peerName = 'Contact';
   String peerAvatar = '';
   String? pendingVideoSwitchCaller;
+  String? endReasonMessage;
   bool isCaller = false;
 
   bool micOn = true;
   bool camOn = true;
   bool remoteAudioOn = true;
   bool remoteVideoOn = true;
+  bool remoteIsFrontCamera = true;
   bool speakerOn = false;
   AudioRoute audioRoute = AudioRoute.speaker;
+  AudioRoute requestedAudioRoute = AudioRoute.speaker;
+  AudioRoute? userSelectedAudioRoute;
+  String actualInputPort = '';
+  String actualOutputPort = '';
+  bool isRouteSwitching = false;
+
   String selectedAudioDeviceName = 'Speaker';
   String? selectedAudioDeviceId;
   List<MediaDeviceInfo> availableAudioDevices = [];
@@ -70,6 +99,13 @@ class CallService extends ChangeNotifier {
 
   final RTCVideoRenderer localRenderer = RTCVideoRenderer();
   final RTCVideoRenderer remoteRenderer = RTCVideoRenderer();
+  bool hasFirstLocalFrame = false;
+  bool hasFirstRemoteFrame = false;
+  bool isFrontCamera = true;
+  double cameraZoomScale = 1.0;
+  bool isUltraWideActive = false;
+  String? _currentVideoDeviceId;
+  String? get currentVideoDeviceId => _currentVideoDeviceId;
 
   final StreamController<CallEndInfo> _endCtrl = StreamController.broadcast();
   Stream<CallEndInfo> get onCallEnded => _endCtrl.stream;
@@ -79,66 +115,206 @@ class CallService extends ChangeNotifier {
   bool _inited = false;
 
   RTCPeerConnection? _pc;
+  RTCDataChannel? _dc;
   MediaStream? _localStream;
   Future<void>? _prepared;
   final List<RTCIceCandidate> _iceBuffer = [];
   bool _remoteDescSet = false;
   Timer? _tick;
 
+  void _setupDataChannel(RTCDataChannel ch) {
+    _dc = ch;
+    ch.onDataChannelState = (s) {
+      if (s == RTCDataChannelState.RTCDataChannelOpen) _sendFacing();
+    };
+    ch.onMessage = (m) {
+      if (m.isBinary) return;
+      try {
+        final j = jsonDecode(m.text);
+        if (j['t'] == 'front') {
+          remoteIsFrontCamera = j['v'] == true;
+          notifyListeners();
+        }
+      } catch (_) {}
+    };
+  }
+
+  void _sendFacing() {
+    final ch = _dc;
+    if (ch == null || ch.state != RTCDataChannelState.RTCDataChannelOpen) return;
+    ch.send(RTCDataChannelMessage(jsonEncode({'t': 'front', 'v': isFrontCamera})));
+  }
+
   AudioPlayer? _ringtonePlayer;
   int _ringtoneToken = 0;
+
+  bool _isUserSwitchingAudioRoute = false;
+
+  String headsetName = '';
+  String actualInputType = '';
+  String actualOutputType = '';
+  String activeDeviceUid = '';
+  String activeDeviceName = '';
+  String activeDeviceType = '';
+  bool hasBluetoothDevice = false;
+  List<Map<String, dynamic>> iosInputs = [];
+  int _routeSwitchRequestId = 0;
+
+  Future<void> _native(String method, [Map<String, dynamic>? args]) async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
+    try {
+      final res = await _nativeAudioChannel.invokeMethod(method, args);
+      if (res is Map) {
+        _applyNativeState(Map<String, dynamic>.from(res));
+      }
+    } on MissingPluginException catch (e) {
+      debugPrint('[AUDIO] channel missing: $method: $e');
+    } catch (e) {
+      debugPrint('[AUDIO_LOG ERROR] $method: $e');
+    }
+  }
+
+  Future<void> _configureIosAudio(CallType type) async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
+    await Helper.setAppleAudioConfiguration(AppleAudioConfiguration(
+      appleAudioCategory: AppleAudioCategory.playAndRecord,
+      appleAudioCategoryOptions: {
+        AppleAudioCategoryOption.allowBluetooth,
+        AppleAudioCategoryOption.allowBluetoothA2DP,
+        AppleAudioCategoryOption.allowAirPlay,
+      },
+      appleAudioMode: type == CallType.video
+          ? AppleAudioMode.videoChat
+          : AppleAudioMode.voiceChat,
+    ));
+  }
+
+  void _applyNativeState(Map<String, dynamic> args) {
+    actualInputPort = args['actualInputPort']?.toString() ?? actualInputPort;
+    actualOutputPort = args['actualOutputPort']?.toString() ?? actualOutputPort;
+    actualInputType = args['actualInputType']?.toString() ?? actualInputType;
+    actualOutputType = args['actualOutputType']?.toString() ?? actualOutputType;
+    activeDeviceUid = args['activeDeviceUid']?.toString() ?? activeDeviceUid;
+    activeDeviceName = args['activeDeviceName']?.toString() ?? activeDeviceName;
+    activeDeviceType = args['activeDeviceType']?.toString() ?? activeDeviceType;
+    
+    final hadHeadset = hasBluetoothDevice;
+    hasBluetoothDevice = args['hasBluetooth'] == true;
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      if (!hadHeadset && hasBluetoothDevice && state == CallState.active) {
+        unawaited(setAudioRoute(AudioRoute.bluetooth));
+      } else if (hadHeadset && !hasBluetoothDevice && audioRoute == AudioRoute.bluetooth) {
+        unawaited(setAudioRoute(callType == CallType.video ? AudioRoute.speaker : AudioRoute.earpiece));
+      }
+    }
+
+    headsetName = args['headsetName']?.toString() ?? '';
+    iosInputs = ((args['inputs'] as List?) ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+
+    final nativeRouteStr = args['actualRoute']?.toString();
+    if (nativeRouteStr == 'speaker') {
+      audioRoute = AudioRoute.speaker;
+      speakerOn = true;
+    } else if (nativeRouteStr == 'earpiece') {
+      audioRoute = AudioRoute.earpiece;
+      speakerOn = false;
+    } else if (nativeRouteStr == 'bluetooth') {
+      audioRoute = AudioRoute.bluetooth;
+      speakerOn = false;
+      if (activeDeviceUid.isNotEmpty) {
+        selectedAudioDeviceId = activeDeviceUid;
+      }
+    }
+    notifyListeners();
+  }
+
+  void _initNativeAudioChannel() {
+    _nativeAudioChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onAudioRouteChanged') {
+        final Map<dynamic, dynamic> args = call.arguments is Map ? call.arguments : {};
+        if (defaultTargetPlatform == TargetPlatform.iOS) {
+          _applyNativeState(Map<String, dynamic>.from(args));
+        }
+      }
+    });
+  }
 
   Future<void> init() async {
     if (_inited) return;
     _inited = true;
+    _initNativeAudioChannel();
+
     try {
       await localRenderer.initialize();
       await remoteRenderer.initialize();
+      localRenderer.onFirstFrameRendered = () {
+        hasFirstLocalFrame = true;
+        notifyListeners();
+      };
+      remoteRenderer.onFirstFrameRendered = () {
+        hasFirstRemoteFrame = true;
+        notifyListeners();
+      };
     } catch (e) {
       debugPrint('[CALL] Error initializing video renderers: $e');
     }
-    try {
-      navigator.mediaDevices.ondevicechange = (event) async {
-        debugPrint('[CALL] Media devices changed, refreshing audio devices...');
-        await refreshAudioDevices();
-      };
-    } catch (e) {
-      debugPrint('[CALL] Error binding device change listener: $e');
+
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      try {
+        navigator.mediaDevices.ondevicechange = (event) async {
+          debugPrint('[CALL] Media devices changed event received...');
+          if (_isUserSwitchingAudioRoute || isRouteSwitching) {
+            await refreshAudioDevices();
+            return;
+          }
+
+          await refreshAudioDevices();
+          await getAudioRouteInfo();
+
+          if (userSelectedAudioRoute != null) return;
+
+          if (hasBluetoothDevice && audioRoute != AudioRoute.bluetooth) {
+            await setAudioRoute(AudioRoute.bluetooth, isUserAction: false);
+          } else if (!hasBluetoothDevice && audioRoute == AudioRoute.bluetooth) {
+            final fallback = (callType == CallType.video) ? AudioRoute.speaker : AudioRoute.earpiece;
+            await setAudioRoute(fallback, isUserAction: false);
+          }
+        };
+      } catch (e) {
+        debugPrint('[CALL] Error binding device change listener: $e');
+      }
     }
   }
 
-  final StreamController<String> _videoSwitchRequestCtrl = StreamController<String>.broadcast();
-  Stream<String> get onVideoSwitchRequested => _videoSwitchRequestCtrl.stream;
+  Map<String, dynamic>? pendingUpgradeRequest;
 
   void attachSocket(io.Socket socket) {
     _socket = socket;
     _socket!.off('incoming_call');
+    _socket!.off('call_ringing');
     _socket!.off('call_accepted');
     _socket!.off('call_ended');
     _socket!.off('webrtc_signal');
     _socket!.off('call_media_state');
+    _socket!.off('call_upgrade_requested');
+    _socket!.off('call_upgrade_cancelled');
+    _socket!.off('call_upgrade_rejected');
+    _socket!.off('call_upgraded');
     _socket!.off('call_type_switched');
-    _socket!.off('request_video_switch');
-    _socket!.off('video_switch_requested');
-    _socket!.off('video_call_request');
-    _socket!.off('switch_call_type_request');
-    _socket!.off('call_type_switch_request');
-    _socket!.off('video_switch_accepted');
-    _socket!.off('video_switch_rejected');
 
     _socket!.on('incoming_call', (d) => _guard(() => _onIncoming(_map(d))));
+    _socket!.on('call_ringing', (d) => _guard(() => _onRinging(_map(d))));
     _socket!.on('call_accepted', (d) => _guard(() => _onAccepted(_map(d))));
     _socket!.on('call_ended', (d) => _guard(() => _onEnded(_map(d))));
     _socket!.on('webrtc_signal', (d) => _guard(() => _onSignal(_map(d))));
     _socket!.on('call_media_state', (d) => _guard(() => _onMediaState(_map(d))));
+    _socket!.on('call_upgrade_requested', (d) => _guard(() => _onUpgradeRequested(_map(d))));
+    _socket!.on('call_upgrade_cancelled', (d) => _guard(() => _onUpgradeCancelled(_map(d))));
+    _socket!.on('call_upgrade_rejected', (d) => _guard(() => _onUpgradeRejected(_map(d))));
+    _socket!.on('call_upgraded', (d) => _guard(() => _onUpgraded(_map(d))));
     _socket!.on('call_type_switched', (d) => _guard(() => _onCallTypeSwitched(_map(d))));
-    _socket!.on('request_video_switch', (d) => _guard(() => _onVideoSwitchRequested(_map(d))));
-    _socket!.on('video_switch_requested', (d) => _guard(() => _onVideoSwitchRequested(_map(d))));
-    _socket!.on('video_call_request', (d) => _guard(() => _onVideoSwitchRequested(_map(d))));
-    _socket!.on('switch_call_type_request', (d) => _guard(() => _onVideoSwitchRequested(_map(d))));
-    _socket!.on('call_type_switch_request', (d) => _guard(() => _onVideoSwitchRequested(_map(d))));
-    _socket!.on('video_switch_accepted', (d) => _guard(() => _onVideoSwitchAccepted(_map(d))));
-    _socket!.on('video_switch_rejected', (d) => _guard(() => _onVideoSwitchRejected(_map(d))));
     _socket!.on('disconnect', (_) {
       if (state != CallState.idle && state != CallState.ended) {
         _setState(CallState.connecting); // Attempting socket reconnect
@@ -153,6 +329,14 @@ class CallService extends ChangeNotifier {
     required CallType callType,
     required String callerName,
   }) {
+    localRenderer.srcObject = null;
+    remoteRenderer.srcObject = null;
+    hasFirstLocalFrame = false;
+    hasFirstRemoteFrame = false;
+    if (_localStream != null) {
+      _stopStream(_localStream!);
+      _localStream = null;
+    }
     this.callId = callId;
     this.chatHeadId = chatHeadId;
     peerId = callerId;
@@ -177,6 +361,15 @@ class CallService extends ChangeNotifier {
     FocusManager.instance.primaryFocus?.unfocus();
     unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
 
+    localRenderer.srcObject = null;
+    remoteRenderer.srcObject = null;
+    hasFirstLocalFrame = false;
+    hasFirstRemoteFrame = false;
+    if (_localStream != null) {
+      _stopStream(_localStream!);
+      _localStream = null;
+    }
+
     await init();
     if (state != CallState.idle) throw CallException(409, 'You are already in a call');
     if (!await _ensurePermissions(type)) {
@@ -192,18 +385,25 @@ class CallService extends ChangeNotifier {
       'call_type': type == CallType.video ? 'video' : 'voice',
     });
 
-    if (data['status'] == 'busy') {
-      _cleanup(notifyEnd: null);
-      throw CallException(409, 'User is busy');
-    }
-
     callId = _asInt(data['call_id']);
     this.chatHeadId = chatHeadId;
     callType = type;
     isCaller = true;
     isMinimizedNotifier.value = false;
     await initializeDefaultAudioRoute(type);
-    _setState(CallState.outgoingRinging);
+
+    if (data['status'] == 'busy') {
+      endReasonMessage = 'User is busy';
+      _setState(CallState.ended);
+      notifyListeners();
+      Timer(const Duration(milliseconds: 2000), () {
+        _cleanup(notifyEnd: null);
+      });
+      return;
+    }
+
+    // Caller stays on Connecting... until call_ringing socket event is received
+    _setState(CallState.connecting);
 
     if (callId != null) {
       unawaited(
@@ -279,6 +479,13 @@ class CallService extends ChangeNotifier {
   }
 
   Future<void> hangUp() async {
+    localRenderer.srcObject = null;
+    remoteRenderer.srcObject = null;
+    if (_localStream != null) {
+      _stopStream(_localStream!);
+      _localStream = null;
+    }
+
     final id = callId;
     if (id == null) {
       _cleanup(notifyEnd: null);
@@ -306,8 +513,12 @@ class CallService extends ChangeNotifier {
   }
 
   void toggleCamera() {
-    if (callType != CallType.video) return;
+    if (callType != CallType.video) {
+      unawaited(switchCallType(CallType.video));
+      return;
+    }
     camOn = !camOn;
+    if (!camOn) hasFirstLocalFrame = false;
     for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
       t.enabled = camOn;
     }
@@ -336,26 +547,23 @@ class CallService extends ChangeNotifier {
           'audio': false,
           'video': {
             'facingMode': 'user',
-            'width': 640,
-            'height': 480,
-            'frameRate': 24,
+            'width': {'ideal': 1080, 'min': 720},
+            'height': {'ideal': 1920, 'min': 1280},
+            'frameRate': 30,
           },
         });
         if (videoStream.getVideoTracks().isNotEmpty) {
           final newTrack = videoStream.getVideoTracks().first;
+          isFrontCamera = true;
+          cameraZoomScale = 1.0;
           _localStream?.addTrack(newTrack);
           localRenderer.srcObject = _localStream;
           if (_pc != null) {
             await _pc!.addTrack(newTrack, _localStream!);
             final offer = await _pc!.createOffer();
-            await _pc!.setLocalDescription(offer);
             final id = callId;
             if (id != null) {
-              await _emit('webrtc_signal', {
-                'call_id': id,
-                'type': 'offer',
-                'data': {'sdp': offer.sdp, 'type': offer.type},
-              }).catchError((_) => <String, dynamic>{});
+              await _setLocalDescriptionAndSignal(_pc!, offer, id);
             }
           }
         }
@@ -367,51 +575,54 @@ class CallService extends ChangeNotifier {
     }
   }
 
-  // Directly switch call type without request dialog
-  Future<void> requestVideoCallSwitch() async {
-    await switchCallType(CallType.video);
+  bool isUpgradeRequestPending = false;
+
+  // 1. Emit call_upgrade_request (user presses video button on voice call screen)
+  Future<void> requestVideoCallUpgrade() async {
+    final id = callId;
+    if (id == null || state != CallState.active) return;
+    if (isUpgradeRequestPending) return;
+
+    try {
+      isUpgradeRequestPending = true;
+      notifyListeners();
+      AppToast.show('Requesting video call switch...');
+
+      final payload = {'call_id': id};
+      final ack = await _emit('call_upgrade_request', payload);
+      debugPrint('[CALL] call_upgrade_request ack: $ack');
+    } on CallException catch (e) {
+      isUpgradeRequestPending = false;
+      notifyListeners();
+      debugPrint('[CALL] call_upgrade_request exception: $e');
+      if (e.status == 409) {
+        AppToast.show('Upgrade request already pending');
+      } else {
+        AppToast.show(e.message, isError: true);
+      }
+    } catch (e) {
+      isUpgradeRequestPending = false;
+      notifyListeners();
+      debugPrint('[CALL] Video upgrade request error: $e');
+    }
   }
 
-  Future<void> acceptVideoCallSwitch() async {
-    pendingVideoSwitchCaller = null;
+  // 2. Emit call_upgrade_cancel
+  Future<void> cancelVideoCallUpgrade() async {
     final id = callId;
     if (id == null) return;
-    final hasCam = await _ensureVideoTrack();
-    if (!hasCam) return;
-
-    callType = CallType.video;
-    camOn = true;
-    for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
-      t.enabled = true;
-    }
-    if (audioRoute == AudioRoute.earpiece && !hasConnectedHeadphones) {
-      await setAudioRoute(AudioRoute.speaker);
-    }
-    _sendMediaState();
-    final payload = {'call_id': id, 'callId': id};
-    _emit('video_switch_accepted', payload).catchError((_) => <String, dynamic>{});
+    isUpgradeRequestPending = false;
     notifyListeners();
+    await _emit('call_upgrade_cancel', {'call_id': id}).catchError((_) => <String, dynamic>{});
   }
 
-  Future<void> rejectVideoCallSwitch() async {
-    pendingVideoSwitchCaller = null;
+  // 3. Emit call_upgrade_accept (other user accepts request on voice call screen)
+  Future<void> acceptVideoCallUpgrade() async {
     final id = callId;
-    if (id == null) return;
-    final payload = {'call_id': id, 'callId': id};
-    _emit('video_switch_rejected', payload).catchError((_) => <String, dynamic>{});
-    notifyListeners();
-  }
+    pendingUpgradeRequest = null;
+    isUpgradeRequestPending = false;
 
-  void _onVideoSwitchRequested(Map<String, dynamic> d) {
-    // Directly handle video call switch without request dialog
-    _onCallTypeSwitched({'call_id': d['call_id'], 'call_type': 'video'});
-  }
-
-  void _onVideoSwitchAccepted(Map<String, dynamic> d) async {
-    final incomingCallId = _asInt(d['call_id']) ?? _asInt(d['callId']) ?? _asInt(d['id']);
-    if (incomingCallId != null && callId != null && incomingCallId != callId) return;
-
-    pendingVideoSwitchCaller = null;
+    // Immediately enable local camera and switch callType to video for accepting user
     final hasCam = await _ensureVideoTrack();
     if (hasCam) {
       callType = CallType.video;
@@ -419,22 +630,128 @@ class CallService extends ChangeNotifier {
       for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
         t.enabled = true;
       }
-      if (audioRoute == AudioRoute.earpiece && !hasConnectedHeadphones) {
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        await _configureIosAudio(CallType.video);
+        if (audioRoute == AudioRoute.earpiece) await setAudioRoute(AudioRoute.speaker);
+        await _native('setCallType', {'isVideo': true});
+      } else if (audioRoute == AudioRoute.earpiece && !hasConnectedHeadphones) {
         await setAudioRoute(AudioRoute.speaker);
       }
       _sendMediaState();
-      notifyListeners();
-      AppToast.show('$peerName accepted video call request');
+    }
+    notifyListeners();
+
+    if (id == null) return;
+
+    try {
+      debugPrint('[CALL] Accepting video upgrade request for call_id: $id');
+      await _emit('call_upgrade_accept', {'call_id': id});
+    } catch (e) {
+      debugPrint('[CALL] acceptVideoCallUpgrade error: $e');
     }
   }
 
-  void _onVideoSwitchRejected(Map<String, dynamic> d) {
+  // 4. Emit call_upgrade_reject (other user declines request on voice call screen)
+  Future<void> rejectVideoCallUpgrade() async {
+    final id = callId;
+    pendingUpgradeRequest = null;
+    isUpgradeRequestPending = false;
+    notifyListeners();
+    if (id == null) return;
+
+    try {
+      debugPrint('[CALL] Rejecting video upgrade request for call_id: $id');
+      await _emit('call_upgrade_reject', {'call_id': id});
+    } catch (e) {
+      debugPrint('[CALL] rejectVideoCallUpgrade error: $e');
+    }
+  }
+
+  // 5. Socket Listener: call_upgrade_requested
+  void _onUpgradeRequested(Map<String, dynamic> d) {
+    debugPrint('[CALL] call_upgrade_requested event received: $d');
     final incomingCallId = _asInt(d['call_id']) ?? _asInt(d['callId']) ?? _asInt(d['id']);
     if (incomingCallId != null && callId != null && incomingCallId != callId) return;
 
-    pendingVideoSwitchCaller = null;
+    pendingUpgradeRequest = d;
     notifyListeners();
-    AppToast.show('$peerName declined video call request');
+  }
+
+  // 6. Socket Listener: call_upgrade_cancelled
+  void _onUpgradeCancelled(Map<String, dynamic> d) {
+    debugPrint('[CALL] call_upgrade_cancelled event received: $d');
+    if (_asInt(d['call_id']) != callId) return;
+    pendingUpgradeRequest = null;
+    isUpgradeRequestPending = false;
+    notifyListeners();
+  }
+
+  // 7. Socket Listener: call_upgrade_rejected
+  void _onUpgradeRejected(Map<String, dynamic> d) {
+    debugPrint('[CALL] call_upgrade_rejected event received: $d');
+    if (_asInt(d['call_id']) != callId) return;
+    pendingUpgradeRequest = null;
+    isUpgradeRequestPending = false;
+    notifyListeners();
+
+    final reason = d['reason']?.toString().toLowerCase();
+    if (reason == 'timeout') {
+      AppToast.show('No response', isError: true);
+    } else {
+      AppToast.show('Request declined');
+    }
+  }
+
+  // 8. Socket Listener: call_upgraded
+  void _onUpgraded(Map<String, dynamic> d) async {
+    debugPrint('[CALL] call_upgraded event received: $d');
+    if (_asInt(d['call_id']) != callId) return;
+
+    pendingUpgradeRequest = null;
+    isUpgradeRequestPending = false;
+
+    final requestedBy = _asInt(d['requested_by']) ?? _asInt(d['from']);
+    final myUserId = ServerApiService.instance.currentUserId;
+
+    // Step 1: Both users turn on camera with getUserMedia / local video track
+    final hasCam = await _ensureVideoTrack();
+    if (!hasCam) {
+      debugPrint('[CALL] Failed to initialize camera for video upgrade');
+      return;
+    }
+
+    callType = CallType.video;
+    camOn = true;
+    for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
+      t.enabled = true;
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      await _configureIosAudio(CallType.video);
+      if (audioRoute == AudioRoute.earpiece) await setAudioRoute(AudioRoute.speaker);
+      await _native('setCallType', {'isVideo': true});
+    } else if (audioRoute == AudioRoute.earpiece && !hasConnectedHeadphones) {
+      await setAudioRoute(AudioRoute.speaker);
+    }
+
+    // Step 2: ONLY the requester creates offer and sends via webrtc_signal
+    final isRequester = (requestedBy != null && myUserId != null && requestedBy == myUserId);
+    if (isRequester || (requestedBy == null && isCaller)) {
+      debugPrint('[CALL] I am the requester ($myUserId). Creating WebRTC offer for video upgrade...');
+      if (_pc != null) {
+        final offer = await _pc!.createOffer();
+        final id = callId;
+        if (id != null) {
+          await _setLocalDescriptionAndSignal(_pc!, offer, id);
+        }
+      }
+    } else {
+      debugPrint('[CALL] I am the callee ($myUserId). Waiting for requester WebRTC offer...');
+    }
+
+    _sendMediaState();
+    notifyListeners();
+    AppToast.show('Call upgraded to Video');
   }
 
   Future<void> switchCallType(CallType newType) async {
@@ -461,7 +778,11 @@ class CallService extends ChangeNotifier {
         for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
           t.enabled = true;
         }
-        if (audioRoute == AudioRoute.earpiece && !hasConnectedHeadphones) {
+        if (defaultTargetPlatform == TargetPlatform.iOS) {
+          await _configureIosAudio(CallType.video);
+          if (audioRoute == AudioRoute.earpiece) await setAudioRoute(AudioRoute.speaker);
+          await _native('setCallType', {'isVideo': true});
+        } else if (audioRoute == AudioRoute.earpiece && !hasConnectedHeadphones) {
           await setAudioRoute(AudioRoute.speaker);
         }
         _sendMediaState();
@@ -484,7 +805,9 @@ class CallService extends ChangeNotifier {
         localRenderer.srcObject = null;
         remoteRenderer.srcObject = null;
       } catch (_) {}
-      if (!hasConnectedHeadphones) {
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        await _native('setCallType', {'isVideo': false});
+      } else if (!hasConnectedHeadphones) {
         await setAudioRoute(AudioRoute.earpiece);
       }
       _sendMediaState();
@@ -500,50 +823,139 @@ class CallService extends ChangeNotifier {
   }
 
   Future<void> switchCamera() async {
-    final tracks = _localStream?.getVideoTracks();
-    if (tracks == null || tracks.isEmpty) return;
+    final tracks = _localStream?.getVideoTracks() ?? <MediaStreamTrack>[];
+    if (tracks.isEmpty) return;
+
     try {
       await Helper.switchCamera(tracks.first);
+
+      isFrontCamera = !isFrontCamera;
+      isUltraWideActive = false;
+      cameraZoomScale = 1.0;
+
+      _sendMediaState();
+      _sendFacing();
+
+      final id = callId;
+      if (id != null) {
+        _emit('webrtc_signal', {
+          'call_id': id,
+          'type': 'camera_facing',
+          'data': {'front': isFrontCamera},
+        }).catchError((_) => <String, dynamic>{});
+      }
+
+      notifyListeners();
     } catch (e) {
       debugPrint('[CALL] Switch camera error: $e');
     }
   }
 
+  Future<void> setCameraZoom(double scale) async {
+    final clampedScale = scale.clamp(1.0, 5.0);
+    if ((cameraZoomScale - clampedScale).abs() < 0.01) return;
+
+    cameraZoomScale = clampedScale;
+    notifyListeners();
+
+    final tracks = _localStream?.getVideoTracks();
+    if (tracks == null || tracks.isEmpty) return;
+    final track = tracks.first;
+
+    try {
+      await Helper.setZoom(track, clampedScale);
+    } catch (e) {
+      debugPrint('[CALL] Native camera setZoom error: $e');
+    }
+  }
+
   Future<void> setSpeaker(bool on) async {
-    await setAudioRoute(on ? AudioRoute.speaker : AudioRoute.earpiece);
+    await setAudioRoute(on ? AudioRoute.speaker : AudioRoute.earpiece, isUserAction: true);
   }
 
   bool get hasConnectedHeadset => hasConnectedHeadphones;
 
-  String get connectedHeadsetName {
+  bool _isBuiltInAudioDevice(MediaDeviceInfo d) {
+    if (d.kind == 'audioinput') return true;
+
+    final label = d.label.toLowerCase();
+    final id = d.deviceId.toLowerCase();
+
+    if (label.contains('speaker') ||
+        label.contains('loudspeaker') ||
+        label.contains('earpiece') ||
+        label.contains('receiver') ||
+        label.contains('phone') ||
+        label.contains('built-in') ||
+        label.contains('builtin') ||
+        label.contains('microphone') ||
+        id == 'speaker' ||
+        id == 'earpiece' ||
+        id == 'receiver' ||
+        id == 'phone' ||
+        id == 'microphone' ||
+        id == 'built-in') {
+      return true;
+    }
+
+    return false;
+  }
+
+  bool get hasConnectedHeadphones {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return hasBluetoothDevice || audioRoute == AudioRoute.bluetooth;
+    }
     for (final d in availableAudioDevices) {
-      final label = d.label.toLowerCase();
-      final id = d.deviceId.toLowerCase();
-      if ((label.contains('bluetooth') ||
-              label.contains('airpods') ||
-              label.contains('buds') ||
-              label.contains('headset') ||
-              label.contains('wired') ||
-              label.contains('headphone') ||
-              label.contains('earphones') ||
-              label.contains('handsfree')) &&
-          !label.contains('speaker') &&
-          !label.contains('earpiece') &&
-          !label.contains('receiver') &&
-          !label.contains('built-in') &&
-          !id.contains('speaker') &&
-          !id.contains('earpiece') &&
-          !id.contains('receiver')) {
-        return d.label.isNotEmpty ? d.label : 'Bluetooth / Headset';
+      if (d.kind == 'audiooutput' && !_isBuiltInAudioDevice(d)) {
+        return true;
       }
+    }
+    return false;
+  }
+
+  String get connectedHeadsetName {
+    if (activeDeviceName.isNotEmpty &&
+        activeDeviceName != 'Speaker' &&
+        activeDeviceName != 'Phone' &&
+        activeDeviceName != 'Phone Earpiece' &&
+        activeDeviceName != 'Receiver' &&
+        activeDeviceName != 'Built-In Receiver' &&
+        activeDeviceName != 'Built-In Speaker') {
+      return activeDeviceName;
+    }
+    if (headsetName.isNotEmpty &&
+        headsetName != 'Speaker' &&
+        headsetName != 'Phone' &&
+        headsetName != 'Phone Earpiece') {
+      return headsetName;
+    }
+    for (final d in availableAudioDevices) {
+      if (d.kind == 'audiooutput' && !_isBuiltInAudioDevice(d)) {
+        return d.label.isNotEmpty ? d.label : 'Bluetooth Headset';
+      }
+    }
+    if (actualOutputPort.isNotEmpty &&
+        actualOutputPort != 'Unknown' &&
+        actualOutputPort != 'Speaker' &&
+        actualOutputPort != 'Receiver' &&
+        actualOutputPort != 'Built-In Receiver' &&
+        actualOutputPort != 'Built-In Speaker') {
+      return actualOutputPort;
+    }
+    if (actualInputPort.isNotEmpty &&
+        actualInputPort != 'Unknown' &&
+        actualInputPort != 'Built-In Microphone' &&
+        actualInputPort != 'iPhone Microphone') {
+      return actualInputPort;
     }
     if (selectedAudioDeviceName.isNotEmpty &&
         selectedAudioDeviceName != 'Speaker' &&
         selectedAudioDeviceName != 'Phone' &&
+        selectedAudioDeviceName != 'Phone Earpiece' &&
         selectedAudioDeviceName != 'Earpiece') {
       return selectedAudioDeviceName;
     }
-    return 'Headphones';
+    return 'Bluetooth Headset';
   }
 
   Future<void> refreshAudioDevices() async {
@@ -552,8 +964,14 @@ class CallService extends ChangeNotifier {
       availableAudioDevices = devices
           .where((d) => d.kind == 'audiooutput' || d.kind == 'audioinput')
           .toList();
+      debugPrint('[AUDIO_LOG] Refreshed devices (${availableAudioDevices.length} total):');
+      for (final d in availableAudioDevices) {
+        debugPrint('[AUDIO_LOG]   - kind=${d.kind}, id="${d.deviceId}", label="${d.label}"');
+      }
       notifyListeners();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[AUDIO_LOG ERROR] refreshAudioDevices error: $e');
+    }
   }
 
   Future<void> selectAudioDevice(MediaDeviceInfo device) async {
@@ -563,16 +981,11 @@ class CallService extends ChangeNotifier {
 
     try {
       if (labelLower.contains('speaker') || labelLower.contains('loudspeaker')) {
-        await setAudioRoute(AudioRoute.speaker);
+        await setAudioRoute(AudioRoute.speaker, deviceId: device.deviceId, isUserAction: true);
       } else if (labelLower.contains('earpiece') || labelLower.contains('receiver') || labelLower.contains('built-in')) {
-        await setAudioRoute(AudioRoute.earpiece);
+        await setAudioRoute(AudioRoute.earpiece, deviceId: device.deviceId, isUserAction: true);
       } else {
-        await setAudioRoute(AudioRoute.bluetooth);
-        if (device.deviceId.isNotEmpty) {
-          try {
-            await Helper.selectAudioOutput(device.deviceId);
-          } catch (_) {}
-        }
+        await setAudioRoute(AudioRoute.bluetooth, deviceId: device.deviceId, isUserAction: true);
       }
     } catch (e) {
       debugPrint('[CALL] Select audio device error: $e');
@@ -580,41 +993,214 @@ class CallService extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool get hasConnectedHeadphones {
+  List<AudioOutputOption> getAvailableAudioOptions() {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      final isVideo = callType == CallType.video;
+      final list = <AudioOutputOption>[];
+
+      // 1. External connected headphone / Bluetooth devices
+      if (iosInputs.isNotEmpty) {
+        for (final inp in iosInputs) {
+          final name = inp['name']?.toString() ?? 'Headphones';
+          final uid = inp['uid']?.toString() ?? 'bluetooth';
+          final isCar = inp['isCar'] == true || name.toLowerCase().contains('car');
+          list.add(AudioOutputOption(
+            id: uid,
+            label: name,
+            subtitle: isCar ? 'CarPlay speaker & mic' : 'Headphone speaker & mic',
+            icon: isCar ? CupertinoIcons.car : CupertinoIcons.headphones,
+            route: AudioRoute.bluetooth,
+          ));
+        }
+      } else if (hasConnectedHeadphones) {
+        final name = connectedHeadsetName.isNotEmpty ? connectedHeadsetName : 'Headphones';
+        final isCar = name.toLowerCase().contains('car') || activeDeviceType == 'CarAudio';
+        list.add(AudioOutputOption(
+          id: 'bluetooth',
+          label: name,
+          subtitle: isCar ? 'CarPlay speaker & mic' : 'Headphone speaker & mic',
+          icon: isCar ? CupertinoIcons.car : CupertinoIcons.headphones,
+          route: AudioRoute.bluetooth,
+        ));
+      }
+
+      // 2. Phone earpiece ONLY for voice calls (NEVER for video calls)
+      if (!isVideo) {
+        list.add(const AudioOutputOption(
+          id: 'earpiece',
+          label: 'Phone Earpiece',
+          subtitle: 'Phone receiver & mic',
+          icon: CupertinoIcons.phone_fill,
+          route: AudioRoute.earpiece,
+        ));
+      }
+
+      // 3. Speaker
+      list.add(const AudioOutputOption(
+        id: 'speaker',
+        label: 'Speaker',
+        subtitle: 'Device speaker & mic',
+        icon: CupertinoIcons.speaker_3_fill,
+        route: AudioRoute.speaker,
+      ));
+
+      return list;
+    }
+
+    final List<AudioOutputOption> options = [];
+
+    // Connected external headsets/Bluetooth devices (Android)
+    final externalDevices = <MediaDeviceInfo>[];
     for (final d in availableAudioDevices) {
-      final label = d.label.toLowerCase();
-      final id = d.deviceId.toLowerCase();
-      if ((label.contains('bluetooth') ||
-              label.contains('headset') ||
-              label.contains('pods') ||
-              label.contains('buds') ||
-              label.contains('airpods') ||
-              label.contains('wired') ||
-              label.contains('headphone') ||
-              label.contains('earphones') ||
-              label.contains('handsfree') ||
-              label.contains('sco') ||
-              id.contains('bluetooth') ||
-              id.contains('headset') ||
-              id.contains('wired') ||
-              id.contains('headphone')) &&
-          !label.contains('speaker') &&
-          !label.contains('earpiece') &&
-          !label.contains('receiver') &&
-          !label.contains('built-in') &&
-          !id.contains('speaker') &&
-          !id.contains('earpiece') &&
-          !id.contains('receiver')) {
-        return true;
+      if (d.kind == 'audiooutput' && !_isBuiltInAudioDevice(d)) {
+        final cleanLabel = d.label.trim();
+        final alreadyAdded = externalDevices.any((ex) {
+          if (ex.deviceId.isNotEmpty && ex.deviceId == d.deviceId) return true;
+          if (cleanLabel.isNotEmpty && ex.label.trim().toLowerCase() == cleanLabel.toLowerCase()) return true;
+          return false;
+        });
+
+        if (!alreadyAdded) {
+          externalDevices.add(d);
+        }
       }
     }
-    if (audioRoute == AudioRoute.bluetooth && availableAudioDevices.isNotEmpty) return true;
+
+    if (externalDevices.isNotEmpty) {
+      for (final dev in externalDevices) {
+        final displayName = dev.label.isNotEmpty ? dev.label : 'Headphones / Bluetooth';
+        final isCar = displayName.toLowerCase().contains('car') || displayName.toLowerCase().contains('auto');
+        options.add(
+          AudioOutputOption(
+            id: dev.deviceId.isNotEmpty ? dev.deviceId : 'bluetooth',
+            label: displayName,
+            subtitle: isCar ? 'CarPlay / Car speaker & mic' : 'Headphone speaker & mic',
+            icon: isCar ? CupertinoIcons.car : CupertinoIcons.headphones,
+            route: AudioRoute.bluetooth,
+            rawDevice: dev,
+          ),
+        );
+      }
+    } else if (hasConnectedHeadphones) {
+      final name = connectedHeadsetName.isNotEmpty ? connectedHeadsetName : 'Headphones / Bluetooth';
+      final isCar = name.toLowerCase().contains('car') || name.toLowerCase().contains('auto');
+      options.add(
+        AudioOutputOption(
+          id: 'bluetooth',
+          label: name,
+          subtitle: isCar ? 'CarPlay / Car speaker & mic' : 'Headphone speaker & mic',
+          icon: isCar ? CupertinoIcons.car : CupertinoIcons.headphones,
+          route: AudioRoute.bluetooth,
+        ),
+      );
+    }
+
+    // Phone earpiece ONLY for voice calls
+    if (callType != CallType.video) {
+      options.add(const AudioOutputOption(
+        id: 'earpiece',
+        label: 'Phone Earpiece',
+        subtitle: 'Phone receiver & mic',
+        icon: CupertinoIcons.phone_fill,
+        route: AudioRoute.earpiece,
+      ));
+    }
+
+    options.add(const AudioOutputOption(
+      id: 'speaker',
+      label: 'Speaker',
+      subtitle: 'Device speaker & mic',
+      icon: CupertinoIcons.speaker_3_fill,
+      route: AudioRoute.speaker,
+    ));
+
+    return options;
+  }
+
+  bool isAudioOptionSelected(AudioOutputOption option) {
+    if (option.route == AudioRoute.speaker) {
+      return audioRoute == AudioRoute.speaker;
+    }
+    if (option.route == AudioRoute.earpiece) {
+      return audioRoute == AudioRoute.earpiece;
+    }
+    if (option.route == AudioRoute.bluetooth) {
+      if (audioRoute != AudioRoute.bluetooth) return false;
+      if (defaultTargetPlatform == TargetPlatform.iOS && iosInputs.length > 1) {
+        return option.label.toLowerCase() == activeDeviceName.toLowerCase() ||
+            option.id == activeDeviceUid;
+      }
+      return true;
+    }
     return false;
+  }
+
+  Future<void> selectAudioOption(AudioOutputOption option) async {
+    debugPrint('[AUDIO_LOG] selectAudioOption tapped: id="${option.id}", label="${option.label}", route=${option.route}');
+    selectedAudioDeviceId = option.id;
+    selectedAudioDeviceName = option.label;
+    await setAudioRoute(option.route, deviceId: option.id, deviceName: option.label, isUserAction: true);
+
+    // For Bluetooth-to-Bluetooth switching the native SCO handoff takes ~400-800ms.
+    // Schedule two refreshes so the UI reflects the confirmed native state.
+    if (option.route == AudioRoute.bluetooth && defaultTargetPlatform == TargetPlatform.iOS) {
+      Future.delayed(const Duration(milliseconds: 500), () async {
+        if (state == CallState.active || state == CallState.connecting) {
+          await getAudioRouteInfo();
+        }
+      });
+      Future.delayed(const Duration(milliseconds: 1100), () async {
+        if (state == CallState.active || state == CallState.connecting) {
+          await getAudioRouteInfo();
+        }
+      });
+    }
+  }
+
+  Future<Map<String, dynamic>> getAudioRouteInfo() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return {};
+    try {
+      final res = await _nativeAudioChannel.invokeMethod('getAudioRouteInfo');
+      if (res is Map) {
+        final m = Map<String, dynamic>.from(res);
+        _applyNativeState(m);
+        return m;
+      }
+    } catch (e) {
+      debugPrint('[AUDIO_LOG ERROR] getAudioRouteInfo error: $e');
+    }
+    return {};
+  }
+
+  Future<void> reapplyRoute() async {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      await _native('reapplyRoute');
+    }
+  }
+
+  Future<void> showSystemRoutePicker() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
+    try {
+      await _nativeAudioChannel.invokeMethod('showRoutePicker');
+    } catch (e) {
+      debugPrint('[AUDIO_LOG ERROR] showRoutePicker: $e');
+    }
   }
 
   Future<void> initializeDefaultAudioRoute(CallType type) async {
     try {
-      // Retry device enumeration up to 3 times on call start to ensure connected headphones/Bluetooth are discovered
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        await _configureIosAudio(type);
+        final res = await _nativeAudioChannel.invokeMethod('configureCall', {
+          'callType': type == CallType.video ? 'video' : 'voice',
+        });
+        if (res is Map) {
+          _applyNativeState(Map<String, dynamic>.from(res));
+        }
+        notifyListeners();
+        return;
+      }
+
       for (int i = 0; i < 3; i++) {
         await refreshAudioDevices();
         if (hasConnectedHeadphones) break;
@@ -622,114 +1208,161 @@ class CallService extends ChangeNotifier {
       }
 
       if (hasConnectedHeadphones) {
-        debugPrint('[CALL] Connected headphones found on call start -> Route to Headphones');
-        await setAudioRoute(AudioRoute.bluetooth);
+        await setAudioRoute(AudioRoute.bluetooth, isUserAction: false);
       } else {
         if (type == CallType.video) {
-          debugPrint('[CALL] Video call without headphones -> Route to Speaker');
-          await setAudioRoute(AudioRoute.speaker);
+          await setAudioRoute(AudioRoute.speaker, isUserAction: false);
         } else {
-          debugPrint('[CALL] Voice call without headphones -> Route to Earpiece');
-          await setAudioRoute(AudioRoute.earpiece);
+          await setAudioRoute(AudioRoute.earpiece, isUserAction: false);
         }
       }
     } catch (e) {
-      debugPrint('[CALL] Audio route init warning: $e');
+      debugPrint('[AUDIO_LOG ERROR] Audio route init warning: $e');
     }
   }
 
-  Future<void> setAudioRoute(AudioRoute route) async {
-    audioRoute = route;
+  MediaDeviceInfo? get _builtInMicrophoneDevice {
+    for (final d in availableAudioDevices) {
+      if (d.kind == 'audioinput') {
+        final label = d.label.toLowerCase();
+        final id = d.deviceId.toLowerCase();
+        if (label.contains('iphone microphone') ||
+            label.contains('built-in') ||
+            label.contains('microphone') ||
+            id.contains('built-in') ||
+            id.contains('microphone')) {
+          return d;
+        }
+      }
+    }
+    return null;
+  }
+
+  MediaDeviceInfo? get _bluetoothMicrophoneDevice {
+    for (final d in availableAudioDevices) {
+      if (d.kind == 'audioinput') {
+        final label = d.label.toLowerCase();
+        final id = d.deviceId.toLowerCase();
+        final isBuiltIn = label.contains('iphone microphone') ||
+            label.contains('built-in') ||
+            label.contains('receiver') ||
+            label.contains('speaker') ||
+            id.contains('built-in');
+        if (!isBuiltIn) {
+          return d;
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<void> setAudioRoute(
+    AudioRoute route, {
+    String? deviceId,
+    String? deviceName,
+    bool isUserAction = false,
+  }) async {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      _isUserSwitchingAudioRoute = true;
+      isRouteSwitching = true;
+      if (isUserAction) userSelectedAudioRoute = route;
+
+      final routeStr = route == AudioRoute.speaker
+          ? 'speaker'
+          : (route == AudioRoute.earpiece ? 'earpiece' : 'bluetooth');
+
+      try {
+        final res = await _nativeAudioChannel.invokeMethod('setAudioRoute', {
+          'route': routeStr,
+          'portUid': deviceId ?? '',
+          'name': deviceName ?? '',
+        });
+        if (res is Map) {
+          _applyNativeState(Map<String, dynamic>.from(res));
+        }
+      } catch (e) {
+        debugPrint('[AUDIO] iOS route error: $e');
+      } finally {
+        _isUserSwitchingAudioRoute = false;
+        isRouteSwitching = false;
+      }
+      notifyListeners();
+      return;
+    }
+
+    final requestId = ++_routeSwitchRequestId;
+    debugPrint('[AUDIO_LOG] === setAudioRoute START [#$requestId]: target route=$route, deviceId=$deviceId, isUserAction=$isUserAction, current route=$audioRoute ===');
+
+    _isUserSwitchingAudioRoute = true;
+    isRouteSwitching = true;
+    requestedAudioRoute = route;
+    if (isUserAction) {
+      userSelectedAudioRoute = route;
+    }
+    if (deviceId != null && deviceId.isNotEmpty) {
+      selectedAudioDeviceId = deviceId;
+    }
+
     try {
+      // Android routing
       await refreshAudioDevices();
+      final builtInMic = _builtInMicrophoneDevice;
+      final bluetoothMic = _bluetoothMicrophoneDevice;
+
       if (route == AudioRoute.speaker) {
         speakerOn = true;
         selectedAudioDeviceName = 'Speaker';
         await Helper.setSpeakerphoneOn(true);
-        try {
-          await Helper.selectAudioOutput('speaker');
-        } catch (_) {}
-        for (final d in availableAudioDevices) {
-          final label = d.label.toLowerCase();
-          if (label.contains('speaker') || label.contains('loudspeaker')) {
-            if (d.deviceId.isNotEmpty && d.deviceId != 'speaker') {
-              try {
-                await Helper.selectAudioOutput(d.deviceId);
-              } catch (_) {}
-            }
-            break;
-          }
+        try { await Helper.selectAudioOutput('speaker'); } catch (_) {}
+        if (builtInMic != null && builtInMic.deviceId.isNotEmpty) {
+          try { await Helper.selectAudioInput(builtInMic.deviceId); } catch (_) {}
         }
       } else if (route == AudioRoute.earpiece) {
         speakerOn = false;
         selectedAudioDeviceName = 'Phone';
         await Helper.setSpeakerphoneOn(false);
-        try {
-          await Helper.selectAudioOutput('earpiece');
-        } catch (_) {}
-        try {
-          await Helper.selectAudioOutput('receiver');
-        } catch (_) {}
-        for (final d in availableAudioDevices) {
-          final label = d.label.toLowerCase();
-          final id = d.deviceId.toLowerCase();
-          if (label.contains('earpiece') || label.contains('receiver') ||
-              id.contains('earpiece') || id.contains('receiver')) {
-            if (d.deviceId.isNotEmpty && d.deviceId != 'earpiece' && d.deviceId != 'receiver') {
-              try {
-                await Helper.selectAudioOutput(d.deviceId);
-              } catch (_) {}
-            }
-            break;
-          }
+        if (builtInMic != null && builtInMic.deviceId.isNotEmpty) {
+          try { await Helper.selectAudioInput(builtInMic.deviceId); } catch (_) {}
         }
+        try { await Helper.selectAudioOutput('earpiece'); } catch (_) {}
+        try { await Helper.selectAudioOutput('receiver'); } catch (_) {}
       } else {
         speakerOn = false;
-        selectedAudioDeviceName = connectedHeadsetName.isNotEmpty ? connectedHeadsetName : 'Headset';
+        selectedAudioDeviceName = (deviceId != null && deviceId.isNotEmpty && deviceId != 'bluetooth')
+            ? _getLabelForDeviceId(deviceId)
+            : connectedHeadsetName;
         await Helper.setSpeakerphoneOn(false);
-        try {
-          await Helper.selectAudioOutput('bluetooth');
-        } catch (_) {}
-        try {
-          await Helper.selectAudioOutput('headset');
-        } catch (_) {}
-        try {
-          await Helper.selectAudioOutput('wired');
-        } catch (_) {}
-        for (final d in availableAudioDevices) {
-          final label = d.label.toLowerCase();
-          final id = d.deviceId.toLowerCase();
-          if ((label.contains('bluetooth') ||
-                  label.contains('airpods') ||
-                  label.contains('buds') ||
-                  label.contains('headset') ||
-                  label.contains('wired') ||
-                  label.contains('headphone') ||
-                  label.contains('earphones') ||
-                  id.contains('bluetooth') ||
-                  id.contains('headset') ||
-                  id.contains('wired')) &&
-              !label.contains('speaker') &&
-              !label.contains('earpiece')) {
-            if (d.deviceId.isNotEmpty &&
-                d.deviceId != 'bluetooth' &&
-                d.deviceId != 'headset' &&
-                d.deviceId != 'wired') {
-              try {
-                await Helper.selectAudioOutput(d.deviceId);
-              } catch (_) {}
-            }
-            break;
-          }
+        if (bluetoothMic != null && bluetoothMic.deviceId.isNotEmpty) {
+          try { await Helper.selectAudioInput(bluetoothMic.deviceId); } catch (_) {}
         }
+        try { await Helper.selectAudioOutput('bluetooth'); } catch (_) {}
       }
+      audioRoute = route;
     } catch (e) {
-      debugPrint('[CALL] Set audio route error: $e');
+      debugPrint('[AUDIO_LOG ERROR] Set audio route error [#$requestId]: $e');
+    } finally {
+      if (requestId == _routeSwitchRequestId) {
+        isRouteSwitching = false;
+        Future.delayed(const Duration(milliseconds: 600), () {
+          _isUserSwitchingAudioRoute = false;
+        });
+      }
     }
     notifyListeners();
   }
 
+  String _getLabelForDeviceId(String id) {
+    for (final d in availableAudioDevices) {
+      if (d.deviceId == id && d.label.isNotEmpty) return d.label;
+    }
+    return connectedHeadsetName;
+  }
+
   void setMinimized(bool value) {
+    if (!value) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+    }
     isMinimizedNotifier.value = value;
     notifyListeners();
   }
@@ -749,12 +1382,24 @@ class CallService extends ChangeNotifier {
       return;
     }
 
+    localRenderer.srcObject = null;
+    remoteRenderer.srcObject = null;
+    hasFirstLocalFrame = false;
+    hasFirstRemoteFrame = false;
+    if (_localStream != null) {
+      _stopStream(_localStream!);
+      _localStream = null;
+    }
+
     callId = incomingCallId;
     chatHeadId = _asInt(d['chat_head_id']);
     peerId = _asInt(d['caller_id']);
     callType = d['call_type'] == 'video' ? CallType.video : CallType.voice;
     isCaller = false;
     isMinimizedNotifier.value = false;
+
+    // Immediately emit call_ringing so caller transitions from Connecting... to Ringing...
+    unawaited(_emit('call_ringing', {'call_id': incomingCallId}).catchError((_) => <String, dynamic>{}));
 
     // Resolve caller name & avatar
     final convs = LocalChatStorage.instance.conversationsNotifier.value;
@@ -791,6 +1436,111 @@ class CallService extends ChangeNotifier {
     }
   }
 
+  void _onRinging(Map<String, dynamic> d) {
+    final incomingCallId = _asInt(d['call_id']);
+    if (incomingCallId != null && callId == incomingCallId && isCaller) {
+      if (state == CallState.connecting) {
+        _setState(CallState.outgoingRinging);
+      }
+    }
+  }
+
+  String _optimizeSdpQuality(String sdp) {
+    if (sdp.isEmpty) return sdp;
+    final lines = sdp.split('\r\n');
+    final newLines = <String>[];
+    bool inVideoSection = false;
+    bool inAudioSection = false;
+
+    for (final line in lines) {
+      if (line.startsWith('m=video')) {
+        inVideoSection = true;
+        inAudioSection = false;
+        newLines.add(line);
+        newLines.add('b=AS:4500');
+        continue;
+      } else if (line.startsWith('m=audio')) {
+        inAudioSection = true;
+        inVideoSection = false;
+        newLines.add(line);
+        newLines.add('b=AS:128');
+        continue;
+      } else if (line.startsWith('m=')) {
+        inVideoSection = false;
+        inAudioSection = false;
+      }
+
+      if (inAudioSection && line.startsWith('a=fmtp:')) {
+        if (!line.contains('stereo=')) {
+          newLines.add('$line;stereo=1;sprop-stereo=1;useinbandfec=1;maxaveragebitrate=128000');
+        } else {
+          newLines.add(line);
+        }
+        continue;
+      }
+
+      if (inVideoSection && line.startsWith('a=fmtp:')) {
+        if (!line.contains('x-google-min-bitrate')) {
+          newLines.add('$line;x-google-min-bitrate=150;x-google-start-bitrate=1200;x-google-max-bitrate=4500');
+        } else {
+          newLines.add(line);
+        }
+        continue;
+      }
+
+      newLines.add(line);
+    }
+    return newLines.join('\r\n');
+  }
+
+  Future<void> _setLocalDescriptionAndSignal(
+    RTCPeerConnection pc,
+    RTCSessionDescription desc,
+    int id,
+  ) async {
+    final optimizedSdp = _optimizeSdpQuality(desc.sdp ?? '');
+    final optimizedDesc = RTCSessionDescription(optimizedSdp, desc.type);
+    await pc.setLocalDescription(optimizedDesc);
+
+    await _optimizeSenderParameters(pc);
+
+    await _emit('webrtc_signal', {
+      'call_id': id,
+      'type': desc.type,
+      'data': {'sdp': optimizedDesc.sdp, 'type': optimizedDesc.type},
+    });
+  }
+
+  Future<void> _optimizeSenderParameters(RTCPeerConnection pc) async {
+    try {
+      final senders = await pc.getSenders();
+      for (final sender in senders) {
+        if (sender.track?.kind == 'video') {
+          final params = sender.parameters;
+          params.degradationPreference = RTCDegradationPreference.BALANCED;
+          if (params.encodings != null && params.encodings!.isNotEmpty) {
+            for (final encoding in params.encodings!) {
+              encoding.maxBitrate = 4500000; // Uncapped 4.5 Mbps max for 1080p 60fps HD on fast internet
+              encoding.minBitrate = 150000;  // 150 Kbps floor when internet slows down
+              encoding.maxFramerate = 60;
+            }
+          }
+          await sender.setParameters(params);
+        } else if (sender.track?.kind == 'audio') {
+          final params = sender.parameters;
+          if (params.encodings != null && params.encodings!.isNotEmpty) {
+            for (final encoding in params.encodings!) {
+              encoding.maxBitrate = 96000;
+            }
+          }
+          await sender.setParameters(params);
+        }
+      }
+    } catch (e) {
+      debugPrint('[CALL] _optimizeSenderParameters error: $e');
+    }
+  }
+
   Future<void> _onAccepted(Map<String, dynamic> d) async {
     if (_asInt(d['call_id']) != callId) return;
     _setState(CallState.connecting);
@@ -802,12 +1552,7 @@ class CallService extends ChangeNotifier {
     if (pc == null || callId != id) return;
 
     final offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await _emit('webrtc_signal', {
-      'call_id': id,
-      'type': 'offer',
-      'data': {'sdp': offer.sdp, 'type': offer.type},
-    });
+    await _setLocalDescriptionAndSignal(pc, offer, id);
   }
 
   final List<Map<String, dynamic>> _pendingSignals = [];
@@ -856,12 +1601,7 @@ class CallService extends ChangeNotifier {
         _remoteDescSet = true;
         await _flushIce();
         final answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await _emit('webrtc_signal', {
-          'call_id': id,
-          'type': 'answer',
-          'data': {'sdp': answer.sdp, 'type': answer.type},
-        });
+        await _setLocalDescriptionAndSignal(pc, answer, id);
         break;
 
       case 'answer':
@@ -890,27 +1630,35 @@ class CallService extends ChangeNotifier {
         }
         break;
 
+      case 'camera_facing':
+        remoteIsFrontCamera = data['front'] == true;
+        notifyListeners();
+        break;
+
+      case 'call_upgrade_requested':
       case 'request_video_switch':
       case 'video_switch_requested':
-      case 'video_call_request':
-      case 'switch_call_type_request':
-        _onVideoSwitchRequested(d);
+        _onUpgradeRequested(d);
         break;
 
+      case 'call_upgraded':
       case 'video_switch_accepted':
-        _onVideoSwitchAccepted(d);
+        _onUpgraded(d);
         break;
 
+      case 'call_upgrade_rejected':
       case 'video_switch_rejected':
-        _onVideoSwitchRejected(d);
+        _onUpgradeRejected(d);
         break;
     }
   }
 
   void _onMediaState(Map<String, dynamic> d) {
+    debugPrint('[CALL] media_state received: $d');
     if (_asInt(d['call_id']) != callId) return;
-    remoteAudioOn = d['audio'] == true;
-    remoteVideoOn = d['video'] == true;
+    if (d.containsKey('audio')) remoteAudioOn = d['audio'] == true;
+    if (d.containsKey('video')) remoteVideoOn = d['video'] == true;
+    if (d.containsKey('front')) remoteIsFrontCamera = d['front'] == true;
     notifyListeners();
   }
 
@@ -919,8 +1667,18 @@ class CallService extends ChangeNotifier {
     final typeStr = d['call_type']?.toString().toLowerCase();
     if (typeStr == 'video') {
       callType = CallType.video;
-      if (audioRoute == AudioRoute.earpiece && !hasConnectedHeadphones) {
-        setAudioRoute(AudioRoute.speaker);
+      final hasCam = await _ensureVideoTrack();
+      if (hasCam) {
+        camOn = true;
+        for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
+          t.enabled = true;
+        }
+        _sendMediaState();
+      }
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        await _native('setCallType', {'isVideo': true});
+      } else if (audioRoute == AudioRoute.earpiece && !hasConnectedHeadphones) {
+        await setAudioRoute(AudioRoute.speaker);
       }
       notifyListeners();
     } else if (typeStr == 'voice') {
@@ -929,21 +1687,59 @@ class CallService extends ChangeNotifier {
       for (final t in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
         t.enabled = false;
       }
-      setAudioRoute(AudioRoute.earpiece);
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        _native('setCallType', {'isVideo': false});
+      } else {
+        setAudioRoute(AudioRoute.earpiece);
+      }
       notifyListeners();
     }
   }
 
   void _onEnded(Map<String, dynamic> d) {
     if (_asInt(d['call_id']) != callId) return;
-    _cleanup(
-      notifyEnd: CallEndInfo(
-        callId!,
-        _asInt(d['chat_head_id']) ?? chatHeadId ?? 0,
-        '${d['status']}',
-        _asInt(d['ended_by']),
-      ),
-    );
+    final statusStr = '${d['status']}'.toLowerCase();
+
+    localRenderer.srcObject = null;
+    remoteRenderer.srcObject = null;
+    if (_localStream != null) {
+      _stopStream(_localStream!);
+      _localStream = null;
+    }
+
+    String message = 'Call ended';
+    if (statusStr == 'busy') {
+      message = 'User is busy';
+    } else if (statusStr == 'missed') {
+      message = 'No answer';
+    } else if (statusStr == 'rejected') {
+      message = 'Call declined';
+    } else if (statusStr == 'cancelled') {
+      message = 'Call cancelled';
+    }
+
+    endReasonMessage = message;
+    _setState(CallState.ended);
+    notifyListeners();
+
+    if (statusStr == 'missed' || statusStr == 'rejected' || statusStr == 'busy' || statusStr == 'cancelled') {
+      CallHistoryViewState.onNewMissedCallReceived();
+    }
+
+    final endedCallId = callId;
+    final endedChatHeadId = chatHeadId;
+    Timer(const Duration(milliseconds: 2200), () {
+      if (callId == endedCallId) {
+        _cleanup(
+          notifyEnd: CallEndInfo(
+            endedCallId!,
+            _asInt(d['chat_head_id']) ?? endedChatHeadId ?? 0,
+            statusStr,
+            _asInt(d['ended_by']),
+          ),
+        );
+      }
+    });
   }
 
   // =====================================================================
@@ -956,15 +1752,26 @@ class CallService extends ChangeNotifier {
     camOn = type == CallType.video;
     remoteVideoOn = type == CallType.video;
 
+    await _configureIosAudio(type);
+
     final ice = await ServerApiService.instance.getIceServers();
     if (callId != id) return;
 
     MediaStream stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        'audio': true,
+        'audio': {
+          'echoCancellation': true,
+          'noiseSuppression': true,
+          'autoGainControl': true,
+        },
         'video': type == CallType.video
-            ? {'facingMode': 'user', 'width': 640, 'height': 480, 'frameRate': 24}
+            ? {
+                'facingMode': isFrontCamera ? 'user' : 'environment',
+                'width': {'ideal': 1080, 'min': 480},
+                'height': {'ideal': 1920, 'min': 640},
+                'frameRate': {'ideal': 30, 'max': 30, 'min': 15},
+              }
             : false,
       });
     } catch (e) {
@@ -972,7 +1779,14 @@ class CallService extends ChangeNotifier {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           'audio': true,
-          'video': type == CallType.video ? true : false,
+          'video': type == CallType.video
+              ? {
+                  'facingMode': isFrontCamera ? 'user' : 'environment',
+                  'width': {'ideal': 720},
+                  'height': {'ideal': 1280},
+                  'frameRate': 30,
+                }
+              : false,
         });
       } catch (err) {
         debugPrint('[CALL] Secondary getUserMedia error: $err. Falling back to audio stream...');
@@ -994,10 +1808,14 @@ class CallService extends ChangeNotifier {
     micOn = true;
     camOn = type == CallType.video && stream.getVideoTracks().isNotEmpty;
 
-    try {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
       await initializeDefaultAudioRoute(type);
-    } catch (e) {
-      debugPrint('[CALL] Audio route setup warning: $e');
+    } else {
+      try {
+        await initializeDefaultAudioRoute(type);
+      } catch (e) {
+        debugPrint('[CALL] Audio route setup warning: $e');
+      }
     }
 
     final pc = await createPeerConnection({
@@ -1013,6 +1831,12 @@ class CallService extends ChangeNotifier {
     _pc = pc;
     _remoteDescSet = false;
     _iceBuffer.clear();
+
+    pc.onDataChannel = (ch) => _setupDataChannel(ch);
+    if (isCaller) {
+      final ch = await pc.createDataChannel('meta', RTCDataChannelInit()..ordered = true);
+      _setupDataChannel(ch);
+    }
 
     pc.onIceCandidate = (c) {
       if (c.candidate == null || callId != id) return;
@@ -1042,6 +1866,12 @@ class CallService extends ChangeNotifier {
           _tick?.cancel();
           _tick = Timer.periodic(const Duration(seconds: 1), (_) => notifyListeners());
           _setState(CallState.active);
+          if (defaultTargetPlatform == TargetPlatform.iOS) {
+            unawaited(_native('ensureAudioEnabled'));
+            unawaited(_native('reapplyRoute'));
+          }
+          _sendMediaState();
+          _sendFacing();
         }
       } else if (s == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
         if (state == CallState.active) {
@@ -1075,8 +1905,13 @@ class CallService extends ChangeNotifier {
   void _sendMediaState() {
     final id = callId;
     if (id == null) return;
-    _emit('call_media_state', {'call_id': id, 'audio': micOn, 'video': camOn})
-        .catchError((_) => <String, dynamic>{});
+    _emit('call_media_state', {
+      'call_id': id,
+      'audio': micOn,
+      'video': camOn,
+      'front': isFrontCamera,
+    }).catchError((_) => <String, dynamic>{});
+    _sendFacing();
   }
 
   void _playRingtone({required bool isOutgoing}) async {
@@ -1091,22 +1926,7 @@ class CallService extends ChangeNotifier {
       final player = AudioPlayer();
       _ringtonePlayer = player;
 
-      if (defaultTargetPlatform == TargetPlatform.iOS) {
-        final isSpeaker = audioRoute == AudioRoute.speaker;
-        await player.setAudioContext(
-          AudioContext(
-            iOS: AudioContextIOS(
-              category: isSpeaker
-                  ? AVAudioSessionCategory.playback
-                  : AVAudioSessionCategory.playAndRecord,
-              options: {
-                if (isSpeaker) AVAudioSessionOptions.defaultToSpeaker,
-                AVAudioSessionOptions.mixWithOthers,
-              },
-            ),
-          ),
-        );
-      } else {
+      if (defaultTargetPlatform != TargetPlatform.iOS) {
         await player.setAudioContext(
           AudioContext(
             android: const AudioContextAndroid(
@@ -1118,6 +1938,7 @@ class CallService extends ChangeNotifier {
           ),
         );
       }
+      // iOS: do NOT call setAudioContext. It rewrites the global AVAudioSession.
 
       if (_ringtoneToken != currentToken ||
           state == CallState.idle ||
@@ -1173,6 +1994,9 @@ class CallService extends ChangeNotifier {
     _tick?.cancel();
     _tick = null;
 
+    _dc?.close();
+    _dc = null;
+
     final pc = _pc;
     _pc = null;
     pc?.onIceCandidate = null;
@@ -1186,6 +2010,8 @@ class CallService extends ChangeNotifier {
 
     localRenderer.srcObject = null;
     remoteRenderer.srcObject = null;
+    hasFirstLocalFrame = false;
+    hasFirstRemoteFrame = false;
     _prepared = null;
     _iceBuffer.clear();
     _pendingSignals.clear();
@@ -1202,13 +2028,22 @@ class CallService extends ChangeNotifier {
     chatHeadId = null;
     peerId = null;
     pendingVideoSwitchCaller = null;
+    pendingUpgradeRequest = null;
+    endReasonMessage = null;
     isCaller = false;
+    isFrontCamera = true;
+    remoteIsFrontCamera = true;
     activeSince = null;
     micOn = true;
     camOn = false;
     remoteAudioOn = true;
     remoteVideoOn = false;
     isMinimizedNotifier.value = false;
+    userSelectedAudioRoute = null;
+    setKeepScreenOn(false);
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      unawaited(_native('endCall'));
+    }
 
     if (hadCall) {
       _setState(CallState.ended);
@@ -1350,17 +2185,51 @@ class CallService extends ChangeNotifier {
     }
   }
 
+  void _enforceActiveAudioRoute() {
+    if (defaultTargetPlatform == TargetPlatform.iOS) return; // native owns iOS
+
+    // Android path
+    debugPrint('[AUDIO_LOG] Scheduling _enforceActiveAudioRoute (target route=$audioRoute, deviceId=$selectedAudioDeviceId)...');
+    Future.delayed(const Duration(milliseconds: 250), () async {
+      if (state == CallState.active) {
+        debugPrint('[AUDIO_LOG] [250ms] Enforcing active audio route ($audioRoute, deviceId: $selectedAudioDeviceId)');
+        await setAudioRoute(audioRoute, deviceId: selectedAudioDeviceId);
+      }
+    });
+    Future.delayed(const Duration(milliseconds: 700), () async {
+      if (state == CallState.active) {
+        debugPrint('[AUDIO_LOG] [700ms] Enforcing active audio route ($audioRoute, deviceId: $selectedAudioDeviceId)');
+        await setAudioRoute(audioRoute, deviceId: selectedAudioDeviceId);
+      }
+    });
+  }
+
+  static const MethodChannel _securityChannel = MethodChannel('com.shis.securecalc/security');
+
+  Future<void> setKeepScreenOn(bool enable) async {
+    try {
+      debugPrint('[CALL] Setting keepScreenOn = $enable');
+      await _securityChannel.invokeMethod('setKeepScreenOn', {'enable': enable});
+    } catch (e) {
+      debugPrint('[CALL] setKeepScreenOn error: $e');
+    }
+  }
+
   void _setState(CallState s) {
     state = s;
     if (s == CallState.outgoingRinging) {
       _playRingtone(isOutgoing: true);
+      setKeepScreenOn(true);
     } else if (s == CallState.incomingRinging) {
       _playRingtone(isOutgoing: false);
+      setKeepScreenOn(true);
     } else if (s == CallState.active) {
       _stopRingtone();
       if (callId != null) {
         unawaited(CallKitService.instance.setCallConnected(callId!));
       }
+      _enforceActiveAudioRoute();
+      setKeepScreenOn(true);
     } else {
       _stopRingtone();
     }

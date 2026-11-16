@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
-import '../../domain/services/attachment_cache_service.dart';
 import '../../domain/services/server_api_service.dart';
 import 'chat_bubble.dart';
 import 'chat_typing_indicator.dart';
@@ -22,9 +22,13 @@ class ChatMessageList extends StatefulWidget {
   final Map<int, String> groupMemberNames;
   final String chatName;
   final String chatAvatar;
-  final Function(ChatMessage, Offset, Size) onShowMessageActions;
+  final Function(ChatMessage message, Offset pos, Size size, {bool reactionsOnly}) onShowMessageActions;
   final Function(ChatMessage)? onShowMessageInfo;
   final Function(ChatMessage) onBeginReply;
+  final ValueChanged<ChatMessage>? onForwardMessage;
+  final void Function(ChatMessage, String emoji)? onReactMessage;
+  final Future<bool> Function(ChatMessage)? onToggleStarMessage;
+  final ValueChanged<ChatMessage>? onDeleteMessage;
   final Function(int)? onTapReply;
   final String? highlightedMessageId;
   final String? searchQuery;
@@ -38,10 +42,17 @@ class ChatMessageList extends StatefulWidget {
   final Function(ChatMessage)? onToggleSelectMessage;
   final VoidCallback? onVoiceCallTap;
   final VoidCallback? onVideoCallTap;
+  final Function(ChatMessage)? onFailedTap;
+  final double? topInset;
+  final double? bottomInset;
+  final String? scrollTargetId;
+  final GlobalKey? scrollTargetKey;
+  final String? hiddenMessageId;
 
   const ChatMessageList({
     super.key,
     required this.messages,
+    this.hiddenMessageId,
     required this.isLoadingMessages,
     required this.isLoadingMore,
     required this.isPeerTyping,
@@ -56,6 +67,10 @@ class ChatMessageList extends StatefulWidget {
     required this.onShowMessageActions,
     this.onShowMessageInfo,
     required this.onBeginReply,
+    this.onForwardMessage,
+    this.onReactMessage,
+    this.onToggleStarMessage,
+    this.onDeleteMessage,
     this.onTapReply,
     this.highlightedMessageId,
     this.searchQuery,
@@ -69,6 +84,11 @@ class ChatMessageList extends StatefulWidget {
     this.onToggleSelectMessage,
     this.onVoiceCallTap,
     this.onVideoCallTap,
+    this.onFailedTap,
+    this.topInset,
+    this.bottomInset,
+    this.scrollTargetId,
+    this.scrollTargetKey,
   });
 
   @override
@@ -76,46 +96,55 @@ class ChatMessageList extends StatefulWidget {
 }
 
 class _ChatMessageListState extends State<ChatMessageList> {
-  final Set<String> _animatedMessageIds = <String>{};
+  final Set<String> _animateIds = <String>{};
+  final Map<String, String> _keyAlias = <String, String>{}; // serverId -> localId
+
+  String _keyOf(ChatMessage m) => _keyAlias[m.id] ?? m.id;
 
   @override
   void initState() {
     super.initState();
-    for (final m in widget.messages) {
-      _animatedMessageIds.add(m.id);
-    }
   }
+
+  bool _isLocalId(String id) =>
+      id.startsWith('local_') || id.startsWith('fwd_') || id.startsWith('temp_');
 
   @override
   void didUpdateWidget(ChatMessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_animatedMessageIds.isEmpty && widget.messages.isNotEmpty) {
-      for (final m in widget.messages) {
-        _animatedMessageIds.add(m.id);
-      }
-    }
+    final oldMsgs = oldWidget.messages, newMsgs = widget.messages;
+    if (oldMsgs.isEmpty || newMsgs.isEmpty) return;
 
-    // Map optimistic local IDs that transition to server IDs
-    for (final newMsg in widget.messages) {
-      if (!_animatedMessageIds.contains(newMsg.id)) {
-        final matchedOldLocal = oldWidget.messages.any(
-          (oldMsg) =>
-              (oldMsg.id.startsWith('local_') || oldMsg.id.startsWith('fwd_')) &&
-              _animatedMessageIds.contains(oldMsg.id) &&
-              oldMsg.senderId == newMsg.senderId &&
-              oldMsg.content.trim() == newMsg.content.trim(),
-        );
-        if (matchedOldLocal) {
-          _animatedMessageIds.add(newMsg.id);
-        }
+    final oldIds = {for (final m in oldMsgs) m.id};
+    final newIds = {for (final m in newMsgs) m.id};
+    // local rows that disappeared in this update = candidates for an id swap
+    final removedLocals = oldMsgs
+        .where((o) => _isLocalId(o.id) && !newIds.contains(o.id))
+        .toList();
+
+    for (final m in newMsgs) {
+      if (oldIds.contains(m.id)) continue;
+
+      final i = removedLocals.indexWhere((o) =>
+      o.senderId == m.senderId &&
+          ((o.hasMedia && m.hasMedia)
+              ? o.fileName == m.fileName
+              : o.content.trim() == m.content.trim()));
+      if (i >= 0) {
+        final o = removedLocals.removeAt(i);
+        _keyAlias[m.id] = _keyAlias[o.id] ?? o.id; // same key, no remount
+        continue;
+      }
+      if (DateTime.now().difference(m.timestamp).inSeconds.abs() < 30) {
+        _animateIds.add(m.id);
       }
     }
   }
 
   bool _sameDay(DateTime first, DateTime second) =>
       first.year == second.year &&
-      first.month == second.month &&
-      first.day == second.day;
+          first.month == second.month &&
+          first.day == second.day;
 
   String _dateLabel(DateTime date) {
     final now = DateTime.now();
@@ -132,18 +161,8 @@ class _ChatMessageListState extends State<ChatMessageList> {
       return 'Yesterday at $timeStr';
     }
     const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
     return '${date.day} ${months[date.month - 1]} ${date.year} at $timeStr';
   }
@@ -171,105 +190,84 @@ class _ChatMessageListState extends State<ChatMessageList> {
     return false;
   }
 
-  bool _isImageMessage(ChatMessage msg) {
-    if (msg.isDeleted) return false;
-    final type = msg.type.toLowerCase();
-    if (type.startsWith('image/') || type == 'image') return true;
-    if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) {
-      final ext = msg.mediaUrl!.split('.').last.split('?').first.toLowerCase();
-      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].contains(ext) ||
-          msg.previewText == 'Photo') {
-        return true;
-      }
-    }
-    return false;
+  static const int _groupWindowMinutes = 15;
+
+  bool _isMediaMessage(ChatMessage msg) {
+    if (msg.isDeleted || msg.isCallMessage) return false;
+    final type = msg.type.toLowerCase().trim();
+    if (type.contains('gif') || type == 'sticker') return false;
+    final url = (msg.mediaUrl ?? '').toLowerCase().trim();
+    final name = (msg.fileName ?? '').toLowerCase().trim();
+
+    final isImage = type.contains('image') ||
+        type == 'photo' ||
+        ['jpg', 'jpeg', 'png', 'webp', 'heic']
+            .any((e) => url.contains('.$e') || name.endsWith('.$e'));
+    final isVideo = type.contains('video') ||
+        ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v']
+            .any((e) => url.contains('.$e') || name.endsWith('.$e'));
+    return (isImage || isVideo) && url.isNotEmpty;
   }
 
-  bool _isImageDownloaded(ChatMessage msg) {
-    final rawUrl = msg.mediaUrl;
-    if (rawUrl == null || rawUrl.isEmpty) return false;
-    return AttachmentCacheService.instance.isCachedInMemory(rawUrl);
+  bool _hasCaption(ChatMessage msg) {
+    final c = msg.content.trim();
+    if (c.isEmpty) return false;
+    final lower = c.toLowerCase();
+    const generic = {
+      '[attachment]', 'photo', 'video', 'sent a photo', 'sent a video',
+      'sent an attachment', 'voice message', 'gif',
+    };
+    if (generic.contains(lower)) return false;
+    final name = (msg.fileName ?? '').trim().toLowerCase();
+    if (lower == name) return false;
+    if (name.contains('.') &&
+        lower == name.substring(0, name.lastIndexOf('.'))) {
+      return false;
+    }
+    return true;
   }
 
-  List<ChatMessage>? _getGroupedImages(int messageIndex) {
-    final currentMsg = widget.messages[messageIndex];
-    if (!_isImageMessage(currentMsg)) return null;
+  /// A message continues the previous album when it has no caption of its own.
+  /// CHANGED: forwarded and normal media never share an album, so the
+  /// "Forwarded" tag always matches every item in the group.
+  bool _isGroupFollower(int i) {
+    if (i <= 0) return false;
+    final cur = widget.messages[i];
+    final prev = widget.messages[i - 1];
 
-    if (messageIndex > 0 && _isImageMessage(widget.messages[messageIndex - 1])) {
-      final prevMsg = widget.messages[messageIndex - 1];
-      if (prevMsg.senderId == currentMsg.senderId &&
-          currentMsg.timestamp.difference(prevMsg.timestamp).inMinutes.abs() <=
-              15) {
-        int firstIndex = messageIndex - 1;
-        while (firstIndex > 0 &&
-            _isImageMessage(widget.messages[firstIndex - 1]) &&
-            widget.messages[firstIndex - 1].senderId == currentMsg.senderId &&
-            widget.messages[firstIndex].timestamp
-                    .difference(widget.messages[firstIndex - 1].timestamp)
-                    .inMinutes
-                    .abs() <=
-                15) {
-          firstIndex--;
-        }
+    if (!_isMediaMessage(cur) || !_isMediaMessage(prev)) return false;
+    if (cur.senderId != prev.senderId) return false;
+    if (cur.isForwarded != prev.isForwarded) return false;
 
-        final fullGroup = <ChatMessage>[];
-        int idx = firstIndex;
-        while (idx < widget.messages.length &&
-            _isImageMessage(widget.messages[idx]) &&
-            (idx == firstIndex ||
-                widget.messages[idx].senderId == widget.messages[idx - 1].senderId) &&
-            (idx == firstIndex ||
-                widget.messages[idx].timestamp
-                        .difference(widget.messages[idx - 1].timestamp)
-                        .inMinutes
-                        .abs() <=
-                    15)) {
-          fullGroup.add(widget.messages[idx]);
-          idx++;
-        }
+    final timeDiffSec = cur.timestamp.difference(prev.timestamp).inSeconds.abs();
+    if (timeDiffSec > _groupWindowMinutes * 60) return false;
 
-        bool allDownloaded = true;
-        for (final m in fullGroup) {
-          if (!_isImageDownloaded(m)) {
-            allDownloaded = false;
-            break;
-          }
-        }
+    // A message with its own individual caption is ALWAYS its own separate message.
+    if (_hasCaption(cur)) return false;
 
-        if (allDownloaded && fullGroup.length > 1) {
-          return const <ChatMessage>[];
-        }
-      }
+    // If cur has no caption:
+    // It follows prev if prev has no caption OR if prev and cur were sent in the same batch (<= 3s)
+    final prevHasCap = _hasCaption(prev);
+    if (prevHasCap && timeDiffSec > 3) {
+      return false;
     }
 
-    final grouped = <ChatMessage>[currentMsg];
-    int nextIndex = messageIndex + 1;
-    while (nextIndex < widget.messages.length) {
-      final nextMsg = widget.messages[nextIndex];
-      if (_isImageMessage(nextMsg) &&
-          nextMsg.senderId == currentMsg.senderId &&
-          nextMsg.timestamp
-                  .difference(grouped.last.timestamp)
-                  .inMinutes
-                  .abs() <=
-              15) {
-        grouped.add(nextMsg);
-        nextIndex++;
-      } else {
-        break;
-      }
-    }
+    return true;
+  }
 
-    if (grouped.length > 1) {
-      for (final gMsg in grouped) {
-        if (!_isImageDownloaded(gMsg)) {
-          return null;
-        }
-      }
-      return grouped;
-    }
+  /// null = normal bubble, empty = already rendered by its leader, else the album.
+  List<ChatMessage>? _getGroupedMedia(int i) {
+    final cur = widget.messages[i];
+    if (!_isMediaMessage(cur)) return null;
+    if (_isGroupFollower(i)) return const <ChatMessage>[];
 
-    return null;
+    final grouped = <ChatMessage>[cur];
+    var n = i + 1;
+    while (n < widget.messages.length && _isGroupFollower(n)) {
+      grouped.add(widget.messages[n]);
+      n++;
+    }
+    return grouped.length > 1 ? grouped : null;
   }
 
   Widget _buildTopLoadingShimmer(bool isDark) {
@@ -352,16 +350,17 @@ class _ChatMessageListState extends State<ChatMessageList> {
     }
 
     final messagesById = {for (final message in widget.messages) message.id: message};
-    String? latestOutgoingMessageId;
-    for (final message in widget.messages.reversed) {
-      if (message.senderId == 'user' && !message.isDeleted) {
-        latestOutgoingMessageId = message.id;
+    int latestOutgoingIndex = -1;
+    for (var i = widget.messages.length - 1; i >= 0; i--) {
+      final m = widget.messages[i];
+      if (m.senderId == 'user' && !m.isDeleted) {
+        latestOutgoingIndex = i;
         break;
       }
     }
 
-    final topInset = MediaQuery.paddingOf(context).top + 68.0;
-    final bottomInset = MediaQuery.paddingOf(context).bottom + 58.0;
+    final topInset = widget.topInset ?? (MediaQuery.paddingOf(context).top + 68.0);
+    final bottomInset = widget.bottomInset ?? (MediaQuery.paddingOf(context).bottom + 58.0);
 
     return Stack(
       children: [
@@ -372,6 +371,9 @@ class _ChatMessageListState extends State<ChatMessageList> {
             controller: widget.scrollController,
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             reverse: true,
+            addAutomaticKeepAlives: false,
+            addRepaintBoundaries: false,
+            cacheExtent: 400.0,
             padding: EdgeInsets.fromLTRB(0, topInset, 0, bottomInset),
             itemCount: widget.messages.length +
                 (widget.isPeerTyping ? 1 : 0) +
@@ -403,20 +405,23 @@ class _ChatMessageListState extends State<ChatMessageList> {
 
               final messageIndex = widget.messages.length - 1 - adjustedIndex;
               final msg = widget.messages[messageIndex];
+              final msgKey = _keyOf(msg);
 
-              final bool shouldAnimate = !_animatedMessageIds.contains(msg.id);
+              final bool shouldAnimate =
+                  !widget.isSelectionMode && _animateIds.contains(msg.id);
               if (shouldAnimate) {
-                _animatedMessageIds.add(msg.id);
+                WidgetsBinding.instance.addPostFrameCallback(
+                      (_) => _animateIds.remove(msg.id),
+                );
               }
 
-              final groupedImages = _getGroupedImages(messageIndex);
+              final groupedImages = _getGroupedMedia(messageIndex);
               if (groupedImages != null && groupedImages.isEmpty) {
                 return const SizedBox.shrink();
               }
 
               final showUnreadBanner = _isFirstUnreadPeerMessage(messageIndex);
-              final showDateHeader =
-                  messageIndex == 0 ||
+              final showDateHeader = messageIndex == 0 ||
                   !_sameDay(
                     widget.messages[messageIndex - 1].timestamp,
                     msg.timestamp,
@@ -433,66 +438,85 @@ class _ChatMessageListState extends State<ChatMessageList> {
                   ? null
                   : messagesById[msg.replyToId.toString()];
 
-              return SwipeToReply(
-                enabled: int.tryParse(msg.id) != null,
-                isMe: msg.senderId == 'user',
-                onReply: () => widget.onBeginReply(msg),
-                onInfo: widget.onShowMessageInfo != null
-                    ? () => widget.onShowMessageInfo!(msg)
-                    : null,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (showUnreadBanner)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isDark
-                                  ? const Color(0xFF2C2C2E)
-                                  : const Color(0xFFE5E5EA),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Text(
-                              '${widget.initialUnreadCount} UNREAD MESSAGES',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.8,
-                                color: AppTheme.secondaryText(isDark),
-                              ),
+              final lastIdx = messageIndex + ((groupedImages?.length ?? 1) - 1);
+              final lastMsg = widget.messages[lastIdx];
+              final isLastInGroup = lastIdx == widget.messages.length - 1 ||
+                  widget.messages[lastIdx + 1].senderId != msg.senderId ||
+                  widget.messages[lastIdx + 1].timestamp
+                      .difference(lastMsg.timestamp)
+                      .inMinutes
+                      .abs() >
+                      5 ||
+                  widget.messages[lastIdx + 1].hasMedia;
+
+              Widget messageChild = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (showUnreadBanner)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? const Color(0xFF2C2C2E)
+                                : const Color(0xFFE5E5EA),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Text(
+                            '${widget.initialUnreadCount} UNREAD MESSAGES',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.8,
+                              color: AppTheme.secondaryText(isDark),
                             ),
                           ),
                         ),
                       ),
-                    if (showDateHeader) DateLabel(_dateLabel(msg.timestamp)),
-                    Builder(
-                      builder: (bubbleContext) {
-                        return GestureDetector(
-                          onLongPressStart: int.tryParse(msg.id) != null
-                              ? (details) {
-                                  final box =
-                                      bubbleContext.findRenderObject()
-                                          as RenderBox?;
-                                  final globalPos =
-                                      box?.localToGlobal(Offset.zero) ??
-                                      details.globalPosition;
-                                  final size = box?.size ?? const Size(240, 60);
-                                  widget.onShowMessageActions(msg, globalPos, size);
-                                }
-                              : null,
+                    ),
+                  if (showDateHeader) DateLabel(_dateLabel(msg.timestamp)),
+                  Builder(
+                    builder: (bubbleContext) {
+                      return GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onDoubleTap: (int.tryParse(msg.id) != null && !widget.isSelectionMode)
+                            ? () {
+                                HapticFeedback.lightImpact();
+                                final box = bubbleContext.findRenderObject() as RenderBox?;
+                                final globalPos = box?.localToGlobal(Offset.zero) ?? Offset.zero;
+                                final size = box?.size ?? const Size(240, 60);
+                                widget.onShowMessageActions(msg, globalPos, size, reactionsOnly: true);
+                              }
+                            : null,
+                        onLongPressStart: int.tryParse(msg.id) != null
+                            ? (details) {
+                                final box = bubbleContext.findRenderObject() as RenderBox?;
+                                final globalPos = box?.localToGlobal(Offset.zero) ?? details.globalPosition;
+                                final size = box?.size ?? const Size(240, 60);
+                                widget.onShowMessageActions(msg, globalPos, size, reactionsOnly: false);
+                              }
+                            : null,
+                        child: Opacity(
+                          opacity: widget.hiddenMessageId == msg.id ? 0.0 : 1.0,
                           child: RepaintBoundary(
                             child: BouncyMessageEntryAnimation(
-                              key: ValueKey('anim_${msg.id}'),
+                              key: ValueKey('anim_$msgKey'),
                               isMe: msg.senderId == 'user',
                               animate: shouldAnimate,
                               child: ChatBubble(
-                                key: ValueKey(msg.id),
+                                key: ValueKey('bubble_$msgKey'),
+                                id: msg.id,
+                                sourceMessage: msg,
+                                onReplyToMessage: widget.onBeginReply,
+                                onForwardMessage: widget.onForwardMessage,
+                                onReactMessage: widget.onReactMessage,
+                                onToggleStarMessage: widget.onToggleStarMessage,
+                                onDeleteMessage: widget.onDeleteMessage,
                                 chatId: widget.conversation.id,
                                 message: msg.content,
                                 isMe: msg.senderId == 'user',
@@ -506,9 +530,17 @@ class _ChatMessageListState extends State<ChatMessageList> {
                                 isEdited: msg.isEdited,
                                 isDeleted: msg.isDeleted,
                                 isSaved: msg.isSaved,
-                                isDecrypting: widget.decryptingMessageIds.contains(msg.id),
-                                showDeliveryStatus:
-                                    msg.id == latestOutgoingMessageId,
+                                isDecrypting:
+                                widget.decryptingMessageIds.contains(msg.id),
+                                showDeliveryStatus: messageIndex ==
+                                    latestOutgoingIndex ||
+                                    (groupedImages != null &&
+                                        latestOutgoingIndex >= 0 &&
+                                        groupedImages.any((g) =>
+                                        g.id ==
+                                            widget.messages[latestOutgoingIndex]
+                                                .id)),
+                                showTail: isLastInGroup,
                                 groupedImages: groupedImages,
                                 senderName: showGroupSender && senderId != null
                                     ? widget.groupMemberNames[senderId] ?? 'Member'
@@ -521,22 +553,24 @@ class _ChatMessageListState extends State<ChatMessageList> {
                                     ? 'You'
                                     : widget.conversation.isGroup
                                     ? widget.groupMemberNames[int.tryParse(
-                                            repliedMessage.senderId,
-                                          )] ??
-                                          'Member'
+                                  repliedMessage.senderId,
+                                )] ??
+                                    'Member'
                                     : widget.chatName,
                                 replyText: repliedMessage?.previewText,
                                 onTapReply: widget.onTapReply,
-                                isHighlighted: widget.highlightedMessageId == msg.id,
+                                isHighlighted:
+                                widget.highlightedMessageId == msg.id,
                                 searchQuery: widget.searchQuery,
                                 isForwarded: msg.isForwarded,
                                 isSelectionMode: widget.isSelectionMode,
-                                isSelected: widget.selectedMessageIds.contains(msg.id),
-                                onToggleSelect: () => widget.onToggleSelectMessage?.call(msg),
+                                isSelected:
+                                widget.selectedMessageIds.contains(msg.id),
+                                onToggleSelect: () =>
+                                    widget.onToggleSelectMessage?.call(msg),
                                 onShowMessageActions: widget.onShowMessageActions,
-                                reactions: msg.reaction == null
-                                    ? null
-                                    : [msg.reaction!],
+                                reactions:
+                                msg.reaction == null ? null : [msg.reaction!],
                                 msgType: msg.msgType,
                                 callId: msg.callId,
                                 callType: msg.callType,
@@ -544,14 +578,35 @@ class _ChatMessageListState extends State<ChatMessageList> {
                                 callDuration: msg.callDuration,
                                 onVoiceCallTap: widget.onVoiceCallTap,
                                 onVideoCallTap: widget.onVideoCallTap,
+                                onFailedTap: () => widget.onFailedTap?.call(msg),
                               ),
                             ),
                           ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              );
+
+              if (widget.scrollTargetId != null &&
+                  msg.id == widget.scrollTargetId &&
+                  widget.scrollTargetKey != null) {
+                messageChild = KeyedSubtree(
+                  key: widget.scrollTargetKey,
+                  child: messageChild,
+                );
+              }
+
+              return SwipeToReply(
+                key: ValueKey(msgKey),
+                enabled: int.tryParse(msg.id) != null,
+                isMe: msg.senderId == 'user',
+                onReply: () => widget.onBeginReply(msg),
+                onInfo: widget.onShowMessageInfo != null
+                    ? () => widget.onShowMessageInfo!(msg)
+                    : null,
+                child: messageChild,
               );
             },
           ),
@@ -559,7 +614,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
         if (widget.showJumpToLatest)
           Positioned(
             right: 14,
-            bottom: MediaQuery.paddingOf(context).bottom + 66.0,
+            bottom: (widget.bottomInset ?? MediaQuery.paddingOf(context).bottom + 58.0) + 6,
             child: Material(
               color: isDark ? AppTheme.darkSurface : Colors.white,
               elevation: 4,

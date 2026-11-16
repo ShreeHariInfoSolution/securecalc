@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
+import 'package:securecalc/src/core/utils/media_compression_service.dart';
 import 'package:securecalc/src/core/widgets/compact_settings_header.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 import 'package:securecalc/src/core/widgets/shake_panic_wrapper.dart';
@@ -26,11 +27,11 @@ class PersonalSettingsPage extends StatefulWidget {
 
 class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
   late TextEditingController _displayNameController;
-  late TextEditingController _passcodeController;
-  late TextEditingController _duressPasscodeController;
+  late TextEditingController _currentPasscodeController;
+  late TextEditingController _newPasscodeController;
+  late TextEditingController _currentDuressController;
+  late TextEditingController _newDuressController;
   String? _profileImagePath;
-  bool _obscurePasscode = true;
-  bool _obscureDuressPasscode = true;
   bool _fakeHistoryEnabled = false;
   final ImagePicker _picker = ImagePicker();
 
@@ -41,12 +42,10 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
     _displayNameController = TextEditingController(
       text: AppPreferences.getDisplayName(),
     );
-    _passcodeController = TextEditingController(
-      text: CalculatorLogic.secretPasscode,
-    );
-    _duressPasscodeController = TextEditingController(
-      text: CalculatorLogic.duressPasscode,
-    );
+    _currentPasscodeController = TextEditingController();
+    _newPasscodeController = TextEditingController();
+    _currentDuressController = TextEditingController();
+    _newDuressController = TextEditingController();
   }
 
   void _showToast(String message) {
@@ -307,9 +306,13 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
         }
 
         try {
+          final compressedAvatar = await MediaCompressionService.instance.compressImage(
+            File(finalPath),
+            isHd: false,
+          );
           final updatedUser = await ServerApiService.instance.updateProfile(
             name: _displayNameController.text.trim(),
-            profileImage: File(finalPath),
+            profileImage: compressedAvatar,
           );
           if (updatedUser != null && updatedUser.avatar != null) {
             await AppPreferences.setProfileImagePath(updatedUser.avatar!);
@@ -534,9 +537,23 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
   }
 
   void _savePasscode() {
-    final newPass = _passcodeController.text.trim();
+    final currentPass = _currentPasscodeController.text.trim();
+    final newPass = _newPasscodeController.text.trim();
+
+    if (currentPass.isEmpty) {
+      _showToast('Please enter your current passcode.');
+      return;
+    }
+    if (currentPass != CalculatorLogic.secretPasscode) {
+      _showToast('Current passcode is incorrect.');
+      return;
+    }
     if (newPass.isEmpty) {
-      _showToast('Passcode cannot be empty.');
+      _showToast('Please enter a new passcode.');
+      return;
+    }
+    if (newPass == currentPass) {
+      _showToast('New passcode must be different from current passcode.');
       return;
     }
 
@@ -545,28 +562,45 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
       CalculatorLogic.secretPasscode = newPass;
     });
     AppPreferences.setPasscode(newPass);
-    _showToast('Secret trigger code set to "$newPass="');
+    _currentPasscodeController.clear();
+    _newPasscodeController.clear();
+    _showToast('Vault passcode changed successfully!');
   }
 
   void _saveDuressCode() {
-    final newDuress = _duressPasscodeController.text.trim();
+    final currentPass = _currentDuressController.text.trim();
+    final newDuress = _newDuressController.text.trim();
+
+    if (currentPass.isEmpty) {
+      _showToast('Please enter your current real passcode.');
+      return;
+    }
+    if (currentPass != CalculatorLogic.secretPasscode) {
+      _showToast('Current real passcode is incorrect.');
+      return;
+    }
+    if (newDuress.isEmpty) {
+      _showToast('Please enter a new decoy passcode.');
+      return;
+    }
+
     HapticFeedback.mediumImpact();
     setState(() {
       CalculatorLogic.duressPasscode = newDuress;
     });
     AppPreferences.setDuressPasscode(newDuress);
-    _showToast(
-      newDuress.isEmpty
-          ? 'Fake decoy passcode cleared.'
-          : 'Fake decoy passcode set to "$newDuress="',
-    );
+    _currentDuressController.clear();
+    _newDuressController.clear();
+    _showToast('Decoy passcode updated successfully!');
   }
 
   @override
   void dispose() {
     _displayNameController.dispose();
-    _passcodeController.dispose();
-    _duressPasscodeController.dispose();
+    _currentPasscodeController.dispose();
+    _newPasscodeController.dispose();
+    _currentDuressController.dispose();
+    _newDuressController.dispose();
     super.dispose();
   }
 
@@ -718,7 +752,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Type this code into the calculator and press "=" to unlock your real private vault.',
+                            'Change your secret numeric passcode used to unlock the vault from the calculator.',
                             style: TextStyle(
                               fontSize: 12,
                               color: AppTheme.subtitleGrey,
@@ -728,17 +762,26 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                           const SizedBox(height: 14),
                           _buildCustomTextField(
                             isDark: isDark,
-                            controller: _passcodeController,
-                            label: 'Real Passcode',
-                            hint: 'Enter numeric passcode',
+                            controller: _currentPasscodeController,
+                            label: 'Current Passcode',
+                            hint: 'Enter current passcode (Default: 1234)',
+                            icon: Icons.lock_outline_rounded,
+                            iconBgColor: AppTheme.primaryColor.withValues(alpha: 0.12),
+                            iconColor: AppTheme.primaryColor,
+                            isNumber: true,
+                            isObscured: true,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildCustomTextField(
+                            isDark: isDark,
+                            controller: _newPasscodeController,
+                            label: 'New Passcode',
+                            hint: 'Enter new numeric passcode',
                             icon: Icons.lock_rounded,
                             iconBgColor: AppTheme.primaryColor.withValues(alpha: 0.12),
                             iconColor: AppTheme.primaryColor,
                             isNumber: true,
-                            isObscured: _obscurePasscode,
-                            onToggleObscure: () {
-                              setState(() => _obscurePasscode = !_obscurePasscode);
-                            },
+                            isObscured: true,
                           ),
                           const SizedBox(height: 14),
                           SizedBox(
@@ -756,7 +799,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                               onPressed: _savePasscode,
                               icon: const Icon(Icons.security_rounded, size: 18),
                               label: const Text(
-                                'Save Real Passcode',
+                                'Change Real Passcode',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14,
@@ -778,7 +821,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'If someone forces you to unlock the app, enter this fake passcode (e.g. 4321=) into the calculator. It will open an empty fake vault, keeping your real private messages completely hidden.',
+                            'If forced to unlock the app, enter this fake passcode (e.g. 4321=) into the calculator to open a decoy empty vault.',
                             style: TextStyle(
                               fontSize: 12,
                               color: AppTheme.subtitleGrey,
@@ -788,17 +831,26 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                           const SizedBox(height: 14),
                           _buildCustomTextField(
                             isDark: isDark,
-                            controller: _duressPasscodeController,
-                            label: 'Fake Passcode (Default: 4321)',
-                            hint: 'Enter fake passcode',
+                            controller: _currentDuressController,
+                            label: 'Current Real Passcode',
+                            hint: 'Enter current real passcode',
                             icon: Icons.shield_outlined,
                             iconBgColor: const Color(0xFFF59E0B).withValues(alpha: 0.15),
                             iconColor: const Color(0xFFF59E0B),
                             isNumber: true,
-                            isObscured: _obscureDuressPasscode,
-                            onToggleObscure: () {
-                              setState(() => _obscureDuressPasscode = !_obscureDuressPasscode);
-                            },
+                            isObscured: true,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildCustomTextField(
+                            isDark: isDark,
+                            controller: _newDuressController,
+                            label: 'New Fake Passcode (Default: 4321)',
+                            hint: 'Enter new fake passcode',
+                            icon: Icons.shield_rounded,
+                            iconBgColor: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                            iconColor: const Color(0xFFF59E0B),
+                            isNumber: true,
+                            isObscured: true,
                           ),
                           const SizedBox(height: 14),
                           SizedBox(
@@ -816,7 +868,7 @@ class _PersonalSettingsPageState extends State<PersonalSettingsPage> {
                               onPressed: _saveDuressCode,
                               icon: const Icon(Icons.shield_rounded, size: 18),
                               label: const Text(
-                                'Save Fake Passcode',
+                                'Change Fake Passcode',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14,

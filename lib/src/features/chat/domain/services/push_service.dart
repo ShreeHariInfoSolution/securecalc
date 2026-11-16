@@ -23,10 +23,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'local_chat_storage.dart';
 import 'call_kit_service.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_api_service.dart';
+import 'package:securecalc/src/features/calling/presentation/pages/call_history_view.dart';
 import 'package:securecalc/src/features/chat/domain/services/server_chat_manager.dart';
 
 final FlutterLocalNotificationsPlugin _local =
-    FlutterLocalNotificationsPlugin();
+FlutterLocalNotificationsPlugin();
 
 const AndroidNotificationChannel _channel = AndroidNotificationChannel(
   'chat', // must match default_notification_channel_id in AndroidManifest
@@ -73,6 +74,17 @@ Future<void> playNotificationSound() async {
     final soundKey = AppPreferences.getNotificationSound();
     final soundFileName = AppPreferences.getNotificationSoundFileName(soundKey);
     final player = AudioPlayer();
+    await player.setAudioContext(AudioContext(
+      android: AudioContextAndroid(
+        audioFocus: AndroidAudioFocus.none,
+        contentType: AndroidContentType.sonification,
+        usageType: AndroidUsageType.assistanceSonification,
+      ),
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.ambient,
+        options: const {AVAudioSessionOptions.mixWithOthers},
+      ),
+    ));
     await player.play(
       AssetSource('sounds/$soundFileName'),
       mode: PlayerMode.lowLatency,
@@ -115,8 +127,8 @@ Future<void> _ensureLocalInit({
   );
   await _local
       .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin
-      >()
+      AndroidFlutterLocalNotificationsPlugin
+  >()
       ?.createNotificationChannel(_channel);
   _localReady = true;
   if (onTap != null) {
@@ -133,12 +145,12 @@ Future<void> _showLocal(RemoteMessage m) async {
   // 1. Suppress notification if message was sent by the current user
   final currentUserId = ServerApiService.instance.currentUserId?.toString();
   final senderId = (d['sender_id'] ??
-          d['senderId'] ??
-          d['sender_user_id'] ??
-          d['from_id'] ??
-          d['fromId'] ??
-          d['user_id'] ??
-          d['userId'])
+      d['senderId'] ??
+      d['sender_user_id'] ??
+      d['from_id'] ??
+      d['fromId'] ??
+      d['user_id'] ??
+      d['userId'])
       ?.toString();
 
   if (currentUserId != null &&
@@ -152,10 +164,10 @@ Future<void> _showLocal(RemoteMessage m) async {
 
   // 2. Suppress notification if user is currently inside the active chat screen
   final chatIdStr = (d['chat_id'] ??
-          d['chatId'] ??
-          d['chat_head_id'] ??
-          d['chatHeadId'] ??
-          d['id'])
+      d['chatId'] ??
+      d['chat_head_id'] ??
+      d['chatHeadId'] ??
+      d['id'])
       ?.toString();
   final chatIdInt = int.tryParse(chatIdStr ?? '');
 
@@ -238,8 +250,8 @@ Future<void> _showNotificationWithDetails({
 
     await _local
         .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
+        AndroidFlutterLocalNotificationsPlugin
+    >()
         ?.createNotificationChannel(soundChannel);
 
     await _local.show(
@@ -279,8 +291,8 @@ Future<void> _showNotificationWithDetails({
       );
       await _local
           .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >()
+          AndroidFlutterLocalNotificationsPlugin
+      >()
           ?.createNotificationChannel(defaultChannel);
 
       await _local.show(
@@ -389,6 +401,47 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     '[Push Diagnostic BACKGROUND] Handling background FCM message: messageId=${message.messageId}, data=${message.data}, title=${message.notification?.title}',
   );
 
+  // 1. Handle Call push notifications FIRST with highest priority (immediate CallKit presentation without blocking I/O)
+  final data = message.data;
+  final type = data['type']?.toString().toLowerCase();
+  final rawCallId = data['call_id'] ?? data['callId'] ?? data['id'];
+  final callId = int.tryParse(rawCallId?.toString() ?? '');
+  final status = data['status']?.toString().toLowerCase();
+
+  final isIncomingCall = type == 'incoming_call' ||
+      type == 'call' ||
+      (callId != null &&
+          (status == 'ringing' || status == 'calling' || status == 'incoming' || type?.contains('call') == true));
+
+  if (isIncomingCall && callId != null) {
+    final chatHeadId = int.tryParse((data['chat_head_id'] ?? data['chatId'])?.toString() ?? '0') ?? 0;
+    final callerId = int.tryParse((data['caller_id'] ?? data['sender_id'] ?? data['peer_user_id'])?.toString() ?? '0') ?? 0;
+    final callerName = data['caller_name']?.toString() ?? data['name']?.toString() ?? 'Incoming Call';
+    final callType = data['call_type']?.toString() ?? 'voice';
+
+    await CallKitService.instance.showIncomingCall(
+      callId: callId,
+      chatHeadId: chatHeadId,
+      callerId: callerId,
+      callerName: callerName,
+      callType: callType,
+    );
+    return;
+  }
+
+  if (type == 'call_ended' ||
+      ['ended', 'cancelled', 'rejected', 'missed', 'busy'].contains(status)) {
+    if (status == 'missed' || status == 'rejected' || status == 'busy') {
+      CallHistoryViewState.onNewMissedCallReceived();
+    }
+    if (callId != null) {
+      await CallKitService.instance.endCall(callId.toString());
+    } else {
+      await CallKitService.instance.clearAll();
+    }
+    return;
+  }
+
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -418,7 +471,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     final token = prefs.getString('PREF_SERVER_AUTH_TOKEN');
     final currentUserId =
         prefs.getInt('PREF_SERVER_USER_ID')?.toString() ??
-        prefs.getString('PREF_SERVER_USER_ID');
+            prefs.getString('PREF_SERVER_USER_ID');
 
     if (chatId != null &&
         token != null &&
@@ -444,38 +497,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     }
   } catch (e) {
     debugPrint('[Push Diagnostic BACKGROUND] Delivery status update exception: $e');
-  }
-
-  // Handle Call push notifications
-  final data = message.data;
-  final type = data['type']?.toString();
-  final rawCallId = data['call_id'] ?? data['callId'];
-  final callId = int.tryParse(rawCallId?.toString() ?? '');
-
-  if (type == 'incoming_call' || (callId != null && data['status'] == 'ringing')) {
-    final chatHeadId = int.tryParse((data['chat_head_id'] ?? data['chatId'])?.toString() ?? '0') ?? 0;
-    final callerId = int.tryParse((data['caller_id'] ?? data['sender_id'])?.toString() ?? '0') ?? 0;
-    final callerName = data['caller_name']?.toString() ?? 'Incoming Call';
-    final callType = data['call_type']?.toString() ?? 'voice';
-
-    await CallKitService.instance.showIncomingCall(
-      callId: callId!,
-      chatHeadId: chatHeadId,
-      callerId: callerId,
-      callerName: callerName,
-      callType: callType,
-    );
-    return;
-  }
-
-  if (type == 'call_ended' ||
-      ['ended', 'cancelled', 'rejected', 'missed', 'busy'].contains(data['status'])) {
-    if (callId != null) {
-      await CallKitService.instance.endCall(callId.toString());
-    } else {
-      await CallKitService.instance.clearAll();
-    }
-    return;
   }
 
   // If message has a notification payload, OS handles it natively when app is killed/background
@@ -993,7 +1014,7 @@ class PushService {
 
       final conversations = await LocalChatStorage.instance.loadConversations();
       final match = conversations.cast<ChatConversation?>().firstWhere(
-        (c) => c?.id == chatId.toString(),
+            (c) => c?.id == chatId.toString(),
         orElse: () => null,
       );
 
@@ -1003,7 +1024,7 @@ class PushService {
         final serverChat = await ServerApiService.instance.getChatDetails(chatId);
         if (serverChat != null) {
           final peer = serverChat.members.firstWhere(
-            (m) => m.id != ServerApiService.instance.currentUserId,
+                (m) => m.id != ServerApiService.instance.currentUserId,
             orElse: () => serverChat.members.first,
           );
           targetConv = ChatConversation(

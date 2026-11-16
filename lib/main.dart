@@ -15,8 +15,22 @@ import 'src/features/chat/domain/services/push_service.dart';
 import 'src/features/chat/domain/services/server_api_service.dart';
 import 'src/features/chat/domain/services/server_chat_manager.dart';
 
+class _MemObserver with WidgetsBindingObserver {
+  @override
+  void didHaveMemoryPressure() {
+    PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  final cache = PaintingBinding.instance.imageCache;
+  cache.maximumSize = 60; // number of images
+  cache.maximumSizeBytes = 80 << 20; // 80 MB
+  WidgetsBinding.instance.addObserver(_MemObserver());
 
   // Initialize Firebase App & Background Notification Handler
   try {

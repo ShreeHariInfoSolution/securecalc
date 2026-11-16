@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../services/e2e_crypto_service.dart';
 import '../services/server_api_service.dart';
+import '../utils/forward_marker.dart';
 
 /// The API stores `chat_react` as JSON text and may return a quoted JSON
 /// string (for example, `"\"👍\""`). Convert it back to the emoji for UI.
@@ -530,6 +531,7 @@ class ServerChatModel {
   final int? lastMessageId;
   final int? lastMessageSenderId;
   final String? lastMessageCreatedAt;
+  final String? lastMessageMsgType;
   final int unreadCount;
   final int disappearType;
   final List<UserModel> members;
@@ -556,6 +558,7 @@ class ServerChatModel {
     this.lastMessageId,
     this.lastMessageSenderId,
     this.lastMessageCreatedAt,
+    this.lastMessageMsgType,
     this.unreadCount = 0,
     this.disappearType = 0,
     required this.members,
@@ -778,6 +781,12 @@ class ServerChatModel {
                   json['last_message_created_at'] ??
                   json['lastMessageCreatedAt'])
               ?.toString(),
+      lastMessageMsgType:
+          (lastMessageJson['msg_type'] ??
+                  lastMessageJson['msgType'] ??
+                  lastMessageJson['type'] ??
+                  json['last_message_type'])
+              ?.toString(),
       unreadCount: unreadVal,
       disappearType: disappearVal,
       members: membersList,
@@ -805,6 +814,59 @@ class ServerChatModel {
 }
 
 /// Represents an encrypted message on the server.
+/// Cleans raw message content if it contains an envelope or stringified Map/JSON payload.
+String cleanMessageContentString(dynamic val) {
+  if (val == null) return '';
+  if (val is Map) {
+    final inner = val['message'] ?? val['ciphertext'] ?? val['text'] ?? val['content'];
+    if (inner != null && inner is! Map) {
+      return cleanMessageContentString(inner);
+    }
+    return '';
+  }
+
+  final str = val.toString().trim();
+  if (str.isEmpty) return '';
+
+  // Check if stringified Map or JSON payload object like "{id: 8431, ..., message: ENC:v1:..."
+  if (str.startsWith('{') &&
+      (str.contains('message:') ||
+       str.contains('"message":') ||
+       str.contains('ciphertext:') ||
+       str.contains('"ciphertext":') ||
+       str.contains('chat_head_id:') ||
+       str.contains('"chat_head_id":'))) {
+    final regCipher = RegExp(r'(?:ciphertext|"ciphertext")\s*:\s*([^,}]+)');
+    final regMsg = RegExp(r'(?:message|"message")\s*:\s*([^,}]+)');
+
+    final matchCipher = regCipher.firstMatch(str);
+    final matchMsg = regMsg.firstMatch(str);
+
+    final extractedCipher = matchCipher?.group(1)?.trim();
+    final extractedMsg = matchMsg?.group(1)?.trim();
+
+    if (extractedCipher != null &&
+        extractedCipher.isNotEmpty &&
+        extractedCipher != 'null') {
+      return cleanMessageContentString(extractedCipher);
+    }
+    if (extractedMsg != null &&
+        extractedMsg.isNotEmpty &&
+        extractedMsg != 'null') {
+      return cleanMessageContentString(extractedMsg);
+    }
+  }
+
+  var result = str;
+  if (result.contains('\u00A0') || result.contains('\u200B')) {
+    result = result
+        .replaceAll(RegExp(r'[\u00A0\u2000-\u200A\u3000]'), ' ')
+        .replaceAll('\u200B', '');
+  }
+
+  return result;
+}
+
 class ServerMessageModel {
   final int id;
   final int chatHeadId;
@@ -871,32 +933,50 @@ class ServerMessageModel {
   });
 
   factory ServerMessageModel.fromJson(Map<String, dynamic> json) {
-    // `message` and `text` are plaintext API/socket fields. Only decrypt the
-    // dedicated `ciphertext` field so plain text that resembles base64 stays
-    // readable as-is.
-    final messageStr = (json['message'] ?? json['text'])?.toString();
-    final cipherStr = json['ciphertext']?.toString();
-    final rawId = json['id'] ?? json['message_id'] ?? json['messageId'];
-    final rawSenderId = json['sender_id'] ?? json['senderId'];
-    final rawDisappear = json['disappear_type'] ?? json['disappearType'];
+    // 1. Unwrap API/Socket response envelopes (e.g. { "status": 200, "message": { "id": 8431, ... } })
+    Map<String, dynamic> targetJson = json;
+    for (int depth = 0; depth < 3; depth++) {
+      if (targetJson['id'] != null ||
+          targetJson['message_id'] != null ||
+          targetJson['messageId'] != null) {
+        break;
+      }
+      if (targetJson['data'] is Map) {
+        targetJson = Map<String, dynamic>.from(targetJson['data'] as Map);
+      } else if (targetJson['message'] is Map) {
+        targetJson = Map<String, dynamic>.from(targetJson['message'] as Map);
+      } else {
+        break;
+      }
+    }
+
+    final rawMessage = targetJson['message'] ?? targetJson['text'] ?? targetJson['content'];
+    final rawCipher = targetJson['ciphertext'];
+
+    String messageStr = cleanMessageContentString(rawMessage);
+    String cipherStr = cleanMessageContentString(rawCipher);
+
+    final rawId = targetJson['id'] ?? targetJson['message_id'] ?? targetJson['messageId'];
+    final rawSenderId = targetJson['sender_id'] ?? targetJson['senderId'];
+    final rawDisappear = targetJson['disappear_type'] ?? targetJson['disappearType'];
     final disappearVal = rawDisappear is int
         ? rawDisappear
         : (int.tryParse(rawDisappear?.toString() ?? '0') ?? 0);
 
-    final rawStatus = json['status']?.toString().toLowerCase().trim() ??
-        json['read_status']?.toString().toLowerCase().trim();
+    final rawStatus = targetJson['status']?.toString().toLowerCase().trim() ??
+        targetJson['read_status']?.toString().toLowerCase().trim();
 
-    final explicitRead = json['is_read'] ??
-        json['isRead'] ??
-        json['read'] ??
-        json['is_seen'] ??
-        json['isSeen'] ??
-        json['seen'];
+    final explicitRead = targetJson['is_read'] ??
+        targetJson['isRead'] ??
+        targetJson['read'] ??
+        targetJson['is_seen'] ??
+        targetJson['isSeen'] ??
+        targetJson['seen'];
 
-    final readAtStr = (json['read_at'] ??
-            json['readAt'] ??
-            json['seen_at'] ??
-            json['seenAt'])
+    final readAtStr = (targetJson['read_at'] ??
+            targetJson['readAt'] ??
+            targetJson['seen_at'] ??
+            targetJson['seenAt'])
         ?.toString()
         .trim();
 
@@ -921,11 +1001,11 @@ class ServerMessageModel {
       isReadVal = true;
     }
 
-    final explicitDelivered = json['is_delivered'] ??
-        json['isDelivered'] ??
-        json['delivered'];
+    final explicitDelivered = targetJson['is_delivered'] ??
+        targetJson['isDelivered'] ??
+        targetJson['delivered'];
 
-    final deliveredAtStr = (json['delivered_at'] ?? json['deliveredAt'])
+    final deliveredAtStr = (targetJson['delivered_at'] ?? targetJson['deliveredAt'])
         ?.toString()
         .trim();
 
@@ -962,11 +1042,11 @@ class ServerMessageModel {
                 ? rawStatus
                 : 'sent'));
 
-    final rawMsgType = (json['msg_type'] ?? json['msgType'])?.toString();
-    final rawCallId = json['call_id'] ?? json['callId'];
-    final rawCallType = (json['call_type'] ?? json['callType'])?.toString();
-    final rawCallStatus = (json['call_status'] ?? json['callStatus'])?.toString();
-    final rawCallDuration = json['call_duration'] ?? json['callDuration'];
+    final rawMsgType = (targetJson['msg_type'] ?? targetJson['msgType'])?.toString();
+    final rawCallId = targetJson['call_id'] ?? targetJson['callId'];
+    final rawCallType = (targetJson['call_type'] ?? targetJson['callType'])?.toString();
+    final rawCallStatus = (targetJson['call_status'] ?? targetJson['callStatus'])?.toString();
+    final rawCallDuration = targetJson['call_duration'] ?? targetJson['callDuration'];
 
     final parsedCallId = rawCallId is int
         ? rawCallId
@@ -978,15 +1058,30 @@ class ServerMessageModel {
     final String? finalMsgType = rawMsgType ??
         ((parsedCallId != null || rawCallStatus != null) ? 'call' : null);
 
+    final isLoc = finalMsgType == 'location' || finalMsgType == 'live_location';
+    final ll = targetJson['live_location'] ?? targetJson['location'];
+    final llId = targetJson['live_location_id'] ?? targetJson['location_id'] ?? targetJson['locationId'];
+
+    if (isLoc) {
+      if (ll is Map) {
+        messageStr = jsonEncode(Map<String, dynamic>.from(ll));
+      } else if (llId != null) {
+        messageStr = jsonEncode({'location_id': llId});
+      }
+      if (messageStr.isNotEmpty) {
+        cipherStr = messageStr;
+      }
+    }
+
     return ServerMessageModel(
       id: rawId is int ? rawId : int.tryParse(rawId?.toString() ?? '') ?? 0,
-      chatHeadId: json['chat_head_id'] is int
-          ? json['chat_head_id']
+      chatHeadId: targetJson['chat_head_id'] is int
+          ? targetJson['chat_head_id']
           : int.tryParse(
-                  (json['chat_head_id'] ??
-                              json['chat_id'] ??
-                              json['chatHeadId'] ??
-                              json['chatId'])
+                  (targetJson['chat_head_id'] ??
+                              targetJson['chat_id'] ??
+                              targetJson['chatHeadId'] ??
+                              targetJson['chatId'])
                           ?.toString() ??
                       '0',
                 ) ??
@@ -994,52 +1089,59 @@ class ServerMessageModel {
       senderId: rawSenderId is int
           ? rawSenderId
           : int.tryParse(rawSenderId?.toString() ?? '0') ?? 0,
-      ciphertext: cipherStr ?? messageStr ?? '',
+      ciphertext: cipherStr.isNotEmpty ? cipherStr : messageStr,
       message: messageStr,
-      keyVersion: json['key_version'] is int
-          ? json['key_version']
-          : int.tryParse(json['key_version']?.toString() ?? '1') ?? 1,
-      filePath: (json['file_path'] ?? json['filePath'])?.toString(),
-      fileType: (json['file_type'] ?? json['fileType'])?.toString(),
-      fileName: (json['file_name'] ?? json['fileName'])?.toString(),
-      replyToId: json['reply_to_id'] is int
-          ? json['reply_to_id']
-          : int.tryParse(json['reply_to_id']?.toString() ?? ''),
-      chatReact: normalizeChatReaction(json['chat_react']),
+      keyVersion: targetJson['key_version'] is int
+          ? targetJson['key_version']
+          : int.tryParse(targetJson['key_version']?.toString() ?? '1') ?? 1,
+      filePath: (targetJson['file_path'] ?? targetJson['filePath'])?.toString(),
+      fileType: (targetJson['file_type'] ?? targetJson['fileType'])?.toString(),
+      fileName: (targetJson['file_name'] ?? targetJson['fileName'])?.toString(),
+      replyToId: targetJson['reply_to_id'] is int
+          ? targetJson['reply_to_id']
+          : int.tryParse(targetJson['reply_to_id']?.toString() ?? ''),
+      chatReact: normalizeChatReaction(targetJson['chat_react']),
       isRead: isReadVal,
       isDelivered: isDeliveredVal,
       status: statusVal,
-      deliveredAt: (json['delivered_at'] ?? json['deliveredAt'])?.toString(),
-      isEdited: json['is_edited'] == true || json['is_edited'] == 1,
-      isDeleted: json['is_deleted'] == true || json['is_deleted'] == 1,
-      isSaved: json['is_saved'] == true || json['is_saved'] == 1,
+      deliveredAt: (targetJson['delivered_at'] ?? targetJson['deliveredAt'])?.toString(),
+      isEdited: targetJson['is_edited'] == true || targetJson['is_edited'] == 1,
+      isDeleted: targetJson['is_deleted'] == true || targetJson['is_deleted'] == 1,
+      isSaved: targetJson['is_saved'] == true || targetJson['is_saved'] == 1,
       disappearType: disappearVal,
-      expiresAt: (json['expires_at'] ?? json['expiresAt'])?.toString(),
+      expiresAt: (targetJson['expires_at'] ?? targetJson['expiresAt'])?.toString(),
       createdAt:
-          (json['created_at'] ?? json['createdAt'])?.toString() ??
+          (targetJson['created_at'] ?? targetJson['createdAt'])?.toString() ??
           DateTime.now().toIso8601String(),
-      updatedAt: (json['updated_at'] ?? json['updatedAt'])?.toString(),
+      updatedAt: (targetJson['updated_at'] ?? targetJson['updatedAt'])?.toString(),
       msgType: finalMsgType,
       callId: parsedCallId,
       callType: rawCallType,
       callStatus: rawCallStatus,
       callDuration: parsedCallDuration,
-      deletedAt: (json['deleted_at'] ?? json['deletedAt'])?.toString(),
-      recoverUntil: (json['recover_until'] ?? json['recoverUntil'])?.toString(),
-      daysLeft: json['days_left'] is int
-          ? json['days_left'] as int
-          : int.tryParse(json['days_left']?.toString() ?? ''),
+      deletedAt: (targetJson['deleted_at'] ?? targetJson['deletedAt'])?.toString(),
+      recoverUntil: (targetJson['recover_until'] ?? targetJson['recoverUntil'])?.toString(),
+      daysLeft: targetJson['days_left'] is int
+          ? targetJson['days_left'] as int
+          : int.tryParse(targetJson['days_left']?.toString() ?? ''),
     );
   }
 
-  /// Returns decrypted message content given the secret key.
-  String decryptedContent(String secretKey) {
-    final raw = message?.isNotEmpty == true ? message! : ciphertext;
+  String _decryptRaw(String secretKey) {
+    if (msgType == 'location' || msgType == 'live_location') {
+      return message?.isNotEmpty == true ? message! : ciphertext;
+    }
+    final raw = cleanMessageContentString(
+        message?.isNotEmpty == true ? message! : ciphertext);
     final decrypted = E2eCryptoService.instance.decryptText(raw, secretKey);
-    // Do not leak an encrypted payload into the presentation layer when a
-    // malformed or stale payload cannot be decoded.
     return raw.startsWith('ENC:v1:') && decrypted == raw ? '' : decrypted;
   }
+
+  /// True when the sender forwarded this message (marker inside the ciphertext).
+  bool forwardedFlag(String secretKey) => hasFwdMarker(_decryptRaw(secretKey));
+
+  String decryptedContent(String secretKey) =>
+      stripFwdMarker(_decryptRaw(secretKey));
 }
 
 /// Response returned by Auth Login/Register endpoints.
@@ -1064,7 +1166,7 @@ class AuthResponseModel {
   }
 }
 
-/// Represents an uploaded file item in the Private Vault Storage.
+/// Represents an uploaded file or folder item in the Private Vault Storage.
 class UploadItemModel {
   final int id;
   final String filePath;
@@ -1074,6 +1176,8 @@ class UploadItemModel {
   final int fileSize;
   final String createdAt;
   final String url;
+  final bool isFolder;
+  final int? parentId;
 
   UploadItemModel({
     required this.id,
@@ -1084,9 +1188,22 @@ class UploadItemModel {
     required this.fileSize,
     required this.createdAt,
     required this.url,
+    this.isFolder = false,
+    this.parentId,
   });
 
   factory UploadItemModel.fromJson(Map<String, dynamic> json) {
+    final rawIsFolder = json['is_folder'] ?? json['isFolder'];
+    final isFolder = rawIsFolder is bool
+        ? rawIsFolder
+        : (rawIsFolder?.toString() == 'true' ||
+            (json['type'] == 0 &&
+                (json['file_name'] != null || json['name'] != null)));
+    final rawParentId = json['parent_id'] ?? json['parentId'];
+    final parentId = rawParentId is int
+        ? rawParentId
+        : int.tryParse(rawParentId?.toString() ?? '');
+
     return UploadItemModel(
       id: json['id'] is int
           ? json['id'] as int
@@ -1100,7 +1217,7 @@ class UploadItemModel {
           'File',
       fileType:
           (json['file_type'] ?? json['fileType'] ?? json['type'])?.toString() ??
-          'application/octet-stream',
+          (isFolder ? 'folder' : 'application/octet-stream'),
       fileSize: json['file_size'] is int
           ? json['file_size'] as int
           : json['fileSize'] is int
@@ -1115,6 +1232,8 @@ class UploadItemModel {
                 0,
       createdAt: (json['created_at'] ?? json['createdAt'])?.toString() ?? '',
       url: (json['url'] ?? json['path'] ?? json['file_path'])?.toString() ?? '',
+      isFolder: isFolder,
+      parentId: parentId,
     );
   }
 
@@ -1149,6 +1268,7 @@ class UploadItemModel {
   }
 
   String get formattedSize {
+    if (isFolder) return 'Folder';
     if (fileSize <= 0) return '0 B';
     const suffixes = ['B', 'KB', 'MB', 'GB', 'TB'];
     var i = (fileSize.toString().length - 1) ~/ 3;
@@ -1182,10 +1302,17 @@ class UploadItemModel {
   }
 
   bool get isImage {
+    if (isFolder) {
+      return false;
+    }
     final f = folder.toLowerCase();
-    if (f == 'image' || f == 'images') return true;
+    if (f == 'image' || f == 'images') {
+      return true;
+    }
     final lowerType = fileType.toLowerCase();
-    if (lowerType.startsWith('image/')) return true;
+    if (lowerType.startsWith('image/')) {
+      return true;
+    }
     final ext = fileName.split('.').last.toLowerCase();
     return [
       'jpg',
@@ -1200,10 +1327,17 @@ class UploadItemModel {
   }
 
   bool get isVideo {
+    if (isFolder) {
+      return false;
+    }
     final f = folder.toLowerCase();
-    if (f == 'video' || f == 'videos') return true;
+    if (f == 'video' || f == 'videos') {
+      return true;
+    }
     final lowerType = fileType.toLowerCase();
-    if (lowerType.startsWith('video/')) return true;
+    if (lowerType.startsWith('video/')) {
+      return true;
+    }
     final ext = fileName.split('.').last.toLowerCase();
     return [
       'mp4',
@@ -1218,13 +1352,15 @@ class UploadItemModel {
   }
 
   bool get isAudio {
+    if (isFolder) return false;
     final f = folder.toLowerCase();
     if (f == 'audio' ||
         f == 'audios' ||
         f == 'music' ||
         f == 'sound' ||
-        f == 'voice')
+        f == 'voice') {
       return true;
+    }
     final lowerType = fileType.toLowerCase();
     if (lowerType.startsWith('audio/')) return true;
     final ext = fileName.split('.').last.toLowerCase();
@@ -1242,28 +1378,56 @@ class UploadItemModel {
   }
 
   bool get isDoc {
+    if (isFolder) return false;
     final f = folder.toLowerCase();
     if (f == 'doc' ||
         f == 'document' ||
         f == 'documents' ||
         f == 'file' ||
-        f == 'files')
+        f == 'files') {
       return true;
+    }
     return !isImage && !isVideo && !isAudio;
   }
 }
 
-/// Paginated Uploads Response from GET /uploads?folder={folder}&page={page}&limit={limit}
+/// Represents a breadcrumb item in folder hierarchy.
+class BreadcrumbItem {
+  final int? id;
+  final String name;
+
+  const BreadcrumbItem({
+    this.id,
+    required this.name,
+  });
+
+  factory BreadcrumbItem.fromJson(Map<String, dynamic> json) {
+    final rawId = json['id'];
+    final id = rawId is int ? rawId : int.tryParse(rawId?.toString() ?? '');
+    return BreadcrumbItem(
+      id: id,
+      name: (json['name'] ?? json['file_name'])?.toString() ?? 'Folder',
+    );
+  }
+}
+
+/// Paginated Uploads Response from GET /uploads?folder={folder}&parent_id={parentId}&page={page}&limit={limit}
 class UploadsResponseModel {
   final int page;
   final int limit;
   final int total;
+  final int? parentId;
+  final bool hasMore;
+  final List<BreadcrumbItem> breadcrumbs;
   final List<UploadItemModel> items;
 
   UploadsResponseModel({
     required this.page,
     required this.limit,
     required this.total,
+    this.parentId,
+    this.hasMore = false,
+    this.breadcrumbs = const [],
     required this.items,
   });
 
@@ -1280,6 +1444,20 @@ class UploadsResponseModel {
     int total = json['total'] is int
         ? json['total'] as int
         : int.tryParse(json['total']?.toString() ?? '0') ?? 0;
+    final rawParentId = json['parent_id'] ?? json['parentId'];
+    final parentId = rawParentId is int
+        ? rawParentId
+        : int.tryParse(rawParentId?.toString() ?? '');
+    final hasMore = json['has_more'] == true || json['hasMore'] == true;
+
+    List<BreadcrumbItem> breadcrumbs = [];
+    if (json['breadcrumb'] is List) {
+      breadcrumbs = (json['breadcrumb'] as List)
+          .whereType<Map>()
+          .map((e) => BreadcrumbItem.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    }
+
     List<UploadItemModel> items = [];
 
     final folders = json['folders'];
@@ -1348,15 +1526,24 @@ class UploadsResponseModel {
 
     if (requestedFolder != null && requestedFolder.isNotEmpty) {
       final req = requestedFolder.toLowerCase();
-      if (req == 'image') {
-        items = items.where((item) => item.isImage).toList();
-      } else if (req == 'video') {
-        items = items.where((item) => item.isVideo).toList();
-      } else if (req == 'audio') {
-        items = items.where((item) => item.isAudio).toList();
-      } else if (req == 'doc' || req == 'document' || req == 'documents') {
-        items = items.where((item) => item.isDoc).toList();
-      }
+      items = items.where((item) {
+        if (item.isFolder) {
+          return true;
+        }
+        if (req == 'image') {
+          return item.isImage;
+        }
+        if (req == 'video') {
+          return item.isVideo;
+        }
+        if (req == 'audio') {
+          return item.isAudio;
+        }
+        if (req == 'doc' || req == 'document' || req == 'documents') {
+          return item.isDoc;
+        }
+        return true;
+      }).toList();
       total = items.length > total ? items.length : total;
     }
 
@@ -1364,6 +1551,9 @@ class UploadsResponseModel {
       page: page,
       limit: limit,
       total: total,
+      parentId: parentId,
+      hasMore: hasMore,
+      breadcrumbs: breadcrumbs,
       items: items,
     );
   }

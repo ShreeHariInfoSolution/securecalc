@@ -19,7 +19,10 @@ import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/models/server_models.dart';
 import '../../domain/services/attachment_cache_service.dart';
+import '../../domain/services/outgoing_attachment_manager.dart';
+import '../../domain/utils/forward_marker.dart';
 import '../../domain/services/call_service.dart';
+import '../../domain/services/chat_audio_playback.dart';
 import '../../domain/services/e2e_crypto_service.dart';
 import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/presence_store.dart';
@@ -28,8 +31,10 @@ import '../../domain/services/server_chat_manager.dart';
 import '../../domain/services/socket_chat_service.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/chat_composer.dart';
+import '../widgets/chat_media_viewer.dart';
 import '../widgets/chat_detail_header.dart';
 import '../widgets/chat_message_list.dart';
+import '../widgets/message_actions_overlay.dart';
 import '../widgets/gif_picker_panel.dart';
 import '../widgets/sticker_picker_panel.dart';
 import '../widgets/forward_chat_selection_dialog.dart';
@@ -49,6 +54,7 @@ class ChatDetailPage extends StatefulWidget {
 
 class _ChatDetailPageState extends State<ChatDetailPage>
     with WidgetsBindingObserver {
+  final ChatMediaController _mediaCtl = ChatMediaController();
   final DateTime _sessionStartTime = DateTime.now();
   late List<ChatMessage> _messages;
   late String _chatName;
@@ -67,11 +73,23 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   ChatMessage? _editingMessage;
   ChatMessage? _replyingMessage;
   String? _historyError;
-  final TextEditingController _inputController = TextEditingController();
+  final TextEditingController _inputController = EmojiTextEditingController();
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
+  final ValueNotifier<double> _composerHeight = ValueNotifier<double>(58.0);
+  String? _scrollTargetId;
+  final GlobalKey _scrollTargetKey = GlobalKey();
+  String? _pendingScrollTargetId;
+  Timer? _searchDebounceTimer;
+  Timer? _metricsDebounceTimer;
   final Map<int, String> _groupMemberNames = {};
   final Set<String> _decryptingEditedMessageIds = <String>{};
+  DateTime? _lastAttachmentTimestamp;
+  StreamSubscription<OutgoingEvent>? _outSub;
+  final ChatComposerController _composerCtl = ChatComposerController();
+  Future<void> _textQueueTail = Future.value();
+  Future<void> _gifQueueTail = Future.value();
+  int _textSeq = 0;
   bool _showJumpToLatest = false;
   int _newMessagesWhileAway = 0;
   final ValueNotifier<bool> _isPeerTyping = ValueNotifier(false);
@@ -86,14 +104,62 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   StreamSubscription<Map<String, dynamic>>? _deletedSubscription;
   StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
 
+  String? _hiddenMsgId;
   late int _disappearType;
   late final int _initialUnreadCount;
   late bool _isBlocked;
+
+  final Map<String, String> _pendingLocalToRealIdMap = <String, String>{};
+  final Set<String> _matchedLocalIds = <String>{};
+
+  void _adjustRemainingLocalMessageTimestamps(DateTime baseTimestamp) {
+    var bumpMs = 10;
+    for (int i = 0; i < _messages.length; i++) {
+      final msg = _messages[i];
+      if ((msg.id.startsWith('local_') || msg.id.startsWith('temp_')) &&
+          msg.senderId == 'user') {
+        if (!msg.timestamp.isAfter(baseTimestamp)) {
+          final newTs = baseTimestamp.add(Duration(milliseconds: bumpMs));
+          bumpMs += 10;
+          _messages[i] = ChatMessage(
+            id: msg.id,
+            senderId: msg.senderId,
+            content: msg.content,
+            timestamp: newTs,
+            type: msg.type,
+            mediaUrl: msg.mediaUrl,
+            fileName: msg.fileName,
+            isRead: msg.isRead,
+            isDelivered: msg.isDelivered,
+            status: msg.status,
+            deliveredAt: msg.deliveredAt,
+            isEdited: msg.isEdited,
+            isDeleted: msg.isDeleted,
+            isSaved: msg.isSaved,
+            isForwarded: msg.isForwarded,
+            disappearType: msg.disappearType,
+            expiresAt: msg.expiresAt,
+            updatedAt: msg.updatedAt,
+            reaction: msg.reaction,
+            replyToId: msg.replyToId,
+            msgType: msg.msgType,
+            callId: msg.callId,
+            callType: msg.callType,
+            callStatus: msg.callStatus,
+            callDuration: msg.callDuration,
+          );
+        }
+      }
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _composerCtl.isPanelOpen.addListener(() {
+      if (mounted) setState(() {});
+    });
     _disappearType = widget.conversation.disappearType;
     _initialUnreadCount = widget.conversation.unreadCount;
     _isBlocked = widget.conversation.isBlocked;
@@ -104,10 +170,21 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     _groupMemberNames.addAll(widget.conversation.memberNames);
     _scrollController.addListener(_handleScrollChanged);
     _messages = List.from(widget.conversation.messages);
+    _mediaCtl
+      ..chatId = widget.conversation.id
+      ..chatName = _chatName
+      ..onReply = _beginReply
+      ..onForward = _forwardSingleMessage
+      ..onReact = _reactSingleMessage
+      ..onToggleStar = _toggleStarSingleMessage
+      ..onDelete = _deleteSingleMessage
+      ..hasMore = (() => _hasMorePages)
+      ..onLoadOlder = _loadOlderMessages;
     unawaited(_warmAttachmentCache());
     if (widget.conversation.isGroup) unawaited(_loadGroupMemberNames());
     unawaited(_resolvePeerProfileIfNeeded());
     _loadInitialMessages();
+    _outSub = OutgoingAttachmentManager.instance.events.listen(_onOutgoing);
     _messageSubscription = SocketChatService.instance.onNewMessage.listen(
       _handleIncomingMessage,
     );
@@ -276,7 +353,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           unawaited(
             LocalChatStorage.instance.updateConversation(
               widget.conversation.id,
-              (c) => c.copyWith(
+                  (c) => c.copyWith(
                 peerUserId: peer.id,
                 isOnline: effectiveOnline,
                 lastSeenAt: peerLastSeen,
@@ -288,15 +365,15 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         final resolvedName = details.isGroup
             ? (details.groupName ?? 'Group chat')
             : (peer?.name.isNotEmpty == true && !peer!.name.startsWith('User #')
-                  ? peer.name
-                  : (peer?.phone ?? peer?.email ?? _chatName));
+            ? peer.name
+            : (peer?.phone ?? peer?.email ?? _chatName));
 
         final resolvedAvatar = details.isGroup
             ? (details.groupAvatar ?? '')
             : (peer?.avatar ?? details.groupAvatar ?? '');
 
         final finalName =
-            (resolvedName.isNotEmpty && !resolvedName.startsWith('User #'))
+        (resolvedName.isNotEmpty && !resolvedName.startsWith('User #'))
             ? resolvedName
             : _chatName;
         final finalAvatar = resolvedAvatar.isNotEmpty
@@ -323,11 +400,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     if (show != _showJumpToLatest) setState(() => _showJumpToLatest = show);
     if (!show) _newMessagesWhileAway = 0;
 
-    // Minimize keyboard if open when user scrolls/drags chat list
-    if (_inputFocusNode.hasFocus &&
-        _scrollController.position.userScrollDirection !=
-            ScrollDirection.idle) {
-      _inputFocusNode.unfocus();
+    if (_scrollController.position.userScrollDirection != ScrollDirection.idle) {
+      if (_inputFocusNode.hasFocus) _inputFocusNode.unfocus();
+      _composerCtl.closePanels(); // animates the GIF panel down
     }
 
     // Trigger pagination when scrolling UP near top of chat history
@@ -374,6 +449,37 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     return a.id.compareTo(b.id);
   }
 
+  void _onOutgoing(OutgoingEvent e) {
+    if (!mounted || e.chatId != widget.conversation.id) return;
+    switch (e.type) {
+      case OutgoingEventType.sent:
+        final real = e.message!;
+        setState(() {
+          _pendingLocalToRealIdMap[e.localId] = real.id;
+          _matchedLocalIds.add(e.localId);
+          _messages.removeWhere((m) => m.id == real.id && m.id != e.localId); // socket echo
+          final i = _messages.indexWhere((m) => m.id == e.localId);
+          if (i >= 0) {
+            _messages[i] = real;
+          } else {
+            _messages.add(real);
+          }
+          _adjustRemainingLocalMessageTimestamps(real.timestamp);
+          _messages.sort(_compareChatMessages);
+        });
+        break;
+      case OutgoingEventType.failed:
+        _setMessageStatus(e.localId, 'failed');
+        break;
+      case OutgoingEventType.retrying:
+        _setMessageStatus(e.localId, 'sending');
+        break;
+      case OutgoingEventType.discarded:
+        setState(() => _messages.removeWhere((m) => m.id == e.localId));
+        break;
+    }
+  }
+
   void _handleIncomingMessage(ServerMessageModel serverMessage) {
     if (!mounted ||
         serverMessage.chatHeadId.toString() != widget.conversation.id) {
@@ -381,7 +487,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     }
     final wasNearLatest =
         !_scrollController.hasClients ||
-        _scrollController.position.pixels < 180;
+            _scrollController.position.pixels < 180;
     final currentUserId = ServerApiService.instance.currentUserId;
 
     if (serverMessage.senderId != currentUserId && serverMessage.chatHeadId > 0) {
@@ -403,9 +509,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final rawFilePath = serverMessage.filePath?.trim();
     final rawFileName = serverMessage.fileName?.trim();
 
-    final msgContent = serverMessage.isDeleted
+    final rawMsgContent = serverMessage.isDeleted
         ? 'This message was deleted'
         : (plaintext.isEmpty ? (serverMessage.message ?? '') : plaintext);
+    final msgContent = cleanMessageContentString(rawMsgContent);
 
     final msgText = msgContent.trim();
     final isGifContent = smFileType == 'image/gif' ||
@@ -429,25 +536,28 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final effectiveType = isSmCall
         ? 'call'
         : (isStickerContent
-            ? 'sticker'
-            : (isGifContent
-                ? 'image/gif'
-                : (isSmText
-                    ? 'text'
-                    : (inferAttachmentType(
-                          fileType: serverMessage.fileType,
-                          fileName: serverMessage.fileName,
-                          filePath: serverMessage.filePath,
-                        ) ??
-                        'application/octet-stream'))));
+        ? 'sticker'
+        : (isGifContent
+        ? 'image/gif'
+        : (isSmText
+        ? 'text'
+        : (inferAttachmentType(
+      fileType: serverMessage.fileType,
+      fileName: serverMessage.fileName,
+      filePath: serverMessage.filePath,
+    ) ??
+        'application/octet-stream'))));
 
     final effectiveMediaUrl = isSmText || isSmCall
         ? null
         : ((rawFilePath != null && rawFilePath.isNotEmpty)
-            ? rawFilePath
-            : (isGifContent ? msgText : null));
+        ? rawFilePath
+        : (isGifContent ? msgText : null));
 
-    final isMine = serverMessage.senderId == currentUserId;
+    final myUserIdStr = currentUserId?.toString() ?? '';
+    final isMine = (serverMessage.senderId.toString() == myUserIdStr) ||
+        (serverMessage.senderId.toString() == 'user');
+
     final incoming = ChatMessage(
       id: serverMessage.id.toString(),
       senderId: isMine ? 'user' : serverMessage.senderId.toString(),
@@ -458,9 +568,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       fileName: isSmText || isSmCall
           ? null
           : ((serverMessage.fileName != null &&
-                  serverMessage.fileName!.trim().isNotEmpty)
-              ? serverMessage.fileName
-              : null),
+          serverMessage.fileName!.trim().isNotEmpty)
+          ? serverMessage.fileName
+          : null),
       isRead: isMine ? serverMessage.isRead : true,
       isDelivered: isMine ? (serverMessage.isDelivered || serverMessage.isRead) : true,
       status: isMine ? serverMessage.status : 'read',
@@ -473,6 +583,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       callType: serverMessage.callType,
       callStatus: serverMessage.callStatus,
       callDuration: serverMessage.callDuration,
+      isForwarded:
+          serverMessage.forwardedFlag('chat_key_${serverMessage.chatHeadId}'),
     );
     if (_isLoadingMessages) {
       _messagesReceivedWhileLoading[incoming.id] = incoming;
@@ -480,29 +592,96 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
     // Check if message is already present by ID or matches optimistic/existing local message
     final existingIndex = _messages.indexWhere(
-      (message) =>
-          message.id == incoming.id ||
-          ((message.id.startsWith('local_') || message.id.startsWith('fwd_')) &&
-              incoming.senderId == 'user' &&
-              message.content.trim() == incoming.content.trim()) ||
-          (incoming.senderId == 'user' &&
-              message.senderId == 'user' &&
-              message.content.trim() == incoming.content.trim() &&
-              incoming.timestamp
-                      .difference(message.timestamp)
-                      .inSeconds
-                      .abs() <=
-                  10),
+          (message) {
+        // 1. Exact ID match (both server IDs, or same local ID)
+        if (message.id == incoming.id) return true;
+
+        // 2. Check if this server message matches a mapped localMsgId
+        if ((_pendingLocalToRealIdMap.containsKey(message.id) &&
+            _pendingLocalToRealIdMap[message.id] == incoming.id) ||
+            OutgoingAttachmentManager.instance.realIdFor(message.id) == incoming.id) {
+          return true;
+        }
+
+        // 3. Do NOT match confirmed server messages with different server IDs!
+        final isMessageLocal = message.id.startsWith('local_') ||
+            message.id.startsWith('fwd_') ||
+            message.id.startsWith('temp_');
+        if (!isMessageLocal) return false;
+
+        if (_matchedLocalIds.contains(message.id)) return false;
+
+        // 4. Match pending local message sent by current user
+        final isIncomingFromMe = incoming.senderId == 'user' ||
+            incoming.senderId == myUserIdStr ||
+            serverMessage.senderId.toString() == myUserIdStr;
+        if (!isIncomingFromMe) return false;
+
+        // Check if both are media attachments or document files
+        final messageHasMedia = message.mediaUrl != null && message.mediaUrl!.isNotEmpty;
+        final incomingHasMedia = incoming.mediaUrl != null && incoming.mediaUrl!.isNotEmpty;
+
+        if (messageHasMedia || incomingHasMedia || message.type != 'text') {
+          String nameOf(ChatMessage m) => (m.fileName?.trim().isNotEmpty == true
+              ? m.fileName!
+              : (m.mediaUrl ?? '').split('/').last.split('\\').last)
+              .toLowerCase()
+              .trim();
+          final a = nameOf(message), b = nameOf(incoming);
+          return a.isNotEmpty && a == b;   // never match media by time
+        }
+
+        final contentMatches = message.content.trim() == incoming.content.trim();
+        final timeDiff = incoming.timestamp.difference(message.timestamp).inSeconds.abs();
+        return contentMatches && timeDiff <= 120;
+      },
     );
 
     if (existingIndex >= 0) {
+      final oldLocal = _messages[existingIndex].mediaUrl;
+      if (incoming.mediaUrl != null &&
+          oldLocal != null &&
+          !oldLocal.startsWith('http') &&
+          File(oldLocal).existsSync()) {
+        AttachmentCacheService.instance.updateCache(incoming.mediaUrl!, oldLocal);
+      }
+      final oldLocalId = _messages[existingIndex].id;
+      if (oldLocalId.startsWith('local_') || oldLocalId.startsWith('temp_')) {
+        _matchedLocalIds.add(oldLocalId);
+        _pendingLocalToRealIdMap[oldLocalId] = incoming.id;
+      }
+      final old = _messages[existingIndex];
+      final mergedIncoming = incoming.copyWith(
+        isForwarded: incoming.isForwarded || old.isForwarded,
+      );
       setState(() {
-        _messages[existingIndex] = incoming;
+        _messages[existingIndex] = mergedIncoming;
+        _adjustRemainingLocalMessageTimestamps(mergedIncoming.timestamp);
         _messages.sort(_compareChatMessages);
       });
       if (wasNearLatest || incoming.senderId == 'user') _scrollToBottom();
       return;
     }
+
+    // Secondary check: remove any pending local message if incoming is duplicate
+    final dupIndex = _messages.indexWhere(
+          (m) => m.id == incoming.id || _pendingLocalToRealIdMap[m.id] == incoming.id,
+    );
+    if (dupIndex >= 0) {
+      final old = _messages[dupIndex];
+      final mergedIncoming = incoming.copyWith(
+        isForwarded: incoming.isForwarded || old.isForwarded,
+      );
+      setState(() {
+        _messages[dupIndex] = mergedIncoming;
+        _adjustRemainingLocalMessageTimestamps(mergedIncoming.timestamp);
+        _messages.sort(_compareChatMessages);
+      });
+      if (wasNearLatest || incoming.senderId == 'user') _scrollToBottom();
+      return;
+    }
+
+    _messages.removeWhere((m) => m.id == incoming.id || _pendingLocalToRealIdMap[m.id] == incoming.id);
 
     setState(() {
       _messages = [..._messages, incoming]..sort(_compareChatMessages);
@@ -524,18 +703,18 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         ? Map<String, dynamic>.from(data['data'] as Map)
         : data;
     final eventChatId =
-        (event['chat_head_id'] ??
-                event['chat_id'] ??
-                event['chatHeadId'] ??
-                event['chatId'])
-            ?.toString();
+    (event['chat_head_id'] ??
+        event['chat_id'] ??
+        event['chatHeadId'] ??
+        event['chatId'])
+        ?.toString();
     if (eventChatId == widget.conversation.id) {
       final eventUserId = int.tryParse(
         (event['user_id'] ??
-                    event['userId'] ??
-                    event['sender_id'] ??
-                    event['senderId'])
-                ?.toString() ??
+            event['userId'] ??
+            event['sender_id'] ??
+            event['senderId'])
+            ?.toString() ??
             '',
       );
       if (eventUserId != null &&
@@ -546,8 +725,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           event['is_typing'] ?? event['typing'] ?? event['isTyping'];
       final isTyping =
           rawTyping == true ||
-          rawTyping == 1 ||
-          rawTyping?.toString().toLowerCase() == 'true';
+              rawTyping == 1 ||
+              rawTyping?.toString().toLowerCase() == 'true';
       _peerTypingTimer?.cancel();
       _isPeerTyping.value = isTyping;
       if (isTyping) {
@@ -583,13 +762,13 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         (widget.conversation.isGroup ? null : int.tryParse(widget.conversation.id));
 
     final chatHeadId =
-        (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'])
-            ?.toString();
+    (data['chat_head_id'] ?? data['chat_id'] ?? data['chatHeadId'])
+        ?.toString();
 
     final matchesChat =
         chatHeadId != null &&
-        chatHeadId.isNotEmpty &&
-        chatHeadId == widget.conversation.id;
+            chatHeadId.isNotEmpty &&
+            chatHeadId == widget.conversation.id;
 
     final matchesUser = userId != null &&
         ((directPeerId != null && userId == directPeerId) ||
@@ -603,9 +782,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     if (online != null) {
       final isOnline =
           online == true ||
-          online == 1 ||
-          online.toString().toLowerCase() == 'online' ||
-          online.toString().toLowerCase() == 'true';
+              online == 1 ||
+              online.toString().toLowerCase() == 'online' ||
+              online.toString().toLowerCase() == 'true';
 
       _isPeerOnline.value = isOnline;
 
@@ -618,12 +797,12 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       unawaited(
         LocalChatStorage.instance.updateConversation(
           widget.conversation.id,
-          (c) => c.copyWith(
+              (c) => c.copyWith(
             isOnline: isOnline,
             lastSeenAt:
-                isOnline
-                    ? null
-                    : (parsedLastSeen ?? (c.isOnline ? DateTime.now() : (c.lastSeenAt ?? DateTime.now()))),
+            isOnline
+                ? null
+                : (parsedLastSeen ?? (c.isOnline ? DateTime.now() : (c.lastSeenAt ?? DateTime.now()))),
           ),
         ),
       );
@@ -640,9 +819,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     }
 
     final eventChatId = (data['chat_head_id'] ??
-            data['chat_id'] ??
-            data['chatHeadId'] ??
-            data['chatId'])
+        data['chat_id'] ??
+        data['chatHeadId'] ??
+        data['chatId'])
         ?.toString();
 
     final rawReader = data['reader_id'] ??
@@ -684,15 +863,41 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         data['updated_at'] ??
         data['updatedAt'];
 
-    final lastReadAt = DateTime.tryParse(rawReadAt?.toString() ?? '');
-    final cutoff = lastReadAt ?? DateTime.now();
+    final targetMsgId =
+    (data['message_id'] ?? data['messageId'] ?? data['id'])?.toString();
+
+    DateTime? cutoff;
+    if (rawReadAt != null) {
+      final parsed = DateTime.tryParse(rawReadAt.toString());
+      if (parsed != null) {
+        cutoff = parsed.toLocal();
+      }
+    }
+    cutoff ??= DateTime.now();
 
     var changed = false;
     final updatedMessages = _messages.map((message) {
-      final isReadByPeer = !message.timestamp.isAfter(cutoff);
-      if (message.senderId == 'user' && isReadByPeer && (!message.isRead || !message.isDelivered)) {
-        changed = true;
-        return message.copyWith(isRead: true, isDelivered: true, status: 'read');
+      if (message.senderId == 'user') {
+        final matchesSpecificId = targetMsgId != null &&
+            targetMsgId.isNotEmpty &&
+            (message.id == targetMsgId ||
+                _pendingLocalToRealIdMap[message.id] == targetMsgId);
+        final isBeforeCutoff = !message.timestamp.isAfter(cutoff!);
+
+        final shouldMarkRead = matchesSpecificId ||
+            (targetMsgId == null && isBeforeCutoff);
+
+        if (shouldMarkRead &&
+            (!message.isRead ||
+                !message.isDelivered ||
+                message.status.toLowerCase() != 'read')) {
+          changed = true;
+          return message.copyWith(
+            isRead: true,
+            isDelivered: true,
+            status: 'read',
+          );
+        }
       }
       return message;
     }).toList();
@@ -713,11 +918,11 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   void _handleDeliveredEvent(Map<String, dynamic> data) {
     if (!mounted) return;
     final eventChatId =
-        (data['chat_head_id'] ??
-                data['chat_id'] ??
-                data['chatHeadId'] ??
-                data['chatId'])
-            ?.toString();
+    (data['chat_head_id'] ??
+        data['chat_id'] ??
+        data['chatHeadId'] ??
+        data['chatId'])
+        ?.toString();
     if (eventChatId != widget.conversation.id) return;
 
     var changed = false;
@@ -798,31 +1003,46 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       final filtered = res.messages
           .where(
             (m) => !isMessageExpired(
-              m,
-              chatDisappearType: _disappearType,
-              keepReadSessionMessages: true,
-            ),
-          )
+          m,
+          chatDisappearType: _disappearType,
+          keepReadSessionMessages: true,
+        ),
+      )
           .toList();
 
+      final confirmedServerIds = filtered.map((m) => m.id).toSet();
+      final filteredLocalMessages = _messages.where((m) {
+        if (!m.id.startsWith('local_') && !m.id.startsWith('temp_')) return false;
+        if (_matchedLocalIds.contains(m.id)) return false;
+        if (_pendingLocalToRealIdMap.containsKey(m.id)) {
+          final realId = _pendingLocalToRealIdMap[m.id];
+          if (confirmedServerIds.contains(realId)) return false;
+        }
+        if (OutgoingAttachmentManager.instance.realIdFor(m.id) != null) return false;
+        return true;
+      }).toList();
+
       final mergedById = <String, ChatMessage>{
-        for (final m in _messages) m.id: m,
+        for (final m in filteredLocalMessages) m.id: m,
       };
       for (final message in filtered) {
-        mergedById[message.id] = message;
+        final prev = mergedById[message.id];
+        mergedById[message.id] = (prev?.isForwarded == true)
+            ? message.copyWith(isForwarded: true)
+            : message;
       }
       mergedById.addAll(_messagesReceivedWhileLoading);
       final merged =
-          mergedById.values
-              .where(
-                (m) => !isMessageExpired(
-                  m,
-                  chatDisappearType: _disappearType,
-                  keepReadSessionMessages: true,
-                ),
-              )
-              .toList()
-            ..sort(_compareChatMessages);
+      mergedById.values
+          .where(
+            (m) => !isMessageExpired(
+          m,
+          chatDisappearType: _disappearType,
+          keepReadSessionMessages: true,
+        ),
+      )
+          .toList()
+        ..sort(_compareChatMessages);
 
       setState(() {
         _messages = merged;
@@ -832,6 +1052,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         _historyError = null;
         _isLoadingMessages = false;
       });
+      _recoverOrphanedUploads();
       _messagesReceivedWhileLoading.clear();
       _scrollToBottom();
       unawaited(_markChatRead());
@@ -893,31 +1114,32 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final validCached = cached
         .where(
           (m) => !isMessageExpired(
-            m,
-            chatDisappearType: _disappearType,
-            keepReadSessionMessages: true,
-          ),
-        )
+        m,
+        chatDisappearType: _disappearType,
+        keepReadSessionMessages: true,
+      ),
+    )
         .toList();
     if (validCached.isNotEmpty) {
       final byId = {for (final message in validCached) message.id: message};
       byId.addAll(_messagesReceivedWhileLoading);
       final messages =
-          byId.values
-              .where(
-                (m) => !isMessageExpired(
-                  m,
-                  chatDisappearType: _disappearType,
-                  keepReadSessionMessages: true,
-                ),
-              )
-              .toList()
-            ..sort(_compareChatMessages);
+      byId.values
+          .where(
+            (m) => !isMessageExpired(
+          m,
+          chatDisappearType: _disappearType,
+          keepReadSessionMessages: true,
+        ),
+      )
+          .toList()
+        ..sort(_compareChatMessages);
       setState(() {
         _messages = messages;
         _isLoadingMessages = false;
         _historyError = null;
       });
+      _recoverOrphanedUploads();
       _messagesReceivedWhileLoading.clear();
       _scrollToInitialPosition();
     } else {
@@ -987,28 +1209,18 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final cached = await _loadPlainCachedMessages();
     if (!mounted) return;
 
-    final mergedList = <ChatMessage>[..._messages];
-
-    for (final cachedMsg in cached) {
-      final idx = mergedList.indexWhere(
-        (m) =>
-            m.id == cachedMsg.id ||
-            ((m.id.startsWith('local_') || m.id.startsWith('fwd_')) &&
-                m.senderId == cachedMsg.senderId &&
-                m.content.trim() == cachedMsg.content.trim()) ||
-            (m.senderId == cachedMsg.senderId &&
-                m.content.trim() == cachedMsg.content.trim() &&
-                m.timestamp.difference(cachedMsg.timestamp).inSeconds.abs() <= 10),
-      );
-      if (idx >= 0) {
-        mergedList[idx] = cachedMsg;
-      } else {
-        mergedList.add(cachedMsg);
+    final byId = {for (final m in _messages) m.id: m};
+    for (final c in cached) {
+      // skip stale optimistic rows that were already resolved
+      if (_matchedLocalIds.contains(c.id) ||
+          _pendingLocalToRealIdMap.containsKey(c.id)) {
+        continue;
       }
+      // in-memory copy always wins (it has the newest status)
+      byId.putIfAbsent(c.id, () => c);
     }
-
-    mergedList.sort(_compareChatMessages);
-    setState(() => _messages = mergedList);
+    final merged = byId.values.toList()..sort(_compareChatMessages);
+    setState(() => _messages = merged);
     _scrollToBottom();
   }
 
@@ -1023,13 +1235,13 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final messageId = (data['id'] ?? data['message_id'] ?? data['messageId'])
         ?.toString();
     final eventChatId =
-        (data['chat_head_id'] ??
-                data['chat_id'] ??
-                data['chatHeadId'] ??
-                data['chatId'] ??
-                event['chat_head_id'] ??
-                event['chat_id'])
-            ?.toString();
+    (data['chat_head_id'] ??
+        data['chat_id'] ??
+        data['chatHeadId'] ??
+        data['chatId'] ??
+        event['chat_head_id'] ??
+        event['chat_id'])
+        ?.toString();
     final rawValue = data['ciphertext'] ?? data['content'] ?? data['message'];
     final encryptedText = rawValue is String ? rawValue : null;
     if (messageId == null || encryptedText == null || !mounted) return;
@@ -1042,8 +1254,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final needsDecryption = encryptedText.startsWith('ENC:v1:');
     final showLoading =
         needsDecryption &&
-        (current.content.trim().isEmpty ||
-            current.content.startsWith('ENC:v1:'));
+            (current.content.trim().isEmpty ||
+                current.content.startsWith('ENC:v1:'));
     if (showLoading) {
       setState(() => _decryptingEditedMessageIds.add(messageId));
       // Yield one frame so an empty bubble has a clear loading state while the
@@ -1063,7 +1275,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final resolvedText = hasValidPlaintext ? decryptedText : current.content;
 
     final refreshedIndex = _messages.indexWhere(
-      (message) => message.id == messageId,
+          (message) => message.id == messageId,
     );
     if (refreshedIndex < 0) {
       if (showLoading && mounted) {
@@ -1189,9 +1401,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
               _isImageMsg(_messages[start - 1]) &&
               _messages[start - 1].senderId == message.senderId &&
               message.timestamp
-                      .difference(_messages[start - 1].timestamp)
-                      .inMinutes
-                      .abs() <=
+                  .difference(_messages[start - 1].timestamp)
+                  .inMinutes
+                  .abs() <=
                   15) {
             start--;
           }
@@ -1200,10 +1412,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
               _isImageMsg(_messages[end + 1]) &&
               _messages[end + 1].senderId == message.senderId &&
               _messages[end]
-                      .timestamp
-                      .difference(_messages[end + 1].timestamp)
-                      .inMinutes
-                      .abs() <=
+                  .timestamp
+                  .difference(_messages[end + 1].timestamp)
+                  .inMinutes
+                  .abs() <=
                   15) {
             end++;
           }
@@ -1225,11 +1437,11 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
         if (shareFiles.isNotEmpty) {
           final caption =
-              message.content.isNotEmpty &&
-                      message.content != 'Sent a photo' &&
-                      message.content != 'Sent an attachment'
-                  ? message.content
-                  : null;
+          message.content.isNotEmpty &&
+              message.content != 'Sent a photo' &&
+              message.content != 'Sent an attachment'
+              ? message.content
+              : null;
           await SharePlus.instance.share(
             ShareParams(files: shareFiles, text: caption),
           );
@@ -1371,13 +1583,39 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     ForwardChatSelectionDialog.show(
       context,
       selectedMessages: selectedMsgs,
+      sourceChatId: widget.conversation.id,
     ).then((_) {
       if (mounted) _exitSelectionMode();
     });
   }
 
+  void _forwardSingleMessage(ChatMessage msg) {
+    ForwardChatSelectionDialog.show(
+      context,
+      selectedMessages: [msg],
+      sourceChatId: widget.conversation.id,
+    );
+  }
+
+  void _reactSingleMessage(ChatMessage msg, String emoji) {
+    _reactToMessage(msg, emoji);
+  }
+
+  Future<bool> _toggleStarSingleMessage(ChatMessage msg) async {
+    final nextSaved = !msg.isSaved;
+    await _toggleSaveMessage(msg);
+    return nextSaved;
+  }
+
+  void _deleteSingleMessage(ChatMessage msg) {
+    _deleteMessage(msg);
+  }
+
   Widget _buildSelectionHeader(bool isDark) {
     final topPadding = MediaQuery.paddingOf(context).top;
+    final count = _selectedMessageIds.length;
+    final allSelected = count > 0 && count == _messages.length;
+
     return Container(
       padding: EdgeInsets.fromLTRB(16, topPadding + 10, 16, 12),
       decoration: BoxDecoration(
@@ -1409,7 +1647,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           ),
           const SizedBox(width: 14),
           Text(
-            '${_selectedMessageIds.length} Selected',
+            '$count Selected',
             style: TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w700,
@@ -1417,492 +1655,296 @@ class _ChatDetailPageState extends State<ChatDetailPage>
             ),
           ),
           const Spacer(),
-          if (_selectedMessageIds.isNotEmpty)
-            GlassButton(
-              height: 36,
-              radius: 18,
-              isDark: isDark,
-              onTap: _openForwardDialog,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.shortcut_rounded,
-                      size: 18,
-                      color: AppTheme.primaryColor,
-                    ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      'Forward',
-                      style: TextStyle(
-                        color: AppTheme.primaryColor,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                if (allSelected) {
+                  _selectedMessageIds.clear();
+                } else {
+                  _selectedMessageIds.addAll(_messages.map((m) => m.id));
+                }
+              });
+            },
+            child: Text(
+              allSelected ? 'Deselect All' : 'Select All',
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.primaryColor,
               ),
             ),
+          ),
         ],
       ),
     );
   }
 
+  Widget _buildSelectionBottomBar(bool isDark) {
+    final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    final count = _selectedMessageIds.length;
+    final hasSelection = count > 0;
+    final redColor = isDark ? const Color(0xFFFF453A) : const Color(0xFFFF3B30);
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        12,
+        16,
+        math.max(12.0, bottomPadding + 6.0),
+      ),
+      decoration: BoxDecoration(
+        color: isDark
+            ? const Color(0xF21C1C1E)
+            : Colors.white.withValues(alpha: 0.95),
+        border: Border(
+          top: BorderSide(
+            color: isDark ? Colors.white12 : Colors.black12,
+            width: 0.8,
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Delete Button (Left - WhatsApp iOS Style)
+          InkWell(
+            onTap: hasSelection ? _deleteSelectedMessages : null,
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    CupertinoIcons.trash,
+                    size: 20,
+                    color: hasSelection
+                        ? redColor
+                        : (isDark ? Colors.white30 : Colors.black26),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    count > 0 ? 'Delete ($count)' : 'Delete',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: hasSelection
+                          ? redColor
+                          : (isDark ? Colors.white30 : Colors.black26),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Forward Button (Right - WhatsApp iOS Style)
+          InkWell(
+            onTap: hasSelection ? _openForwardDialog : null,
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.shortcut_rounded,
+                    size: 20,
+                    color: hasSelection
+                        ? AppTheme.primaryColor
+                        : (isDark ? Colors.white30 : Colors.black26),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Forward',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: hasSelection
+                          ? AppTheme.primaryColor
+                          : (isDark ? Colors.white30 : Colors.black26),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _overlayBubble(ChatMessage message, bool isMine) {
+    final replied = message.replyToId == null
+        ? null
+        : _messages.cast<ChatMessage?>().firstWhere(
+              (m) => m?.id == message.replyToId.toString(),
+              orElse: () => null,
+            );
+    return ChatBubble(
+      id: message.id,
+      sourceMessage: message,
+      chatId: widget.conversation.id,
+      message: message.content,
+      isMe: isMine,
+      timestamp: message.timestamp,
+      type: message.type,
+      mediaUrl: message.mediaUrl,
+      fileName: message.fileName,
+      isRead: message.isRead,
+      isDelivered: message.isDelivered,
+      status: message.status,
+      isEdited: message.isEdited,
+      isDeleted: message.isDeleted,
+      isSaved: message.isSaved,
+      callId: message.callId,
+      callType: message.callType,
+      callStatus: message.callStatus,
+      callDuration: message.callDuration,
+      msgType: message.msgType,
+      onVoiceCallTap: _startVoiceCall,
+      onVideoCallTap: _startVideoCall,
+      senderName: !isMine && widget.conversation.isGroup
+          ? _groupMemberNames[int.tryParse(message.senderId)]
+          : null,
+      replyToId: message.replyToId,
+      repliedMessage: replied,
+      replySender: replied == null
+          ? null
+          : replied.senderId == 'user'
+              ? 'You'
+              : widget.conversation.isGroup
+                  ? (_groupMemberNames[int.tryParse(replied.senderId)] ?? 'Member')
+                  : _chatName,
+      replyText: replied?.previewText,
+      isForwarded: message.isForwarded,
+      reactions: message.reaction == null ? null : [message.reaction!],
+    );
+  }
+
   Future<void> _showMessageActions(
     ChatMessage message,
-    Offset globalPosition,
-    Size bubbleSize,
-  ) async {
+    Offset pos,
+    Size size, {
+    bool reactionsOnly = false,
+  }) async {
     if (message.isDeleted) {
-      final deleteType = await _showDeleteMessageBottomSheet(
-        canDeleteForEveryone: false,
-      );
-      if (deleteType != null && mounted) {
-        _deleteMessage(message);
-      }
+      _enterSelectionMode(message);
+      _deleteSelectedMessages();
       return;
     }
 
-    final messageId = int.tryParse(message.id);
+    final screenW = MediaQuery.sizeOf(context).width;
     final isMine = message.senderId == 'user';
-    final screen = MediaQuery.sizeOf(context);
-    final safePadding = MediaQuery.paddingOf(context);
+    final messageId = int.tryParse(message.id);
 
-    final minutesSinceSent = DateTime.now()
-        .difference(message.timestamp)
-        .inMinutes;
-    final isExpired = minutesSinceSent >= 15;
-    final canEdit =
-        isMine && messageId != null && message.type == 'text' && !isExpired;
-    final canDelete = messageId != null && !message.isDeleted;
-
-    const emojiHeight = 50.0;
-    const menuWidth = 220.0;
-    final totalRows = 4 + (canEdit ? 1 : 0) + (canDelete ? 1 : 0);
-    final menuHeight = totalRows * 46.0 + 10;
-
-    final minTop = safePadding.top + 60.0;
-    final maxBottom = screen.height - safePadding.bottom - 16.0;
-
-    final bubbleHeight = math.max(40.0, bubbleSize.height);
-
-    double targetBubbleTop = globalPosition.dy;
-
-    if (targetBubbleTop - emojiHeight - 10 < minTop) {
-      targetBubbleTop = minTop + emojiHeight + 10;
-    }
-    if (targetBubbleTop + bubbleHeight + 10 + menuHeight > maxBottom) {
-      targetBubbleTop = maxBottom - menuHeight - 10 - bubbleHeight;
-      if (targetBubbleTop - emojiHeight - 10 < minTop) {
-        targetBubbleTop = minTop + emojiHeight + 10;
-      }
+    // grid tiles report a small rect -> use a full-width row instead
+    var rect = pos & size;
+    if (rect.width < screenW * 0.9) {
+      rect = Rect.fromLTWH(0, rect.top, screenW, rect.height);
     }
 
-    HapticFeedback.mediumImpact();
+    final isCall = message.type == 'call' ||
+        message.callStatus != null ||
+        message.callId != null ||
+        message.msgType == 'call';
+    final callVideo = (message.callType ?? '').toLowerCase() == 'video';
+    final canEdit = isMine &&
+        messageId != null &&
+        message.type == 'text' &&
+        DateTime.now().difference(message.timestamp).inMinutes < 15;
+    final canDelete = messageId != null;
 
-    await showGeneralDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Message actions',
-      barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 180),
-      transitionBuilder: (context, anim1, anim2, child) {
-        return FadeTransition(
-          opacity: CurvedAnimation(parent: anim1, curve: Curves.easeOutCubic),
-          child: ScaleTransition(
-            scale: Tween<double>(begin: 0.95, end: 1.0).animate(
-              CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
-            ),
-            child: child,
-          ),
-        );
-      },
-      pageBuilder: (dialogContext, animation1, animation2) {
-        final isDark = Theme.of(dialogContext).brightness == Brightness.dark;
-        final cardColor = isDark ? const Color(0xFF2C2C2E) : Colors.white;
-        final primaryText = isDark ? Colors.white : Colors.black87;
-        final emojiItems = ['👍', '❤️', '😂', '😮', '😢', '🙏', '👻'];
-
-        Widget actionRow({
-          required IconData icon,
-          required String label,
-          required VoidCallback onTap,
-          Color? color,
-        }) => InkWell(
-          onTap: onTap,
-          child: Container(
-            height: 46,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Icon(icon, size: 20, color: color ?? primaryText),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: color ?? primaryText,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-
-        Widget divider() => Divider(
-          height: 1,
-          thickness: 0.5,
-          color: isDark ? Colors.white12 : Colors.black12,
-        );
-
-        return Material(
-          color: Colors.transparent,
-          child: Stack(
-            children: [
-              // 1. Frosted Glass Blur Background
-              Positioned.fill(
-                child: GestureDetector(
-                  onTap: () => Navigator.pop(dialogContext),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                    child: Container(
-                      color: isDark
-                          ? Colors.black.withValues(alpha: 0.45)
-                          : Colors.black.withValues(alpha: 0.25),
-                    ),
-                  ),
-                ),
+    final items = reactionsOnly
+        ? const <MessageMenuItem>[]
+        : <MessageMenuItem>[
+            if (isCall)
+              MessageMenuItem(
+                icon: callVideo ? Icons.videocam_rounded : Icons.phone_rounded,
+                label: callVideo ? 'Video Call Back' : 'Call Back',
+                color: const Color(0xFF34C759),
+                onTap: callVideo ? _startVideoCall : _startVoiceCall,
               ),
-
-              // 2. Scrollable Glass Sheet with Reactions, Message & Action Menu
-              SafeArea(
-                child: GestureDetector(
-                  onTap: () => Navigator.pop(dialogContext),
-                  behavior: HitTestBehavior.opaque,
-                  child: Center(
-                    child: SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 20,
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: isMine
-                          ? CrossAxisAlignment.end
-                          : CrossAxisAlignment.start,
-                      children: [
-                        // Emoji Reaction Bar
-                        Material(
-                          color: cardColor,
-                          elevation: 8,
-                          borderRadius: BorderRadius.circular(28),
-                          clipBehavior: Clip.antiAlias,
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: screen.width * 0.82,
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 3,
-                              ),
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                physics: const BouncingScrollPhysics(),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    ...emojiItems.map(
-                                      (emoji) => InkWell(
-                                        borderRadius: BorderRadius.circular(20),
-                                        onTap: messageId == null
-                                            ? null
-                                            : () {
-                                                HapticFeedback.lightImpact();
-                                                Navigator.pop(dialogContext);
-                                                _reactToMessage(message, emoji);
-                                              },
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 6,
-                                            vertical: 6,
-                                          ),
-                                          child: Text(
-                                            emoji,
-                                            style: const TextStyle(
-                                              fontSize: 24,
-                                              decoration: TextDecoration.none,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    IconButton(
-                                      visualDensity: VisualDensity.compact,
-                                      tooltip: 'More reactions',
-                                      onPressed: () {
-                                        HapticFeedback.lightImpact();
-                                        Navigator.pop(dialogContext);
-                                        _showMoreReactions(message);
-                                      },
-                                      icon: const Icon(
-                                        Icons.add_circle_outline_rounded,
-                                        size: 26,
-                                        color: AppTheme.subtitleGrey,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 10),
-
-                        // Highlighted Message Preview (Scrollable for Big Messages)
-                        ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: screen.width * 0.82,
-                            maxHeight: screen.height * 0.45,
-                          ),
-                          child: Container(
-                            clipBehavior: Clip.antiAlias,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: SingleChildScrollView(
-                              physics: const BouncingScrollPhysics(),
-                              child: ChatBubble(
-                                chatId: widget.conversation.id,
-                                message: message.content,
-                                isMe: isMine,
-                                timestamp: message.timestamp,
-                                type: message.type,
-                                mediaUrl: message.mediaUrl,
-                                fileName: message.fileName,
-                                isRead: message.isRead,
-                                isDelivered: message.isDelivered,
-                                status: message.status,
-                                isEdited: message.isEdited,
-                                isDeleted: message.isDeleted,
-                                isSaved: message.isSaved,
-                                callId: message.callId,
-                                callType: message.callType,
-                                callStatus: message.callStatus,
-                                callDuration: message.callDuration,
-                                onVoiceCallTap: _startVoiceCall,
-                                onVideoCallTap: _startVideoCall,
-                                senderName: !isMine && widget.conversation.isGroup
-                                    ? _groupMemberNames[int.tryParse(message.senderId)]
-                                    : null,
-                                replyToId: message.replyToId,
-                                repliedMessage: message.replyToId == null
-                                    ? null
-                                    : _messages.cast<ChatMessage?>().firstWhere(
-                                        (m) => m?.id == message.replyToId.toString(),
-                                        orElse: () => null,
-                                      ),
-                                reactions: message.reaction == null
-                                    ? null
-                                    : [message.reaction!],
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 10),
-
-                        // Glass Action Menu
-                        Container(
-                          width: menuWidth,
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? const Color(0xEE2C2C2E)
-                                : const Color(0xF2FFFFFF),
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(
-                              color: isDark ? Colors.white12 : Colors.black12,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(
-                                  alpha: isDark ? 0.35 : 0.1,
-                                ),
-                                blurRadius: 16,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (message.type == 'call' ||
-                                  message.callStatus != null ||
-                                  message.callId != null ||
-                                  message.msgType == 'call') ...[
-                                actionRow(
-                                  icon: (message.callType ?? '').toLowerCase() == 'video'
-                                      ? Icons.videocam_rounded
-                                      : Icons.phone_rounded,
-                                  label: (message.callType ?? '').toLowerCase() == 'video'
-                                      ? 'Video Call Back'
-                                      : 'Call Back',
-                                  color: const Color(0xFF34C759),
-                                  onTap: () {
-                                    HapticFeedback.lightImpact();
-                                    Navigator.pop(dialogContext);
-                                    if ((message.callType ?? '').toLowerCase() == 'video') {
-                                      _startVideoCall();
-                                    } else {
-                                      _startVoiceCall();
-                                    }
-                                  },
-                                ),
-                                divider(),
-                              ],
-                              actionRow(
-                                icon: Icons.reply_rounded,
-                                label: 'Reply',
-                                onTap: () {
-                                  HapticFeedback.lightImpact();
-                                  Navigator.pop(dialogContext);
-                                  _beginReply(message);
-                                },
-                              ),
-                              divider(),
-                              actionRow(
-                                icon: Icons.shortcut_rounded,
-                                label: 'Forward',
-                                onTap: () {
-                                  HapticFeedback.lightImpact();
-                                  Navigator.pop(dialogContext);
-                                  _enterSelectionMode(message);
-                                },
-                              ),
-                              divider(),
-                              actionRow(
-                                icon: Icons.copy_rounded,
-                                label: 'Copy',
-                                onTap: () {
-                                  HapticFeedback.lightImpact();
-                                  Navigator.pop(dialogContext);
-                                  Clipboard.setData(
-                                    ClipboardData(text: message.content),
-                                  );
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Message copied'),
-                                    ),
-                                  );
-                                },
-                              ),
-                              divider(),
-                              actionRow(
-                                icon: Icons.share_rounded,
-                                label: 'Share',
-                                onTap: () {
-                                  HapticFeedback.lightImpact();
-                                  Navigator.pop(dialogContext);
-                                  _shareMessage(message);
-                                },
-                              ),
-                              divider(),
-                              actionRow(
-                                icon: Icons.info_outline_rounded,
-                                label: 'Info',
-                                onTap: () {
-                                  HapticFeedback.lightImpact();
-                                  Navigator.pop(dialogContext);
-                                  _showMessageInfo(message);
-                                },
-                              ),
-                              divider(),
-                              actionRow(
-                                icon: message.reaction == 'star'
-                                    ? Icons.star_rounded
-                                    : Icons.star_outline_rounded,
-                                label: message.reaction == 'star'
-                                    ? 'Unstar'
-                                    : 'Star',
-                                color: message.reaction == 'star'
-                                    ? Colors.amber
-                                    : null,
-                                onTap: () {
-                                  HapticFeedback.lightImpact();
-                                  Navigator.pop(dialogContext);
-                                  if (message.reaction == 'star') {
-                                    _reactToMessage(message, '');
-                                  } else {
-                                    _reactToMessage(message, 'star');
-                                  }
-                                },
-                              ),
-                              divider(),
-                              actionRow(
-                                icon: message.isSaved
-                                    ? Icons.bookmark_rounded
-                                    : Icons.bookmark_border_rounded,
-                                label: message.isSaved
-                                    ? 'Unsave Message'
-                                    : 'Save Message',
-                                color:
-                                    message.isSaved ? AppTheme.primaryColor : null,
-                                onTap: () {
-                                  HapticFeedback.lightImpact();
-                                  Navigator.pop(dialogContext);
-                                  _toggleSaveMessage(message);
-                                },
-                              ),
-                              if (canEdit) ...[
-                                divider(),
-                                actionRow(
-                                  icon: Icons.edit_outlined,
-                                  label: 'Edit',
-                                  onTap: () {
-                                    HapticFeedback.lightImpact();
-                                    Navigator.pop(dialogContext);
-                                    _beginEditingMessage(message);
-                                  },
-                                ),
-                              ],
-                              if (canDelete) ...[
-                                divider(),
-                                actionRow(
-                                  icon: Icons.delete_outline_rounded,
-                                  label: 'Delete',
-                                  color: Colors.redAccent,
-                                  onTap: () {
-                                    HapticFeedback.lightImpact();
-                                    Navigator.pop(dialogContext);
-                                    _deleteMessage(message);
-                                  },
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+            MessageMenuItem(
+                icon: Icons.reply_rounded,
+                label: 'Reply',
+                onTap: () => _beginReply(message)),
+            MessageMenuItem(
+                icon: Icons.shortcut_rounded,
+                label: 'Forward',
+                onTap: () => _enterSelectionMode(message)),
+            MessageMenuItem(
+              icon: Icons.copy_rounded,
+              label: 'Copy',
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: message.content));
+                AppToast.show('Message copied');
+              },
             ),
-          ],
-        ),
-      );
-    },
-  );
-}
+            MessageMenuItem(
+                icon: Icons.share_rounded,
+                label: 'Share',
+                onTap: () => _shareMessage(message)),
+            MessageMenuItem(
+                icon: Icons.info_outline_rounded,
+                label: 'Info',
+                onTap: () => _showMessageInfo(message)),
+            MessageMenuItem(
+              icon: message.reaction == 'star'
+                  ? Icons.star_rounded
+                  : Icons.star_outline_rounded,
+              label: message.reaction == 'star' ? 'Unstar' : 'Star',
+              color: message.reaction == 'star' ? Colors.amber : null,
+              onTap: () =>
+                  _reactToMessage(message, message.reaction == 'star' ? '' : 'star'),
+            ),
+            MessageMenuItem(
+              icon: message.isSaved
+                  ? Icons.bookmark_rounded
+                  : Icons.bookmark_border_rounded,
+              label: message.isSaved ? 'Unsave Message' : 'Save Message',
+              color: message.isSaved ? AppTheme.primaryColor : null,
+              onTap: () => _toggleSaveMessage(message),
+            ),
+            if (canEdit)
+              MessageMenuItem(
+                  icon: Icons.edit_outlined,
+                  label: 'Edit',
+                  onTap: () => _beginEditingMessage(message)),
+            if (canDelete)
+              MessageMenuItem(
+                icon: Icons.delete_outline_rounded,
+                label: 'Delete',
+                color: Colors.redAccent,
+                onTap: () {
+                  _enterSelectionMode(message);
+                  _deleteSelectedMessages();
+                },
+              ),
+          ];
+
+    setState(() => _hiddenMsgId = message.id); // hide the original bubble
+    await MessageActionsOverlay.show(
+      context,
+      bubbleRect: rect,
+      bubble: _overlayBubble(message, isMine),
+      isMine: isMine,
+      canReact: messageId != null,
+      emojis: const ['👍', '❤️', '😂', '😮', '😢', '🙏', '👻'],
+      currentReaction: message.reaction == 'star' ? null : message.reaction,
+      items: items,
+      onReact: (e) => _reactToMessage(message, e),
+      onMoreReactions: () => _showMoreReactions(message),
+    );
+    if (mounted) setState(() => _hiddenMsgId = null);
+  }
 
   Future<void> _showMoreReactions(ChatMessage message) async {
     const emojis = [
@@ -2110,7 +2152,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       setState(() {
         _disappearType = newType;
         _messages.removeWhere(
-          (m) => isMessageExpired(
+              (m) => isMessageExpired(
             m,
             chatDisappearType: newType,
             keepReadSessionMessages: true,
@@ -2119,7 +2161,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       });
       await LocalChatStorage.instance.updateConversation(
         widget.conversation.id,
-        (current) => current.copyWith(disappearType: newType),
+            (current) => current.copyWith(disappearType: newType),
       );
       await LocalChatStorage.instance.cacheMessages(
         widget.conversation.id,
@@ -2404,9 +2446,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                   ),
                   trailing: isSelected
                       ? const Icon(
-                          Icons.check_circle_rounded,
-                          color: AppTheme.primaryColor,
-                        )
+                    Icons.check_circle_rounded,
+                    color: AppTheme.primaryColor,
+                  )
                       : null,
                   onTap: () {
                     Navigator.pop(sheetContext);
@@ -2422,7 +2464,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     );
   }
 
-  Future<int?> _showDeleteMessageBottomSheet({
+  Future<int?> _showDeleteMessagesBottomSheet({
+    required int count,
     required bool canDeleteForEveryone,
   }) async {
     return showModalBottomSheet<int>(
@@ -2440,12 +2483,19 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         final closeIconColor = isDark ? Colors.white : Colors.black87;
         final dividerColor = isDark ? const Color(0xFF38383A) : const Color(0xFFE5E5EA);
 
+        final titleText = 'Delete $count ${count == 1 ? 'message' : 'messages'}?';
+
         return Container(
           decoration: BoxDecoration(
             color: sheetBg,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          padding: EdgeInsets.fromLTRB(
+            20,
+            16,
+            20,
+            math.max(20.0, MediaQuery.paddingOf(ctx).bottom + 16.0),
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -2454,7 +2504,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                 children: [
                   Center(
                     child: Text(
-                      'Delete message?',
+                      titleText,
                       style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w600,
@@ -2495,15 +2545,21 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                     if (canDeleteForEveryone) ...[
                       InkWell(
                         onTap: () => Navigator.pop(ctx, 1),
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(16),
+                        ),
                         child: Container(
                           width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 16,
+                            horizontal: 20,
+                          ),
                           child: Text(
-                            'Delete for everyone',
+                            'Delete for Everyone',
+                            textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 17,
-                              fontWeight: FontWeight.w400,
+                              fontWeight: FontWeight.w600,
                               color: redColor,
                             ),
                           ),
@@ -2513,19 +2569,24 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                     ],
                     InkWell(
                       onTap: () => Navigator.pop(ctx, 2),
-                      borderRadius: BorderRadius.circular(canDeleteForEveryone ? 0 : 16)
-                          .copyWith(
-                            bottomLeft: const Radius.circular(16),
-                            bottomRight: const Radius.circular(16),
-                          ),
+                      borderRadius: BorderRadius.circular(
+                        canDeleteForEveryone ? 0 : 16,
+                      ).copyWith(
+                        bottomLeft: const Radius.circular(16),
+                        bottomRight: const Radius.circular(16),
+                      ),
                       child: Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 16,
+                          horizontal: 20,
+                        ),
                         child: Text(
-                          'Delete for me',
+                          'Delete for Me',
+                          textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 17,
-                            fontWeight: FontWeight.w400,
+                            fontWeight: FontWeight.w600,
                             color: redColor,
                           ),
                         ),
@@ -2541,72 +2602,102 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     );
   }
 
-  Future<void> _deleteMessage(ChatMessage message) async {
-    final messageId = int.tryParse(message.id);
-    if (messageId == null) return;
+  Future<void> _deleteSelectedMessages() async {
+    final selectedMsgs = _messages
+        .where((m) => _selectedMessageIds.contains(m.id))
+        .toList();
+    if (selectedMsgs.isEmpty) return;
 
-    final isMine = message.senderId == 'user';
-    final minutesSinceSent = DateTime.now().difference(message.timestamp).inMinutes;
-    final canDeleteForEveryone = isMine && minutesSinceSent <= 60 && !message.isDeleted;
+    final now = DateTime.now();
+    final cutoff = now.subtract(const Duration(minutes: 15));
+    final canDeleteForEveryone = selectedMsgs.every((m) {
+      final messageId = int.tryParse(m.id);
+      final isMine = m.senderId == 'user';
+      final msgTime = m.timestamp.toLocal();
+      final isRecent =
+          msgTime.isAfter(cutoff) || now.difference(msgTime).inMinutes.abs() <= 15;
+      final isSeen = m.isRead ||
+          m.status.toLowerCase().trim() == 'read' ||
+          m.messageStatus == MessageStatus.read;
+      return messageId != null && isMine && isRecent && !isSeen && !m.isDeleted;
+    });
 
-    final deleteType = await _showDeleteMessageBottomSheet(
+    final deleteType = await _showDeleteMessagesBottomSheet(
+      count: selectedMsgs.length,
       canDeleteForEveryone: canDeleteForEveryone,
     );
 
-    if (deleteType == null || !mounted) return;
+    if (deleteType == null || !mounted) {
+      if (mounted) _exitSelectionMode();
+      return;
+    }
+
+    final deviceId = widget.conversation.id;
 
     if (deleteType == 1) {
-      // Delete for everyone
-      final deleted = await ServerApiService.instance.deleteMessageREST(
-        messageId,
-        type: 1,
-      );
-      if (!deleted) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Message could not be deleted.')),
+      // Delete for Everyone (type = 1)
+      for (final msg in selectedMsgs) {
+        final messageId = int.tryParse(msg.id);
+        if (messageId == null) continue;
+
+        final deleted = await ServerApiService.instance.deleteMessageREST(
+          messageId,
+          type: 1,
+        );
+        if (deleted) {
+          SocketChatService.instance.deleteMessage(messageId: messageId, type: 1);
+          final updated = msg.copyWith(
+            content: 'This message was deleted',
+            isDeleted: true,
+          );
+          if (mounted) {
+            setState(() {
+              final index = _messages.indexWhere((item) => item.id == msg.id);
+              if (index >= 0) _messages[index] = updated;
+              if (_editingMessage?.id == msg.id) _editingMessage = null;
+            });
+          }
+          await LocalChatStorage.instance.saveMessage(
+            deviceId: deviceId,
+            peerName: _chatName,
+            message: updated,
+            markUnread: false,
+            peerUserId: widget.conversation.peerUserId,
           );
         }
-        return;
       }
-      SocketChatService.instance.deleteMessage(messageId: messageId, type: 1);
-      final updated = message.copyWith(
-        content: 'This message was deleted',
-        isDeleted: true,
-      );
-      if (mounted) {
-        setState(() {
-          final index = _messages.indexWhere((item) => item.id == message.id);
-          if (index >= 0) _messages[index] = updated;
-          if (_editingMessage?.id == message.id) _editingMessage = null;
-        });
-      }
-      await LocalChatStorage.instance.saveMessage(
-        deviceId: widget.conversation.id,
-        peerName: _chatName,
-        message: updated,
-        markUnread: false,
-        peerUserId: widget.conversation.peerUserId,
-      );
     } else if (deleteType == 2) {
-      // Delete for me
-      unawaited(
-        ServerApiService.instance.deleteMessageREST(messageId, type: 2),
-      );
-      SocketChatService.instance.deleteMessage(messageId: messageId, type: 2);
-
+      // Delete for Me (type = 2)
+      for (final msg in selectedMsgs) {
+        final messageId = int.tryParse(msg.id);
+        if (messageId != null) {
+          unawaited(
+            ServerApiService.instance.deleteMessageREST(messageId, type: 2),
+          );
+          SocketChatService.instance.deleteMessage(messageId: messageId, type: 2);
+          await LocalChatStorage.instance.deleteLocalMessage(
+            deviceId,
+            msg.id,
+          );
+        }
+      }
       if (mounted) {
         setState(() {
-          _messages.removeWhere((item) => item.id == message.id);
-          if (_editingMessage?.id == message.id) _editingMessage = null;
+          _messages.removeWhere((item) => _selectedMessageIds.contains(item.id));
+          if (_editingMessage != null &&
+              _selectedMessageIds.contains(_editingMessage!.id)) {
+            _editingMessage = null;
+          }
         });
       }
-
-      await LocalChatStorage.instance.deleteLocalMessage(
-        widget.conversation.id,
-        message.id,
-      );
     }
+
+    if (mounted) _exitSelectionMode();
+  }
+
+  Future<void> _deleteMessage(ChatMessage message) async {
+    _enterSelectionMode(message);
+    await _deleteSelectedMessages();
   }
 
   void _beginEditingMessage(ChatMessage message) {
@@ -2638,7 +2729,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       _cancelEditingMessage();
       return;
     }
-    final text = normalizeEmojiText(rawText);
+    final text = normalizeChatMessageText(rawText);
     if (text == message.content) {
       _cancelEditingMessage();
       return;
@@ -2646,7 +2737,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
     setState(() => _isSending = true);
     final encryptedText = E2eCryptoService.instance.encryptText(
-      text,
+      message.isForwarded ? addFwdMarker(text) : text,
       'chat_key_${widget.conversation.id}',
     );
     final saved = await ServerApiService.instance.editMessageREST(
@@ -2678,98 +2769,158 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   Future<void> _sendMessage() async {
-    if (_isSending) return;
     if (_editingMessage != null) {
-      await _saveEditedMessage();
+      if (!_isSending) await _saveEditedMessage();
       return;
     }
     final rawText = _inputController.text.trim();
-    if (rawText.isEmpty) return;
-    final text = normalizeEmojiText(rawText);
+    if (rawText.isEmpty) {
+      _inputController.clear();
+      return;
+    }
+    final text = normalizeChatMessageText(rawText);
 
-    _isSending = true;
+    // Capture everything NOW; the input is cleared synchronously so rapid
+    // taps can never double-send.
+    final replyToId =
+        _replyingMessage == null ? null : int.tryParse(_replyingMessage!.id);
 
-    final localMsgId = 'local_${DateTime.now().millisecondsSinceEpoch}';
-    final optimisticMsg = ChatMessage(
-      id: localMsgId,
+    var ts = DateTime.now();
+    if (_messages.isNotEmpty) {
+      final latest = _messages
+          .map((m) => m.timestamp)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      if (!ts.isAfter(latest)) ts = latest.add(const Duration(milliseconds: 10));
+    }
+
+    final localId = 'local_${DateTime.now().microsecondsSinceEpoch}_${_textSeq++}';
+    final optimistic = ChatMessage(
+      id: localId,
       senderId: 'user',
       content: text,
-      timestamp: DateTime.now(),
+      timestamp: ts,
       type: 'text',
+      status: 'sending', // bubble shows the clock icon, like WhatsApp
       isRead: false,
-      replyToId: _replyingMessage == null
-          ? null
-          : int.tryParse(_replyingMessage!.id),
+      replyToId: replyToId,
     );
-    final replyToId = _replyingMessage == null
-        ? null
-        : int.tryParse(_replyingMessage!.id);
 
     _inputController.clear();
     unawaited(LocalChatStorage.instance.clearDraft(widget.conversation.id));
     setState(() {
-      _messages = [..._messages, optimisticMsg];
+      _messages = [..._messages, optimistic];
+      _replyingMessage = null; // clear the reply bar immediately
     });
     _scrollToBottom();
 
-    // Reset typing indicator
     final numericId = int.tryParse(widget.conversation.id);
     if (numericId != null) {
-      SocketChatService.instance.sendTyping(
-        chatHeadId: numericId,
-        isTyping: false,
-      );
+      SocketChatService.instance.sendTyping(chatHeadId: numericId, isTyping: false);
     }
 
-    try {
-      final sentMsg = await ServerChatManager.instance.sendMessage(
+    // Strictly one-by-one, in the order the user pressed send.
+    _textQueueTail = _textQueueTail
+        .then((_) => _deliverText(localId: localId, text: text, replyToId: replyToId))
+        .catchError((e) => debugPrint('[TEXT QUEUE] $e'));
+  }
+
+  Future<void> _deliverText({
+    required String localId,
+    required String text,
+    int? replyToId,
+  }) async {
+    ChatMessage? sent;
+    for (var attempt = 0; attempt < 3 && sent == null; attempt++) {
+      if (attempt > 0) await Future.delayed(Duration(milliseconds: 1500 * attempt));
+      sent = await ServerChatManager.instance.sendMessage(
         chatId: widget.conversation.id,
         peerName: _chatName,
         text: text,
         peerUserId: widget.conversation.peerUserId,
         replyToId: replyToId,
       );
-      if (sentMsg == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Message could not be sent. Please try again.'),
-            ),
-          );
-          setState(() {
-            _messages = _messages.where((m) => m.id != localMsgId).toList();
-            _inputController.text = text;
-          });
-        }
-        return;
-      }
-
-      if (mounted) {
-        setState(() {
-          final idx = _messages.indexWhere(
-            (m) =>
-                m.id == localMsgId ||
-                (m.id.startsWith('local_') && m.content.trim() == text.trim()),
-          );
-          if (idx >= 0) {
-            _messages[idx] = sentMsg;
-          } else {
-            final existingIdx = _messages.indexWhere((m) => m.id == sentMsg.id);
-            if (existingIdx >= 0) {
-              _messages[existingIdx] = sentMsg;
-            } else {
-              _messages.add(sentMsg);
-            }
-          }
-          _messages.sort(_compareChatMessages);
-          _replyingMessage = null;
-        });
-      }
-      await _showCachedMessages();
-      _scrollToBottom();
-    } finally {
-      if (mounted) setState(() => _isSending = false);
     }
+
+    if (!mounted) return;
+
+    if (sent == null) {
+      _setMessageStatus(localId, 'failed');
+      AppToast.show('Message not sent. Check your connection.', isError: true);
+      return;
+    }
+
+    final real = sent;
+    setState(() {
+      _pendingLocalToRealIdMap[localId] = real.id;
+      _matchedLocalIds.add(localId);
+      // Only remove THIS message's local row (never other pending ones with
+      // the same text, or "hi", "hi" would eat each other).
+      _messages.removeWhere((m) =>
+          m.id == localId ||
+          m.id == real.id ||
+          _pendingLocalToRealIdMap[m.id] == real.id);
+      _messages.add(real);
+      _adjustRemainingLocalMessageTimestamps(real.timestamp);
+      _messages.sort(_compareChatMessages);
+    });
+  }
+
+  void _showFailedActions(ChatMessage m) {
+    if (m.mediaUrl != null && m.mediaUrl!.isNotEmpty) return;
+    HapticFeedback.selectionClick();
+    showCupertinoModalPopup<void>(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        title: const Text('Message not sent'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _retryText(m.id);
+            },
+            child: const Text('Retry'),
+          ),
+          CupertinoActionSheetAction(
+            isDestructiveAction: true,
+            onPressed: () {
+              Navigator.pop(ctx);
+              _discardFailedText(m.id);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
+  }
+
+  void _retryText(String id) {
+    final i = _messages.indexWhere((m) => m.id == id);
+    if (i < 0 || _messages[i].status.toLowerCase() != 'failed') return;
+    final m = _messages[i];
+    _setMessageStatus(id, 'sending'); // clock icon again
+    _textQueueTail = _textQueueTail
+        .then((_) => _deliverText(
+              localId: id,
+              text: m.content,
+              replyToId: m.replyToId,
+            ))
+        .catchError((e) => debugPrint('[TEXT QUEUE] $e'));
+  }
+
+  void _discardFailedText(String id) {
+    setState(() => _messages.removeWhere((m) => m.id == id));
+  }
+
+  Future<File> _stageForUpload(File src) async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory('${docs.path}${Platform.pathSeparator}chat_attachments');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    final safe = src.path.split(RegExp(r'[/\\]')).last.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    return src.copy('${dir.path}${Platform.pathSeparator}out_${DateTime.now().microsecondsSinceEpoch}_$safe');
   }
 
   Future<void> _uploadAndSendAttachment({
@@ -2777,121 +2928,145 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     required String fileName,
     required String fileType,
     String? caption,
+    bool isHd = false,
   }) async {
-    if (mounted) setState(() => _isSending = true);
     try {
+      var sendFile = file;
+      var sendFileName = fileName;
+
+      final staged = await _stageForUpload(sendFile);
+      sendFile = staged;
+
+      final isMedia = fileType.startsWith('image/') || fileType.startsWith('video/');
+      if (isHd && isMedia && !sendFileName.startsWith('hd_')) {
+        sendFileName = 'hd_$sendFileName';
+      }
+
       final secretKey = 'chat_key_${widget.conversation.id}';
-
-      // 1. Encrypt file bytes
-      final rawBytes = await file.readAsBytes();
-      final encryptedBytes = E2eCryptoService.instance.encryptFileBytes(
-        rawBytes,
-        secretKey,
-      );
-
-      final tempDir = await getTemporaryDirectory();
-      final tempEncFile = File(
-        '${tempDir.path}${Platform.pathSeparator}enc_upload_${DateTime.now().millisecondsSinceEpoch}.tmp',
-      );
-      await tempEncFile.writeAsBytes(encryptedBytes, flush: true);
+      final localMsgId =
+          'local_upload_${DateTime.now().millisecondsSinceEpoch}_${math.Random().nextInt(9999)}';
 
       final messageText = (caption != null && caption.trim().isNotEmpty)
           ? caption.trim()
           : (fileType.startsWith('image/')
-                ? 'Photo'
-                : fileType.startsWith('video/')
-                ? 'Video'
-                : fileType.startsWith('audio/')
-                ? 'Voice message'
-                : fileName);
+          ? 'Photo'
+          : fileType.startsWith('video/')
+          ? 'Video'
+          : fileType.startsWith('audio/')
+          ? 'Voice message'
+          : sendFileName);
 
-      // 2. Send file directly via POST /api/chats/:chat_id/messages (multipart form-data)
-      String? uploadedPath;
-      try {
-        final serverMessage = await ServerApiService.instance.sendMessageREST(
-          chatId: int.tryParse(widget.conversation.id) ?? 0,
-          message: E2eCryptoService.instance.encryptText(
-            messageText,
-            secretKey,
-          ),
-          file: tempEncFile,
-          fileName: fileName,
-          fileType: fileType,
-          replyToId: _replyingMessage == null
-              ? null
-              : int.tryParse(_replyingMessage!.id),
-        );
-        uploadedPath = serverMessage.filePath;
-      } catch (e) {
-        debugPrint('[DIRECT FILE SEND FALLBACK] $e');
-        // Fallback to upload then send
-        uploadedPath = await ServerApiService.instance.uploadFile(
-          tempEncFile,
-          filename: fileName,
-        );
-        if (uploadedPath != null && uploadedPath.isNotEmpty) {
-          final sentMsg = await ServerChatManager.instance.sendMessage(
-            chatId: widget.conversation.id,
-            peerName: _chatName,
-            text: messageText,
-            filePath: uploadedPath,
-            fileName: fileName,
-            fileType: fileType,
-            peerUserId: widget.conversation.peerUserId,
-            replyToId: _replyingMessage == null
-                ? null
-                : int.tryParse(_replyingMessage!.id),
-          );
-          if (sentMsg == null) {
-            throw Exception('The file message could not be sent.');
-          }
+      final replyId = _replyingMessage == null
+          ? null
+          : int.tryParse(_replyingMessage!.id);
+
+      final now = DateTime.now();
+      var localTimestamp = (_lastAttachmentTimestamp != null &&
+          !_lastAttachmentTimestamp!.isBefore(now))
+          ? _lastAttachmentTimestamp!.add(const Duration(milliseconds: 10))
+          : now;
+      if (_messages.isNotEmpty) {
+        final latestTs = _messages
+            .map((m) => m.timestamp)
+            .reduce((a, b) => a.isAfter(b) ? a : b);
+        if (!localTimestamp.isAfter(latestTs)) {
+          localTimestamp = latestTs.add(const Duration(milliseconds: 10));
         }
-      } finally {
-        try {
-          await tempEncFile.delete();
-        } catch (_) {}
       }
+      _lastAttachmentTimestamp = localTimestamp;
 
-      if (uploadedPath == null || uploadedPath.isEmpty) {
-        throw Exception('The file could not be sent. Please try again.');
-      }
-
-      // 3. Save unencrypted original file copy in local chat_attachments
-      final documents = await getApplicationDocumentsDirectory();
-      final attachmentDirectory = Directory(
-        '${documents.path}${Platform.pathSeparator}chat_attachments',
+      // Create optimistic pending message immediately
+      final localMsg = ChatMessage(
+        id: localMsgId,
+        senderId: 'user',
+        content: messageText,
+        timestamp: localTimestamp,
+        type: fileType,
+        mediaUrl: sendFile.path,
+        fileName: sendFileName,
+        status: 'sending',
+        isRead: false,
+        isDelivered: false,
+        replyToId: replyId,
       );
-      await attachmentDirectory.create(recursive: true);
-      final mediaKey = uploadedPath
-          .split('/')
-          .last
-          .split('\\')
-          .last
-          .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-      final safeName = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-      final localCopyPath =
-          '${attachmentDirectory.path}${Platform.pathSeparator}${mediaKey}_$safeName';
-      final localCopy = File(localCopyPath);
-      await file.copy(localCopy.path);
 
-      // Update AttachmentCacheService so sender's device maps mediaUrl to local path instantly
-      AttachmentCacheService.instance.updateCache(uploadedPath, localCopy.path);
+      // Save local pending message immediately
+      await LocalChatStorage.instance.saveMessage(
+        deviceId: widget.conversation.id,
+        peerName: _chatName,
+        message: localMsg,
+        peerUserId: widget.conversation.peerUserId,
+      );
 
-      if (mounted) setState(() => _replyingMessage = null);
-      await _showCachedMessages();
-    } catch (error) {
-      debugPrint('[ATTACHMENT SEND ERROR] $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppToast.userFriendlyMessage('Unable to send attachment: $error'),
-            ),
-          ),
+        setState(() {
+          _messages.add(localMsg);
+          _messages.sort(_compareChatMessages);
+          _replyingMessage = null;
+          _isSending = false;
+        });
+        _scrollToBottom();
+      }
+
+      // Ensure system picker active state is reset
+      AppPreferences.isPickerActive = false;
+
+      OutgoingAttachmentManager.instance.enqueue(OutgoingJob(
+        localId: localMsgId,
+        chatId: widget.conversation.id,
+        peerName: _chatName,
+        peerUserId: widget.conversation.peerUserId,
+        file: sendFile,
+        fileName: sendFileName,
+        fileType: fileType,
+        messageText: messageText,
+        secretKey: secretKey,
+        localTimestamp: localTimestamp,
+        replyToId: replyId,
+        isHd: isHd,
+      ));
+    } catch (error) {
+      debugPrint('[ATTACHMENT DISPATCH ERROR] $error');
+      if (mounted) {
+        AppToast.show(
+          AppToast.userFriendlyMessage('Unable to queue attachment: $error'),
+          isError: true,
         );
       }
-    } finally {
-      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  void _setMessageStatus(String id, String status) {
+    if (!mounted) return;
+    final i = _messages.indexWhere((m) => m.id == id);
+    if (i < 0) return;
+    setState(() => _messages[i] = _messages[i].copyWith(status: status));
+  }
+
+  void _recoverOrphanedUploads() {
+    final mgr = OutgoingAttachmentManager.instance;
+    // finished in the background while this page was closed -> drop the stale local row
+    _messages.removeWhere((m) =>
+        m.id.startsWith('local_upload_') && mgr.realIdFor(m.id) != null);
+
+    for (final m in List<ChatMessage>.of(_messages)) {
+      if (!m.id.startsWith('local_upload_')) continue;
+      if (mgr.isActive(m.id)) continue;          // still uploading: leave it alone
+      final path = m.mediaUrl;
+      mgr.adopt(OutgoingJob(
+        localId: m.id,
+        chatId: widget.conversation.id,
+        peerName: _chatName,
+        peerUserId: widget.conversation.peerUserId,
+        file: File(path ?? ''),
+        fileName: m.fileName ?? (path ?? '').split(RegExp(r'[/\\]')).last,
+        fileType: m.type,
+        messageText: m.content,
+        secretKey: 'chat_key_${widget.conversation.id}',
+        localTimestamp: m.timestamp,
+        replyToId: m.replyToId,
+      ));
+      _setMessageStatus(m.id, 'failed');
     }
   }
 
@@ -2915,31 +3090,27 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     }
   }
 
-  Future<void> _sendGif(GifItem gif) async {
-    if (_isSending) return;
-    setState(() => _isSending = true);
+  void _sendGif(GifItem gif) {
+    _gifQueueTail = _gifQueueTail
+        .then((_) => _sendGifNow(gif))
+        .catchError((e) => debugPrint('[GIF QUEUE] $e'));
+  }
 
+  Future<void> _sendGifNow(GifItem gif) async {
     try {
       final docsDir = await getApplicationDocumentsDirectory();
-      final attachmentDir = Directory('${docsDir.path}${Platform.pathSeparator}chat_attachments');
-      if (!await attachmentDir.exists()) {
-        await attachmentDir.create(recursive: true);
-      }
-      final safeGifId = gif.id.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-      final gifFileName = 'gif_${safeGifId}_${DateTime.now().millisecondsSinceEpoch}.gif';
-      final localGifFile = File('${attachmentDir.path}${Platform.pathSeparator}$gifFileName');
+      final dir = Directory('${docsDir.path}${Platform.pathSeparator}chat_attachments');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final safeId = gif.id.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      final name = 'gif_${safeId}_${DateTime.now().microsecondsSinceEpoch}.gif';
+      final file = File('${dir.path}${Platform.pathSeparator}$name');
 
-      if (!await localGifFile.exists()) {
-        final res = await http.get(Uri.parse(gif.gifUrl)).timeout(const Duration(seconds: 8));
-        if (res.statusCode == 200) {
-          await localGifFile.writeAsBytes(res.bodyBytes);
-        }
-      }
-
-      if (await localGifFile.exists()) {
+      final res = await http.get(Uri.parse(gif.gifUrl)).timeout(const Duration(seconds: 8));
+      if (res.statusCode == 200) {
+        await file.writeAsBytes(res.bodyBytes);
         await _uploadAndSendAttachment(
-          file: localGifFile,
-          fileName: gifFileName,
+          file: file,
+          fileName: name,
           fileType: 'image/gif',
           caption: 'GIF',
         );
@@ -2947,11 +3118,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       }
     } catch (e) {
       debugPrint('[SEND GIF FILE ERROR] $e');
-    } finally {
-      if (mounted) setState(() => _isSending = false);
     }
 
-    final sentMsg = await ServerChatManager.instance.sendMessage(
+    // fallback: send the link
+    final sent = await ServerChatManager.instance.sendMessage(
       chatId: widget.conversation.id,
       peerName: _chatName,
       text: gif.gifUrl,
@@ -2959,9 +3129,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       filePath: gif.gifUrl,
       peerUserId: widget.conversation.peerUserId,
     );
-    if (sentMsg != null && mounted) {
+    if (sent != null && mounted) {
       setState(() {
-        _messages.add(sentMsg);
+        _messages.add(sent);
         _messages.sort(_compareChatMessages);
       });
       _scrollToBottom();
@@ -3051,6 +3221,17 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     _scrollToBottom();
   }
 
+  double get _topInset {
+    final safeTop = MediaQuery.paddingOf(context).top;
+    const headerHeight = 56.0;
+    final searchHeight = _isSearchingMessages ? 56.0 : 0.0;
+    return safeTop + headerHeight + searchHeight + 12.0;
+  }
+
+  double get _bottomInset {
+    return (_composerCtl.bottomSpace.value ?? _composerHeight.value) + 8.0;
+  }
+
   String? _highlightedMessageId;
   Timer? _highlightTimer;
 
@@ -3067,7 +3248,19 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   void _scrollToMessage(int replyToId) =>
       _scrollToMessageId(replyToId.toString());
 
-  void _scrollToMessageId(String targetId) {
+  Future<void> _scrollToMessageId(String targetId) async {
+    // 1. Ensure message is loaded in memory
+    if (!_messages.any((m) => m.id == targetId)) {
+      AppToast.show('Finding message…');
+      int pagesLoaded = 0;
+      while (!_messages.any((m) => m.id == targetId) &&
+          _hasMorePages &&
+          pagesLoaded < 10) {
+        pagesLoaded++;
+        await _loadOlderMessages();
+      }
+    }
+
     final index = _messages.indexWhere((m) => m.id == targetId);
     if (index < 0) {
       AppToast.show('Original message not found in history.');
@@ -3075,24 +3268,77 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     }
     if (!_scrollController.hasClients) return;
 
+    // 2. Attach target key
+    setState(() {
+      _scrollTargetId = targetId;
+    });
+
+    // 3. Coarse Jump
     final reversedIndex = (_messages.length - 1) - index;
     final viewportHeight = _scrollController.position.viewportDimension;
-    // Calculate offset that places the target message in the center of the screen
-    final centeredOffset = (reversedIndex * 78.0) - (viewportHeight / 2) + 39.0;
+    final centeredOffset =
+        (reversedIndex * 78.0) - (viewportHeight / 2) + 39.0;
     final targetOffset = centeredOffset.clamp(
       0.0,
       _scrollController.position.maxScrollExtent,
     );
+    _scrollController.jumpTo(targetOffset);
 
-    _scrollController.animateTo(
-      targetOffset,
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeOutCubic,
-    );
+    // 4. Retry until built & context exists
+    int retry = 0;
+    while (_scrollTargetKey.currentContext == null && retry < 20) {
+      retry++;
+      await WidgetsBinding.instance.endOfFrame;
+      if (_scrollTargetKey.currentContext != null) break;
+      final currentOffset = _scrollController.offset;
+      final nudge = (currentOffset + (targetOffset - currentOffset) * 0.5)
+          .clamp(0.0, _scrollController.position.maxScrollExtent);
+      _scrollController.jumpTo(nudge);
+      await Future.delayed(const Duration(milliseconds: 16));
+    }
 
+    // 5. Animate to exact position using Scrollable.ensureVisible
+    if (_scrollTargetKey.currentContext != null) {
+      final box =
+      _scrollTargetKey.currentContext!.findRenderObject() as RenderBox?;
+      final H = box?.size.height ?? 60.0;
+      final V = _scrollController.position.viewportDimension;
+      final T = _topInset;
+      final B = _bottomInset;
+      final visibleArea = V - T - B;
+
+      double alignment;
+      if (H > visibleArea) {
+        alignment = (V - T - H) / (V - H);
+      } else {
+        alignment = (V - T + B - H) / 2 / (V - H);
+      }
+      alignment = alignment.clamp(0.0, 1.0);
+
+      await Scrollable.ensureVisible(
+        _scrollTargetKey.currentContext!,
+        alignment: alignment,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+      );
+
+      // 6. Correct post-animation for images or layout shifts
+      await Future.delayed(const Duration(milliseconds: 250));
+      if (mounted && _scrollTargetKey.currentContext != null) {
+        await Scrollable.ensureVisible(
+          _scrollTargetKey.currentContext!,
+          alignment: alignment,
+          duration: const Duration(milliseconds: 100),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    }
+
+    // 7. Highlight & store pending ID for keyboard metrics change
     _highlightTimer?.cancel();
     setState(() {
       _highlightedMessageId = targetId;
+      _pendingScrollTargetId = targetId;
     });
     _highlightTimer = Timer(const Duration(milliseconds: 1600), () {
       if (mounted) {
@@ -3105,7 +3351,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
   bool _isSearchingMessages = false;
   final TextEditingController _messageSearchController =
-      TextEditingController();
+  TextEditingController();
   final FocusNode _messageSearchFocusNode = FocusNode();
   List<ChatMessage> _searchResults = [];
   int _currentSearchIndex = -1;
@@ -3126,7 +3372,14 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     });
   }
 
-  Future<void> _onSearchQueryChanged(String query) async {
+  void _onSearchQueryChanged(String query) {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+      _performSearch(query);
+    });
+  }
+
+  Future<void> _performSearch(String query) async {
     final generation = ++_searchGeneration;
     final q = query.trim().toLowerCase();
     if (q.isEmpty) {
@@ -3137,8 +3390,6 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       return;
     }
 
-    // Search the cached conversation as well as the current server page. A
-    // chat may have older messages stored locally that are not mounted yet.
     final cached = await _loadPlainCachedMessages();
     if (!mounted || generation != _searchGeneration) return;
 
@@ -3151,7 +3402,6 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final results = allMessages.where((m) {
       if (m.isDeleted) return false;
 
-      // EXCLUDE IMAGES / MEDIA ATTACHMENTS - Search ONLY text messages!
       final type = m.type.toLowerCase();
       if (type.startsWith('image') ||
           type.startsWith('video') ||
@@ -3170,6 +3420,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
       return text.toLowerCase().contains(q);
     }).toList();
+
+    // Reverse results so index 0 is the newest match (WhatsApp style)
+    results.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     setState(() {
       _searchResults = results;
@@ -3302,7 +3555,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                         size: 18,
                         color: _searchResults.isEmpty
                             ? AppTheme.secondaryText(isDark)
-                                  .withValues(alpha: 0.4)
+                            .withValues(alpha: 0.4)
                             : AppTheme.primaryColor,
                       ),
                     ),
@@ -3318,7 +3571,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                         size: 18,
                         color: _searchResults.isEmpty
                             ? AppTheme.secondaryText(isDark)
-                                  .withValues(alpha: 0.4)
+                            .withValues(alpha: 0.4)
                             : AppTheme.primaryColor,
                       ),
                     ),
@@ -3374,17 +3627,26 @@ class _ChatDetailPageState extends State<ChatDetailPage>
 
     // 3. Cache updated active messages to local storage and update conversation unread count
     try {
+      final mgr = OutgoingAttachmentManager.instance;
+      final stored = await LocalChatStorage.instance
+          .loadMessages(widget.conversation.id, keepReadSessionMessages: true);
+      final byId = {for (final m in stored) m.id: m};
+      for (final m in _messages) {
+        if (m.id.startsWith('local_upload_') && mgr.realIdFor(m.id) != null) continue;
+        byId[m.id] = m;
+      }
+      final merged = byId.values.toList()..sort((a, b) => a.timestamp.compareTo(b.timestamp));
       await LocalChatStorage.instance.cacheMessages(
         widget.conversation.id,
-        _messages,
+        merged,
       );
       await LocalChatStorage.instance.updateConversation(
         widget.conversation.id,
-        (conv) => conv.copyWith(
+            (conv) => conv.copyWith(
           unreadCount: 0,
-          messages: _messages,
-          lastMessage: _messages.isNotEmpty
-              ? _messages.last.previewText
+          messages: merged,
+          lastMessage: merged.isNotEmpty
+              ? merged.last.previewText
               : 'No messages yet',
         ),
       );
@@ -3402,8 +3664,56 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (_pendingScrollTargetId != null) {
+      _metricsDebounceTimer?.cancel();
+      _metricsDebounceTimer = Timer(const Duration(milliseconds: 100), () {
+        if (mounted && _pendingScrollTargetId != null) {
+          _recenterPendingScrollTarget();
+        }
+      });
+    }
+  }
+
+  Future<void> _recenterPendingScrollTarget() async {
+    final targetId = _pendingScrollTargetId;
+    if (targetId == null) return;
+    if (_scrollTargetKey.currentContext != null) {
+      final box = _scrollTargetKey.currentContext!.findRenderObject() as RenderBox?;
+      if (box != null && box.hasSize) {
+        final H = box.size.height;
+        final V = _scrollController.position.viewportDimension;
+        final T = _topInset;
+        final B = _bottomInset;
+        final visibleArea = V - T - B;
+
+        double alignment;
+        if (H > visibleArea) {
+          alignment = (V - T - H) / (V - H);
+        } else {
+          alignment = (V - T + B - H) / 2 / (V - H);
+        }
+        alignment = alignment.clamp(0.0, 1.0);
+
+        await Scrollable.ensureVisible(
+          _scrollTargetKey.currentContext!,
+          alignment: alignment,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    }
+    _pendingScrollTargetId = null;
+  }
+
+  @override
   void dispose() {
+    ChatAudioPlayback.instance.stop();
     WidgetsBinding.instance.removeObserver(this);
+    _searchDebounceTimer?.cancel();
+    _metricsDebounceTimer?.cancel();
+    _composerHeight.dispose();
     _inputController.removeListener(_onInputTextChanged);
     LocalChatStorage.instance.saveDraft(
       widget.conversation.id,
@@ -3416,6 +3726,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     if (ServerChatManager.instance.activeChatId == widget.conversation.id) {
       ServerChatManager.instance.activeChatId = null;
     }
+    _outSub?.cancel();
     _messageSubscription?.cancel();
     _typingSubscription?.cancel();
     _presenceSubscription?.cancel();
@@ -3430,6 +3741,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     _scrollController.dispose();
     _isPeerOnline.dispose();
     _isPeerTyping.dispose();
+    _mediaCtl.dispose();
     super.dispose();
   }
 
@@ -3438,17 +3750,26 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    _mediaCtl.chatName = _chatName;
+    _mediaCtl.attach(_messages);
+
     return PopScope(
+      canPop: !_composerCtl.isPanelOpen.value,
       onPopInvokedWithResult: (didPop, result) {
-        if (didPop) {
-          FocusManager.instance.primaryFocus?.unfocus();
-          SystemChannels.textInput.invokeMethod('TextInput.hide');
-          _purgeSeenMessagesOnExit();
+        if (!didPop) {
+          _composerCtl.closePanels();
+          return;
         }
+        FocusManager.instance.primaryFocus?.unfocus();
+        SystemChannels.textInput.invokeMethod('TextInput.hide');
+        _purgeSeenMessagesOnExit();
       },
 
-      child: ShakePanicWrapper(
-        child: Scaffold(
+      child: ChatMediaScope(
+        controller: _mediaCtl,
+        child: ShakePanicWrapper(
+          child: Scaffold(
+          resizeToAvoidBottomInset: false,
           backgroundColor: AppTheme.chatCanvas(isDark),
           body: ValueListenableBuilder<String>(
             valueListenable: AppPreferences.chatWallpaperNotifier,
@@ -3460,156 +3781,180 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                     valueListenable: LocalChatStorage.instance.conversationsNotifier,
                     builder: (context, conversations, _) {
                       final liveConv = conversations.cast<ChatConversation?>().firstWhere(
-                        (c) => c?.id == widget.conversation.id,
+                            (c) => c?.id == widget.conversation.id,
                         orElse: () => null,
                       );
                       return Stack(
                         children: [
-                      // Background Wallpaper Layer
-                      Positioned.fill(
-                        child: ChatWallpaperWidget(
-                          chatId: widget.conversation.id,
-                          isDark: isDark,
-                          backgroundUrl: widget.conversation.backgroundUrl,
-                        ),
-                      ),
-                      // Messages List (paints full screen behind header and composer)
-                      Positioned.fill(
-                        child: ValueListenableBuilder<bool>(
-                          valueListenable: _isPeerTyping,
-                          builder: (context, isTyping, _) {
-                            return ChatMessageList(
-                              messages: _messages,
-                              isLoadingMessages: _isLoadingMessages,
-                              isLoadingMore: _isLoadingMore,
-                              isPeerTyping: isTyping,
-                              showJumpToLatest: _showJumpToLatest,
-                              newMessagesWhileAway: _newMessagesWhileAway,
-                              historyError: _historyError,
-                              scrollController: _scrollController,
+                          // Background Wallpaper Layer
+                          Positioned.fill(
+                            child: ChatWallpaperWidget(
+                              chatId: widget.conversation.id,
+                              isDark: isDark,
+                              backgroundUrl: widget.conversation.backgroundUrl,
+                            ),
+                          ),
+                          // Messages List (paints full screen behind header and composer)
+                          Positioned.fill(
+                            child: ValueListenableBuilder<bool>(
+                              valueListenable: _isPeerTyping,
+                              builder: (context, isTyping, _) {
+                                return ListenableBuilder(
+                                  listenable: Listenable.merge([_composerHeight, _composerCtl.bottomSpace]),
+                                  builder: (context, _) {
+                                    final composerH = _composerCtl.bottomSpace.value ?? _composerHeight.value;
+                                    return ChatMessageList(
+                                      messages: _messages,
+                                      hiddenMessageId: _hiddenMsgId,
+                                      isLoadingMessages: _isLoadingMessages,
+                                      isLoadingMore: _isLoadingMore,
+                                      isPeerTyping: isTyping,
+                                      showJumpToLatest: _showJumpToLatest,
+                                      newMessagesWhileAway: _newMessagesWhileAway,
+                                      historyError: _historyError,
+                                      scrollController: _scrollController,
+                                      conversation: widget.conversation,
+                                      groupMemberNames: _groupMemberNames,
+                                      chatName: _chatName,
+                                      chatAvatar: _chatAvatar,
+                                      onShowMessageActions: _showMessageActions,
+                                      onShowMessageInfo: _showMessageInfo,
+                                      onBeginReply: _beginReply,
+                                      onForwardMessage: _forwardSingleMessage,
+                                      onReactMessage: _reactSingleMessage,
+                                      onToggleStarMessage: _toggleStarSingleMessage,
+                                      onDeleteMessage: _deleteSingleMessage,
+                                      onTapReply: _scrollToMessage,
+                                      highlightedMessageId: _effectiveHighlightedMessageId,
+                                      searchQuery: _isSearchingMessages
+                                          ? _messageSearchController.text.trim()
+                                          : null,
+                                      decryptingMessageIds: _decryptingEditedMessageIds,
+                                      onJumpToLatest: _jumpToLatest,
+                                      onReloadMessages: _reloadMessages,
+                                      sessionStartTime: _sessionStartTime,
+                                      initialUnreadCount: _initialUnreadCount,
+                                      isSelectionMode: _isSelectionMode,
+                                      selectedMessageIds: _selectedMessageIds,
+                                      onToggleSelectMessage: _toggleSelectMessage,
+                                      onVoiceCallTap: _startVoiceCall,
+                                      onVideoCallTap: _startVideoCall,
+                                      onFailedTap: _showFailedActions,
+                                      topInset: _topInset,
+                                      bottomInset: composerH + 8.0,
+                                      scrollTargetId: _scrollTargetId,
+                                      scrollTargetKey: _scrollTargetKey,
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+
+                          // Floating Frosted Header / Selection Header
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: _isSelectionMode
+                                ? _buildSelectionHeader(isDark)
+                                : ChatDetailHeader(
                               conversation: widget.conversation,
-                              groupMemberNames: _groupMemberNames,
                               chatName: _chatName,
                               chatAvatar: _chatAvatar,
-                              onShowMessageActions: _showMessageActions,
-                              onShowMessageInfo: _showMessageInfo,
-                              onBeginReply: _beginReply,
-                              onTapReply: _scrollToMessage,
-                              highlightedMessageId: _effectiveHighlightedMessageId,
-                              searchQuery: _isSearchingMessages
-                                  ? _messageSearchController.text.trim()
-                                  : null,
-                              decryptingMessageIds: _decryptingEditedMessageIds,
-                              onJumpToLatest: _jumpToLatest,
-                              onReloadMessages: _reloadMessages,
-                              sessionStartTime: _sessionStartTime,
-                              initialUnreadCount: _initialUnreadCount,
-                              isSelectionMode: _isSelectionMode,
-                              selectedMessageIds: _selectedMessageIds,
-                              onToggleSelectMessage: _toggleSelectMessage,
+                              isPeerOnline: _isPeerOnline,
+                              isPeerTyping: _isPeerTyping,
+                              isBlocked: _isBlocked || (liveConv?.isBlocked == true),
+                              onBlockTap: _blockCurrentPeer,
+                              onUnblockTap: _unblockCurrentPeer,
+                              onOpenChatInfo: _openChatInfo,
+                              onSearchMessages: _toggleMessageSearch,
                               onVoiceCallTap: _startVoiceCall,
                               onVideoCallTap: _startVideoCall,
-                            );
-                          },
-                        ),
-                      ),
+                            ),
+                          ),
 
-                      // Floating Frosted Header / Selection Header
-                      Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        child: _isSelectionMode
-                            ? _buildSelectionHeader(isDark)
-                            : ChatDetailHeader(
-                                conversation: widget.conversation,
-                                chatName: _chatName,
-                                chatAvatar: _chatAvatar,
-                                isPeerOnline: _isPeerOnline,
-                                isPeerTyping: _isPeerTyping,
-                                isBlocked: _isBlocked || (liveConv?.isBlocked == true),
-                                onBlockTap: _blockCurrentPeer,
-                                onUnblockTap: _unblockCurrentPeer,
-                                onOpenChatInfo: _openChatInfo,
-                                onSearchMessages: _toggleMessageSearch,
-                                onVoiceCallTap: _startVoiceCall,
-                                onVideoCallTap: _startVideoCall,
-                              ),
-                      ),
-
-                      if (_disappearType != 0 && !_isSearchingMessages)
-                        Positioned(
-                          top: MediaQuery.paddingOf(context).top + 64.0,
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: GestureDetector(
-                              onTap: _showDisappearingMessagesPicker,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: (isDark
+                          if (_disappearType != 0 && !_isSearchingMessages)
+                            Positioned(
+                              top: MediaQuery.paddingOf(context).top + 64.0,
+                              left: 0,
+                              right: 0,
+                              child: Center(
+                                child: GestureDetector(
+                                  onTap: _showDisappearingMessagesPicker,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: (isDark
                                           ? const Color(0xFF2C2C2E)
                                           : Colors.white)
-                                      .withValues(alpha: 0.90),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: AppTheme.glassBorder(isDark),
-                                    width: 0.8,
+                                          .withValues(alpha: 0.90),
+                                      borderRadius: BorderRadius.circular(16),
+                                      border: Border.all(
+                                        color: AppTheme.glassBorder(isDark),
+                                        width: 0.8,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.1,
+                                          ),
+                                          blurRadius: 6,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          CupertinoIcons.timer,
+                                          size: 13,
+                                          color: AppTheme.primaryColor,
+                                        ),
+                                        const SizedBox(width: 5),
+                                        Text(
+                                          'Disappearing messages: ${_disappearingLabels[_disappearType] ?? ''}',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppTheme.primaryText(isDark),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.1,
-                                      ),
-                                      blurRadius: 6,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      CupertinoIcons.timer,
-                                      size: 13,
-                                      color: AppTheme.primaryColor,
-                                    ),
-                                    const SizedBox(width: 5),
-                                    Text(
-                                      'Disappearing messages: ${_disappearingLabels[_disappearType] ?? ''}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: AppTheme.primaryText(isDark),
-                                      ),
-                                    ),
-                                  ],
                                 ),
                               ),
                             ),
-                          ),
-                        ),
 
-                      if (_isSearchingMessages)
-                        Positioned(
-                          top: MediaQuery.paddingOf(context).top + 62.0,
-                          left: 12,
-                          right: 12,
-                          child: _buildInChatSearchBanner(isDark),
-                        ),
+                          if (_isSearchingMessages)
+                            Positioned(
+                              top: MediaQuery.paddingOf(context).top + 62.0,
+                              left: 12,
+                              right: 12,
+                              child: _buildInChatSearchBanner(isDark),
+                            ),
 
-                      // Bottom Input Bar Composer
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: (_isBlocked || (liveConv?.isBlocked == true))
-                            ? _buildBlockedBanner(isDark)
-                            : ChatComposer(
+                          // Bottom Input Bar Composer / Selection Action Bar
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: _MeasureSize(
+                              onChange: (size) {
+                                if (_composerHeight.value != size.height) {
+                                  _composerHeight.value = size.height;
+                                }
+                              },
+                              child: _isSelectionMode
+                                  ? _buildSelectionBottomBar(isDark)
+                                  : ((_isBlocked || (liveConv?.isBlocked == true))
+                                  ? _buildBlockedBanner(isDark)
+                                  : ChatComposer(
                                 inputController: _inputController,
                                 inputFocusNode: _inputFocusNode,
                                 editingMessage: _editingMessage,
@@ -3628,18 +3973,62 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                                 onSendSticker: _sendSticker,
                                 onSendGif: _sendGif,
                                 onDisappearingTap: _showDisappearingMessagesPicker,
-                              ),
-                      ),
-                    ],
+                                controller: _composerCtl,
+                              )),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   );
                 },
               );
             },
-          );
-        },
+          ),
+        ),
       ),
-    ),
-  ),
-);
+      ),
+    );
+  }
 }
+
+typedef _OnWidgetSizeChange = void Function(Size size);
+
+class _MeasureSize extends SingleChildRenderObjectWidget {
+  final _OnWidgetSizeChange onChange;
+
+  const _MeasureSize({
+    required this.onChange,
+    required super.child,
+  });
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return _RenderMeasureSize(onChange);
+  }
+
+  @override
+  void updateRenderObject(
+      BuildContext context, covariant _RenderMeasureSize renderObject) {
+    renderObject.onChange = onChange;
+  }
+}
+
+class _RenderMeasureSize extends RenderProxyBox {
+  _OnWidgetSizeChange onChange;
+  Size? _oldSize;
+
+  _RenderMeasureSize(this.onChange);
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    final newSize = size;
+    if (_oldSize != newSize) {
+      _oldSize = newSize;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onChange(newSize);
+      });
+    }
+  }
 }

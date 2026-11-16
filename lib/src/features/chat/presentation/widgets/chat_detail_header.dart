@@ -215,10 +215,14 @@ class ChatDetailHeader extends StatelessWidget {
             ? liveConv.avatarUrl
             : (chatAvatar.isNotEmpty ? chatAvatar : conversation.avatarUrl);
 
-        final unreadTotal = conversations.fold<int>(
-          0,
-          (sum, c) => sum + c.unreadCount,
-        );
+        final isCurrentChatLocked =
+            (liveConv?.isLocked == true) || conversation.isLocked;
+
+        final unreadTotal = isCurrentChatLocked
+            ? 0
+            : conversations
+                .where((c) => !c.isLocked)
+                .fold<int>(0, (sum, c) => sum + c.unreadCount);
 
         return ClipRect(
           child: BackdropFilter(

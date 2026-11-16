@@ -14,38 +14,31 @@ class ArchivedListPage extends StatelessWidget {
 
   const ArchivedListPage({super.key, this.isDuressMode = false});
 
-  void _showPeekPreview(BuildContext context, ChatConversation conv) {
+  void _showPeekPreview(BuildContext context, ChatConversation conv, Rect origin) {
     showGeneralDialog(
       context: context,
-      barrierDismissible: true,
+      useRootNavigator: true,
+      barrierDismissible: false,
       barrierLabel: 'Dismiss',
       barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 250),
-      pageBuilder: (dialogContext, anim1, anim2) {
+      transitionDuration: Duration.zero,
+      pageBuilder: (dialogContext, _, __) {
         return ChatPeekPreviewDialog(
           conversation: conv,
+          originRect: origin,
+          hostContext: context,
           isDuressMode: isDuressMode,
           onOpenChat: () {
             Navigator.of(dialogContext).pop();
             Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (context) => VaultEdgePanelWrapper(
+                builder: (_) => VaultEdgePanelWrapper(
                   isDuressMode: isDuressMode,
                   child: ChatDetailPage(conversation: conv),
                 ),
               ),
             );
           },
-        );
-      },
-      transitionBuilder: (context, anim1, anim2, child) {
-        final curve = CurvedAnimation(
-          parent: anim1,
-          curve: Curves.easeOutCubic,
-        );
-        return Transform.scale(
-          scale: 0.88 + (0.12 * curve.value),
-          child: FadeTransition(opacity: curve, child: child),
         );
       },
     );
@@ -118,9 +111,16 @@ class ArchivedListPage extends StatelessWidget {
             itemCount: archived.length,
             itemBuilder: (context, index) {
               final conv = archived[index];
-              return GestureDetector(
-                onLongPress: () => _showPeekPreview(context, conv),
-                child: ConversationTile(
+              return Builder(
+                builder: (tileCtx) => GestureDetector(
+                  onLongPress: () {
+                    final box = tileCtx.findRenderObject() as RenderBox?;
+                    final rect = box != null
+                        ? (box.localToGlobal(Offset.zero) & box.size)
+                        : Rect.zero;
+                    _showPeekPreview(context, conv, rect);
+                  },
+                  child: ConversationTile(
                   conversation: conv,
                   isTyping: conv.isTyping,
                   showDivider: index < archived.length - 1,
@@ -135,7 +135,8 @@ class ArchivedListPage extends StatelessWidget {
                     );
                   },
                 ),
-              );
+              ),
+            );
             },
           );
         },

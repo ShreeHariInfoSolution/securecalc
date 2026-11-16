@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
+import 'package:securecalc/src/features/chat/domain/models/server_models.dart';
 
 /// App-side E2E Encryption service using AES-256-CBC with PKCS7 padding
 /// and secure random IVs.
@@ -51,6 +52,10 @@ class E2eCryptoService {
   /// Automatically falls back to plain text if the message is unencrypted.
   String decryptText(String ciphertext, String secretKey) {
     if (ciphertext.isEmpty) return '';
+    final cleaned = cleanMessageContentString(ciphertext);
+    if (cleaned.isNotEmpty) {
+      ciphertext = cleaned;
+    }
     if (!ciphertext.startsWith(_encPrefix)) {
       // Fallback: Message was not encrypted or standard plain text
       return ciphertext;

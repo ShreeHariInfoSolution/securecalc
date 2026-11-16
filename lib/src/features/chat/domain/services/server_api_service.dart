@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/location_share_model.dart';
 import '../models/server_models.dart';
 import 'e2e_crypto_service.dart';
 import 'local_chat_storage.dart';
@@ -16,6 +17,47 @@ import 'socket_chat_service.dart';
 import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/constants/api_constants.dart';
 import 'package:securecalc/src/features/calling/domain/services/device_identity_service.dart';
+
+class MultipartRequestWithProgress extends http.MultipartRequest {
+  final void Function(int bytesSent, int totalBytes)? onProgress;
+
+  MultipartRequestWithProgress(
+    super.method,
+    super.url, {
+    this.onProgress,
+  });
+
+  @override
+  http.ByteStream finalize() {
+    final byteStream = super.finalize();
+    if (onProgress == null) return byteStream;
+
+    final total = contentLength;
+    int bytesSent = 0;
+
+    final transformer = StreamTransformer<List<int>, List<int>>.fromHandlers(
+      handleData: (data, sink) {
+        bytesSent += data.length;
+        onProgress!(bytesSent, total);
+        sink.add(data);
+      },
+    );
+
+    return http.ByteStream(byteStream.transform(transformer));
+  }
+}
+
+class PermanentDeleteResult {
+  final bool success;
+  final List<int> deletedIds;
+  final List<String> errorMessages;
+
+  PermanentDeleteResult({
+    required this.success,
+    required this.deletedIds,
+    required this.errorMessages,
+  });
+}
 
 /// Central REST API Service connecting Flutter client to https://synqerp.com/calculatorchat/api/
 class ServerApiService {
@@ -825,6 +867,7 @@ class ServerApiService {
       debugPrint('[API] POST $uri (${res.statusCode}): ${res.body}');
 
       if (res.statusCode == 200 || res.statusCode == 201) {
+        await LocalChatStorage.instance.clearClearedAt(chatId.toString());
         unawaited(ServerChatManager.instance.syncChats());
         return true;
       }
@@ -854,27 +897,113 @@ class ServerApiService {
     }
   }
 
-  /// Permanently deletes a message (`DELETE /api/messages/$messageId/permanent`).
-  Future<bool> deleteMessagePermanently(int messageId) async {
+  /// Permanently deletes messages (`DELETE /api/messages/permanent`).
+  Future<PermanentDeleteResult> deleteMessagesPermanently(List<int> messageIds) async {
+    if (messageIds.isEmpty) {
+      return PermanentDeleteResult(success: true, deletedIds: [], errorMessages: []);
+    }
     try {
-      final uri = Uri.parse('$baseUrl/messages/$messageId/permanent');
-      debugPrint('[API] DELETE $uri');
-      var res = await http.delete(uri, headers: _headers());
+      final uri = Uri.parse('$baseUrl/messages/permanent');
+      final body = jsonEncode({'message_ids': messageIds});
+      debugPrint('[API] DELETE $uri with body: $body');
+      var res = await http.delete(uri, headers: _headers(), body: body);
       debugPrint('[API] DELETE $uri (${res.statusCode}): ${res.body}');
 
-      if (res.statusCode != 200 && res.statusCode != 201) {
-        final fallbackUri = Uri.parse(
-            '$baseUrl/messages/$messageId?type=permanent&delete_type=permanent');
-        res = await http.delete(fallbackUri, headers: _headers());
-        debugPrint(
-            '[API] DELETE fallback $fallbackUri (${res.statusCode}): ${res
-                .body}');
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final List<int> deletedIds = [];
+        final List<String> errorMessages = [];
+
+        try {
+          final decoded = jsonDecode(res.body);
+          if (decoded is Map<String, dynamic> && decoded.containsKey('data')) {
+            final data = decoded['data'];
+            if (data is Map<String, dynamic>) {
+              final deleted = data['deleted'];
+              final failed = data['failed'];
+
+              if (deleted is List) {
+                for (final item in deleted) {
+                  if (item is int) {
+                    deletedIds.add(item);
+                  } else if (item is String) {
+                    final parsed = int.tryParse(item);
+                    if (parsed != null) deletedIds.add(parsed);
+                  } else if (item is Map) {
+                    final idVal = item['message_id'] ?? item['id'];
+                    if (idVal != null) {
+                      final parsed = int.tryParse(idVal.toString());
+                      if (parsed != null) deletedIds.add(parsed);
+                    }
+                  }
+                }
+              }
+
+              if (failed is List) {
+                for (final item in failed) {
+                  if (item is Map && item.containsKey('error')) {
+                    errorMessages.add(item['error'].toString());
+                  } else if (item is String) {
+                    errorMessages.add(item);
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('[API] Error parsing permanent delete response: $e');
+        }
+
+        // If server returned 200/201 and neither deleted nor failed lists were specified
+        // (or failed was empty), assume all passed messageIds were deleted.
+        if (deletedIds.isEmpty && errorMessages.isEmpty) {
+          deletedIds.addAll(messageIds);
+        }
+
+        final overallSuccess = deletedIds.isNotEmpty;
+        return PermanentDeleteResult(
+          success: overallSuccess,
+          deletedIds: deletedIds,
+          errorMessages: errorMessages,
+        );
       }
-      return res.statusCode == 200 || res.statusCode == 201;
+
+      // Fallback for single message ID if bulk endpoint returned status code other than 200/201
+      if (messageIds.length == 1) {
+        final singleId = messageIds.first;
+        final fallbackUri = Uri.parse('$baseUrl/messages/$singleId/permanent');
+        res = await http.delete(fallbackUri, headers: _headers());
+        if (res.statusCode != 200 && res.statusCode != 201) {
+          final legacyUri = Uri.parse('$baseUrl/messages/$singleId?type=permanent&delete_type=permanent');
+          res = await http.delete(legacyUri, headers: _headers());
+        }
+        if (res.statusCode == 200 || res.statusCode == 201) {
+          return PermanentDeleteResult(
+            success: true,
+            deletedIds: [singleId],
+            errorMessages: [],
+          );
+        }
+      }
+
+      return PermanentDeleteResult(
+        success: false,
+        deletedIds: [],
+        errorMessages: ['Failed to delete message(s) permanently (${res.statusCode})'],
+      );
     } catch (e) {
-      debugPrint('[API] Permanent Delete Message Error ($messageId): $e');
-      return false;
+      debugPrint('[API] Permanent Delete Messages Error ($messageIds): $e');
+      return PermanentDeleteResult(
+        success: false,
+        deletedIds: [],
+        errorMessages: ['Error deleting message(s): $e'],
+      );
     }
+  }
+
+  /// Permanently deletes a single message (`DELETE /api/messages/permanent`).
+  Future<bool> deleteMessagePermanently(int messageId) async {
+    final result = await deleteMessagesPermanently([messageId]);
+    return result.success;
   }
 
   /// Permanently deletes a chat (`DELETE /api/chats/$chatId/permanent`).
@@ -1135,7 +1264,9 @@ class ServerApiService {
           .replace(queryParameters: {'page': '$page', 'limit': '$limit'});
       debugPrint('[API] GET $uri');
       final res = await http.get(uri, headers: _headers());
-      debugPrint('[API] GET $uri (${res.statusCode}): ${res.body}');
+      if (kDebugMode) {
+        debugPrint('[API] GET $uri (${res.statusCode}) length=${res.bodyBytes.length}');
+      }
 
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
@@ -1181,12 +1312,17 @@ class ServerApiService {
     String? fileType,
     int? replyToId,
     String? clientId,
+    void Function(int bytesSent, int totalBytes)? onProgress,
   }) async {
     final url = '$baseUrl/chats/$chatId/messages';
 
     if (file != null && await file.exists()) {
       debugPrint('[API] POST $url (Multipart File: ${file.path})');
-      final req = http.MultipartRequest('POST', Uri.parse(url));
+      final req = MultipartRequestWithProgress(
+        'POST',
+        Uri.parse(url),
+        onProgress: onProgress,
+      );
       if (_authToken != null) {
         req.headers['Authorization'] = 'Bearer $_authToken';
       }
@@ -1450,19 +1586,99 @@ class ServerApiService {
 
   // ─── Files Endpoints ───────────────────────────────────────────────────────
 
-  /// Fetches paginated uploads for a given folder type ('image', 'video', 'audio', 'doc').
+  /// Creates a folder in the vault (`POST /api/uploads/folder`).
+  Future<UploadItemModel?> createFolder({
+    required String name,
+    required String folder,
+    int? parentId,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/uploads/folder');
+      debugPrint('[API] POST $uri (Name: $name, Folder: $folder, ParentId: $parentId)');
+
+      final bodyMap = <String, dynamic>{
+        'name': name,
+        'folder': folder,
+      };
+      if (parentId != null) {
+        bodyMap['parent_id'] = parentId;
+      }
+
+      final res = await http.post(
+        uri,
+        headers: _headers(),
+        body: jsonEncode(bodyMap),
+      );
+
+      debugPrint('[API] POST $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          final data = decoded['data'];
+          if (data is Map<String, dynamic>) {
+            return UploadItemModel.fromJson(data);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[API] Create Folder Error: $e');
+    }
+    return null;
+  }
+
+  /// Renames an uploaded file or folder (`PUT /api/uploads/{id}`).
+  Future<UploadItemModel?> renameUpload({
+    required int id,
+    required String newName,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/uploads/$id');
+      debugPrint('[API] PUT $uri (NewName: $newName)');
+
+      final res = await http.put(
+        uri,
+        headers: _headers(),
+        body: jsonEncode({'name': newName}),
+      );
+
+      debugPrint('[API] PUT $uri (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          final data = decoded['data'];
+          if (data is Map<String, dynamic>) {
+            return UploadItemModel.fromJson(data);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[API] Rename Upload Error: $e');
+    }
+    return null;
+  }
+
+  /// Fetches paginated uploads for a given folder type ('image', 'video', 'audio', 'doc') and optional parentId.
   Future<UploadsResponseModel> getUploads({
     required String folder,
+    int? parentId,
     int page = 1,
     int limit = 20,
   }) async {
     try {
+      final queryParams = <String, String>{
+        'folder': folder,
+        'page': page.toString(),
+        'limit': limit.toString(),
+        't': '1',
+      };
+      if (parentId != null) {
+        queryParams['parent_id'] = parentId.toString();
+      }
+
       final uri = Uri.parse('$baseUrl/uploads').replace(
-        queryParameters: {
-          'folder': folder,
-          'page': page.toString(),
-          'limit': limit.toString(),
-        },
+        queryParameters: queryParams,
       );
 
       debugPrint('[API] GET $uri');
@@ -1482,27 +1698,55 @@ class ServerApiService {
         throw Exception('Failed to load $folder files. Please try again.');
       }
     } catch (e) {
-      debugPrint('[API] Get Uploads Error ($folder): $e');
+      debugPrint('[API] Get Uploads Error ($folder, parent: $parentId): $e');
       rethrow;
     }
   }
 
-  Future<String?> uploadFile(File file, {String? filename}) async {
-    final item = await uploadVaultFile(file, filename: filename);
+  Future<String?> uploadFile(
+    File file, {
+    int? parentId,
+    String? folder,
+    String? filename,
+    void Function(int bytesSent, int totalBytes)? onProgress,
+  }) async {
+    final item = await uploadVaultFile(
+      file,
+      parentId: parentId,
+      folder: folder,
+      filename: filename,
+      onProgress: onProgress,
+    );
     return item?.filePath.isNotEmpty == true ? item!.filePath : item?.url;
   }
 
   /// Uploads a file to POST /upload and returns the parsed [UploadItemModel]
-  Future<UploadItemModel?> uploadVaultFile(File file, {
+  Future<UploadItemModel?> uploadVaultFile(
+    File file, {
+    int? parentId,
+    String? folder,
     String? filename,
+    void Function(int bytesSent, int totalBytes)? onProgress,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/upload');
-      debugPrint('[API] POST $uri (File: ${file.path})');
+      debugPrint('[API] POST $uri (File: ${file.path}, parentId: $parentId, folder: $folder)');
 
-      final req = http.MultipartRequest('POST', uri);
+      final req = MultipartRequestWithProgress(
+        'POST',
+        uri,
+        onProgress: onProgress,
+      );
       if (_authToken != null) {
         req.headers['Authorization'] = 'Bearer $_authToken';
+      }
+      if (parentId != null) {
+        req.fields['parent_id'] = parentId.toString();
+      } else {
+        req.fields['parent_id'] = '0';
+      }
+      if (folder != null && folder.isNotEmpty) {
+        req.fields['folder'] = folder;
       }
       req.files.add(
         await http.MultipartFile.fromPath(
@@ -1530,7 +1774,7 @@ class ServerApiService {
             return UploadItemModel(
               id: 0,
               filePath: data,
-              folder: '',
+              folder: folder ?? '',
               fileName: filename ?? file.path
                   .split(RegExp(r'[/\\]'))
                   .last,
@@ -1735,6 +1979,151 @@ class ServerApiService {
     } catch (e) {
       debugPrint('[API] Unlock chat error ($chatId): $e');
       return false;
+    }
+  }
+
+  /// Shares location (`POST /api/locations/share`).
+  Future<Map<String, dynamic>?> shareLocation({
+    required int chatHeadId,
+    required double latitude,
+    required double longitude,
+    double? accuracy,
+    required bool isLive,
+    int durationMinutes = 60,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/locations/share');
+      final body = {
+        'chat_head_id': chatHeadId,
+        'latitude': latitude,
+        'longitude': longitude,
+        if (accuracy != null) 'accuracy': accuracy,
+        'is_live': isLive,
+        if (isLive) 'duration_minutes': durationMinutes,
+      };
+      debugPrint('[API] POST $uri body=$body');
+      final res = await http.post(
+        uri,
+        headers: _headers(),
+        body: jsonEncode(body),
+      );
+      debugPrint('[API] Share location response (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final data = jsonDecode(res.body);
+        return data is Map<String, dynamic> ? data : null;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[API] Share location error: $e');
+      return null;
+    }
+  }
+
+  /// Updates live location (`PUT /api/locations/$locationId/update`).
+  Future<bool> updateLiveLocation({
+    required int locationId,
+    required double latitude,
+    required double longitude,
+    double? accuracy,
+    double? heading,
+    double? speed,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/locations/$locationId/update');
+      final body = {
+        'location_id': locationId,
+        'latitude': latitude,
+        'longitude': longitude,
+        if (accuracy != null) 'accuracy': accuracy,
+        if (heading != null) 'heading': heading,
+        if (speed != null) 'speed': speed,
+      };
+      debugPrint('[API] PUT $uri body=$body');
+      final res = await http.put(
+        uri,
+        headers: _headers(),
+        body: jsonEncode(body),
+      );
+      debugPrint('[API] Update location response (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        return true;
+      }
+      if (res.statusCode == 410) {
+        debugPrint('[API] Location share $locationId expired or ended (410)');
+        return false;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[API] Update live location error ($locationId): $e');
+      return false;
+    }
+  }
+
+  /// Stops live location sharing (`POST /api/locations/$locationId/stop`).
+  Future<bool> stopLiveLocation({required int locationId}) async {
+    try {
+      final uri = Uri.parse('$baseUrl/locations/$locationId/stop');
+      final body = {'location_id': locationId};
+      debugPrint('[API] POST $uri body=$body');
+      final res = await http.post(
+        uri,
+        headers: _headers(),
+        body: jsonEncode(body),
+      );
+      debugPrint('[API] Stop location response (${res.statusCode}): ${res.body}');
+
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('[API] Stop live location error ($locationId): $e');
+      return false;
+    }
+  }
+
+  /// Gets active live locations for chat (`GET /api/locations/chat/$chatHeadId/active`).
+  Future<List<LocationShareModel>> getActiveLiveLocations({
+    required int chatHeadId,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/locations/chat/$chatHeadId/active');
+      debugPrint('[API] GET $uri');
+      final res = await http.get(uri, headers: _headers());
+      debugPrint('[API] Get active locations response (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        final list = (decoded is Map ? (decoded['data']?['locations'] ?? decoded['locations']) : decoded) as List?;
+        if (list != null) {
+          return list.map((item) => LocationShareModel.fromJson(item as Map<String, dynamic>)).toList();
+        }
+      }
+      return [];
+    } catch (e) {
+      debugPrint('[API] Get active live locations error ($chatHeadId): $e');
+      return [];
+    }
+  }
+
+  /// Gets single location detail (`GET /api/locations/$locationId`).
+  Future<LocationShareModel?> getLocationById({required int locationId}) async {
+    try {
+      final uri = Uri.parse('$baseUrl/locations/$locationId');
+      debugPrint('[API] GET $uri');
+      final res = await http.get(uri, headers: _headers());
+      debugPrint('[API] Get location by ID response (${res.statusCode}): ${res.body}');
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        final data = decoded is Map ? (decoded['data']?['location'] ?? decoded['location'] ?? decoded['data']) : decoded;
+        if (data is Map<String, dynamic>) {
+          return LocationShareModel.fromJson(data);
+        }
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[API] Get location error ($locationId): $e');
+      return null;
     }
   }
 }

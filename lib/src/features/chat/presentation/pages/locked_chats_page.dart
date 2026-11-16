@@ -9,6 +9,7 @@ import 'package:securecalc/src/features/chat/domain/entities/chat_conversation.d
 import 'package:securecalc/src/features/chat/domain/services/local_chat_storage.dart';
 
 import '../../domain/models/server_models.dart';
+import '../../domain/services/e2e_crypto_service.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
 import 'chat_detail_page.dart';
@@ -79,6 +80,24 @@ class _LockedChatsPageState extends State<LockedChatsPage> {
           _hasMore = res.hasMore;
           _isLoading = false;
         });
+
+        // Sync locked status to LocalChatStorage so counts are 100% accurate
+        final lockedIds = res.chats.map((c) => c.id.toString()).toSet();
+        final currentConvs = List<ChatConversation>.from(
+          LocalChatStorage.instance.conversationsNotifier.value,
+        );
+        var updated = false;
+        for (var i = 0; i < currentConvs.length; i++) {
+          if (lockedIds.contains(currentConvs[i].id)) {
+            if (!currentConvs[i].isLocked) {
+              currentConvs[i] = currentConvs[i].copyWith(isLocked: true);
+              updated = true;
+            }
+          }
+        }
+        if (updated) {
+          unawaited(LocalChatStorage.instance.replaceConversations(currentConvs));
+        }
       }
     } catch (e) {
       debugPrint('[LockedChatsPage] Fetch error: $e');
@@ -146,6 +165,59 @@ class _LockedChatsPageState extends State<LockedChatsPage> {
       orElse: () => chat.members.isNotEmpty ? chat.members.first : UserModel(id: 0, name: ''),
     );
     return peer.avatar;
+  }
+
+  String _getDecryptedLastMessage(ServerChatModel chat) {
+    final localConvs = LocalChatStorage.instance.conversationsNotifier.value;
+    for (final c in localConvs) {
+      if (c.id == chat.id.toString() &&
+          c.lastMessage.isNotEmpty &&
+          !c.lastMessage.startsWith('ENC:v1:')) {
+        return c.lastMessage;
+      }
+    }
+
+    if (chat.lastMessageFilePath != null && chat.lastMessageFilePath!.isNotEmpty) {
+      final name = (chat.lastMessageFileName ?? '').toLowerCase();
+      if (name.endsWith('.jpg') ||
+          name.endsWith('.jpeg') ||
+          name.endsWith('.png') ||
+          name.endsWith('.gif') ||
+          name.endsWith('.webp')) {
+        return '📷 Photo';
+      }
+      if (name.endsWith('.mp4') || name.endsWith('.mov') || name.endsWith('.avi')) {
+        return '🎥 Video';
+      }
+      if (name.endsWith('.aac') ||
+          name.endsWith('.m4a') ||
+          name.endsWith('.mp3') ||
+          name.endsWith('.wav') ||
+          name.endsWith('.ogg')) {
+        return '🎤 Voice message';
+      }
+      return (chat.lastMessageFileName?.isNotEmpty == true)
+          ? chat.lastMessageFileName!
+          : '📎 Attachment';
+    }
+
+    var raw = chat.lastMessage ?? chat.lastMessageCiphertext ?? '';
+    if (raw.isEmpty) {
+      return 'No messages yet';
+    }
+
+    final secretKey = 'chat_key_${chat.id}';
+    final decrypted = E2eCryptoService.instance.decryptText(raw, secretKey);
+
+    if (decrypted.isNotEmpty && !decrypted.startsWith('ENC:v1:')) {
+      return decrypted;
+    }
+
+    if (!raw.startsWith('ENC:v1:')) {
+      return raw;
+    }
+
+    return 'Encrypted message';
   }
 
   void _showChatOptionsDialog(ServerChatModel chat) {
@@ -228,7 +300,7 @@ class _LockedChatsPageState extends State<LockedChatsPage> {
         id: chat.id.toString(),
         name: _getDisplayName(chat),
         avatarUrl: _getDisplayAvatar(chat) ?? '',
-        lastMessage: chat.lastMessage ?? '',
+        lastMessage: _getDecryptedLastMessage(chat),
         lastMessageTime: '',
         isGroup: chat.isGroup,
         isLocked: true,
@@ -267,7 +339,9 @@ class _LockedChatsPageState extends State<LockedChatsPage> {
             Icon(CupertinoIcons.lock_fill, size: 18, color: AppTheme.primaryColor),
             const SizedBox(width: 8),
             Text(
-              'Locked Chats',
+              _lockedChats.isNotEmpty
+                  ? 'Locked Chats (${_lockedChats.length})'
+                  : 'Locked Chats',
               style: TextStyle(
                 color: AppTheme.primaryText(isDark),
                 fontWeight: FontWeight.bold,
@@ -345,9 +419,7 @@ class _LockedChatsPageState extends State<LockedChatsPage> {
                       final chat = _lockedChats[index];
                       final displayName = _getDisplayName(chat);
                       final avatarUrl = _getDisplayAvatar(chat);
-                      final lastMsgText = chat.lastMessage?.isNotEmpty == true
-                          ? chat.lastMessage!
-                          : 'Locked Conversation';
+                      final lastMsgText = _getDecryptedLastMessage(chat);
 
                       return InkWell(
                         onLongPress: () => _showChatOptionsDialog(chat),

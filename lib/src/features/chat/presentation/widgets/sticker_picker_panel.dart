@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
@@ -282,8 +283,8 @@ class _StickerPickerPanelState extends State<StickerPickerPanel> {
                         decoration: BoxDecoration(
                           color: isSelected
                               ? (isDark
-                                    ? const Color(0xFF3A3A3C)
-                                    : const Color(0xFFD1D1D6))
+                              ? const Color(0xFF3A3A3C)
+                              : const Color(0xFFD1D1D6))
                               : Colors.transparent,
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -371,58 +372,58 @@ class _IosStickerGridTileState extends State<_IosStickerGridTile> {
         duration: const Duration(milliseconds: 100),
         child: widget.sticker.isMemoji
             ? Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      widget.sticker.bgGradientStart.withValues(alpha: 0.25),
-                      widget.sticker.bgGradientEnd.withValues(alpha: 0.38),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: widget.sticker.bgGradientStart.withValues(alpha: 0.35),
-                    width: 1,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: widget.sticker.bgGradientEnd.withValues(alpha: 0.2),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        widget.sticker.emoji,
-                        style: const TextStyle(fontSize: 34),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        widget.sticker.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                          shadows: [Shadow(color: Colors.black54, blurRadius: 2)],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            : Center(
-                child: Text(
-                  widget.sticker.emoji,
-                  style: const TextStyle(fontSize: 32),
-                ),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                widget.sticker.bgGradientStart.withValues(alpha: 0.25),
+                widget.sticker.bgGradientEnd.withValues(alpha: 0.38),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: widget.sticker.bgGradientStart.withValues(alpha: 0.35),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: widget.sticker.bgGradientEnd.withValues(alpha: 0.2),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
               ),
+            ],
+          ),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.sticker.emoji,
+                  style: const TextStyle(fontSize: 34),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  widget.sticker.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                    shadows: [Shadow(color: Colors.black54, blurRadius: 2)],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        )
+            : Center(
+          child: Text(
+            widget.sticker.emoji,
+            style: const TextStyle(fontSize: 32),
+          ),
+        ),
       ),
     );
   }
@@ -563,6 +564,22 @@ String normalizeEmojiText(String text) {
       .replaceAll(RegExp(r'\u26A0(?!\uFE0F)'), '\u26A0\uFE0F');
 }
 
+/// Normalizes chat message text by converting non-breaking spaces and unusual whitespace
+/// into standard spaces, removing zero-width characters, and normalizing emojis.
+String normalizeChatMessageText(String text) {
+  if (text.isEmpty) return text;
+
+  // Convert non-breaking spaces, zero-width characters, and special whitespace to standard space
+  var cleaned = text
+      .replaceAll(RegExp(r'[\u00A0\u2000-\u200A\u3000]'), ' ')
+      .replaceAll('\u200B', '');
+
+  // Normalize emoji presentation selectors
+  cleaned = normalizeEmojiText(cleaned);
+
+  return cleaned;
+}
+
 /// Animated Jumbo Single Emoji Widget (WhatsApp & iMessage Style)
 class JumboAnimatedEmoji extends StatefulWidget {
   final String emoji;
@@ -611,62 +628,143 @@ class _JumboAnimatedEmojiState extends State<JumboAnimatedEmoji>
         style: TextStyle(
           fontSize: widget.fontSize,
           height: 1.15,
+          fontFamilyFallback: const [
+            'Apple Color Emoji',
+            'Noto Color Emoji',
+            'Segoe UI Emoji',
+          ],
         ),
       ),
     );
   }
 }
 
-/// Helper function to check if text contains ONLY 1, 2, or 3 emojis
+// ───────────────────── Emoji helpers ─────────────────────
+
+final String _emojiFontFamily =
+(Platform.isIOS || Platform.isMacOS) ? 'Apple Color Emoji' : 'Noto Color Emoji';
+
+/// No colour set on purpose: colour emoji ignore text colour.
+TextStyle get emojiRunStyle => TextStyle(
+  fontFamily: _emojiFontFamily,
+  fontFamilyFallback: const [
+    'Apple Color Emoji',
+    'Noto Color Emoji',
+    'Segoe UI Emoji',
+  ],
+);
+
+bool _isEmojiRune(int r) =>
+    (r >= 0x1F000 && r <= 0x1FAFF) ||
+        (r >= 0x2600 && r <= 0x27BF) ||
+        (r >= 0x2300 && r <= 0x23FF) ||
+        (r >= 0x2B00 && r <= 0x2BFF) ||
+        (r >= 0x203C && r <= 0x2049) ||
+        r == 0x00A9 ||
+        r == 0x00AE;
+
+/// [g] is ONE grapheme cluster (flags, ZWJ families, skin tones = 1 cluster).
+bool isEmojiCluster(String g) {
+  final runes = g.runes.toList();
+  if (runes.isEmpty) return false;
+  if (runes.contains(0x20E3)) return true; // keycap 1️⃣
+  return _isEmojiRune(runes.first);
+}
+
+/// Splits text into normal runs and emoji runs.
+/// Emoji runs use the colour emoji font, so ❤️ stays red in light/dark.
+/// [addVs16] must be false for TextField controllers (length must not change).
+List<InlineSpan> buildEmojiSpans(
+    String text, {
+      TextStyle? textStyle,
+      bool addVs16 = true,
+    }) {
+  if (text.isEmpty) return const [];
+  final spans = <InlineSpan>[];
+  final plain = StringBuffer();
+  final emoji = StringBuffer();
+
+  void flushPlain() {
+    if (plain.isEmpty) return;
+    spans.add(TextSpan(text: plain.toString(), style: textStyle));
+    plain.clear();
+  }
+
+  void flushEmoji() {
+    if (emoji.isEmpty) return;
+    spans.add(TextSpan(text: emoji.toString(), style: emojiRunStyle));
+    emoji.clear();
+  }
+
+  for (final g in text.characters) {
+    if (isEmojiCluster(g)) {
+      flushPlain();
+      final runes = g.runes.toList();
+      final needsVs16 = addVs16 &&
+          runes.length == 1 &&
+          runes.first >= 0x203C &&
+          runes.first < 0x10000;
+      emoji.write(needsVs16 ? '$g\uFE0F' : g);
+    } else {
+      flushEmoji();
+      plain.write(g);
+    }
+  }
+  flushPlain();
+  flushEmoji();
+  return spans;
+}
+
+/// Use instead of Text() anywhere emoji may appear (chat list, peek preview...)
+class EmojiText extends StatelessWidget {
+  final String text;
+  final TextStyle? style;
+  final int? maxLines;
+  final TextOverflow? overflow;
+  const EmojiText(this.text, {super.key, this.style, this.maxLines, this.overflow});
+
+  @override
+  Widget build(BuildContext context) {
+    final base = DefaultTextStyle.of(context).style.merge(style);
+    return Text.rich(
+      TextSpan(children: buildEmojiSpans(text, textStyle: base)),
+      style: base,
+      maxLines: maxLines,
+      overflow: overflow,
+    );
+  }
+}
+
+/// TextField controller that renders emoji in colour while typing.
+class EmojiTextEditingController extends TextEditingController {
+  EmojiTextEditingController({super.text});
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    if (withComposing && value.composing.isValid) {
+      return super.buildTextSpan(
+          context: context, style: style, withComposing: withComposing);
+    }
+    return TextSpan(
+      style: style,
+      children: buildEmojiSpans(text, textStyle: style, addVs16: false),
+    );
+  }
+}
+
+/// Returns 1–3 only if the message is ONLY emoji (grapheme based), else 0.
 int getEmojiOnlyCount(String text) {
   final clean = text.trim();
   if (clean.isEmpty) return 0;
-
-  final runes = clean.runes.toList();
-  var emojiCount = 0;
-  var isEmoji = true;
-
-  for (int i = 0; i < runes.length; i++) {
-    final r = runes[i];
-
-    // Skip variation selectors, ZWJ, skin tones, whitespace, keycap combiners
-    if (r == 0xFE0F ||
-        r == 0xFE0E ||
-        r == 0x200D ||
-        r == 0x200E ||
-        r == 0x200F ||
-        r == 0x20E3 ||
-        (r >= 0x1F3FB && r <= 0x1F3FF) ||
-        r == 0x0020 ||
-        r == 0x00A0) {
-      continue;
-    }
-
-    final inEmojiRange = (r >= 0x1F600 && r <= 0x1F64F) || // Emoticons
-        (r >= 0x1F300 && r <= 0x1F5FF) || // Misc Symbols & Pictographs
-        (r >= 0x1F680 && r <= 0x1F6FF) || // Transport & Map
-        (r >= 0x1F1E6 && r <= 0x1F1FF) || // Flags
-        (r >= 0x2600 && r <= 0x27BF) ||   // Misc Symbols & Dingbats
-        (r >= 0x1F900 && r <= 0x1F9FF) || // Supplemental Symbols
-        (r >= 0x1FA70 && r <= 0x1FAFF) || // Symbols Extended
-        (r >= 0x2300 && r <= 0x23FF) ||   // Misc Technical
-        (r >= 0x2B00 && r <= 0x2BFF) ||   // Misc Arrows & Symbols
-        (r >= 0x2190 && r <= 0x21FF) ||   // Arrows
-        (r >= 0x2900 && r <= 0x297F) ||   // Supplemental Arrows
-        (r >= 0x3200 && r <= 0x32FF) ||   // Enclosed CJK
-        (r == 0x00A9 || r == 0x00AE) ||
-        (r >= 0x203C && r <= 0x2049);
-
-    if (inEmojiRange) {
-      emojiCount++;
-    } else {
-      isEmoji = false;
-      break;
-    }
+  var count = 0;
+  for (final g in clean.characters) {
+    if (g.trim().isEmpty) continue;
+    if (!isEmojiCluster(g)) return 0;
+    if (++count > 3) return 0;
   }
-
-  if (isEmoji && emojiCount >= 1 && emojiCount <= 3) {
-    return emojiCount;
-  }
-  return 0;
+  return count;
 }

@@ -65,6 +65,19 @@ class ChatMessage {
   }
 
   String get previewText {
+    final cleanContent = content.trim();
+    if ((cleanContent.startsWith('{') && (cleanContent.contains('"latitude"') || cleanContent.contains('"location_id"'))) ||
+        type == 'location' ||
+        type == 'live_location' ||
+        msgType == 'location' ||
+        msgType == 'live_location') {
+      final isLive = cleanContent.contains('"is_live":true') ||
+          cleanContent.contains('"isLive":true') ||
+          type == 'live_location' ||
+          msgType == 'live_location';
+      return isLive ? '📍 Live location' : '📍 Location';
+    }
+
     if (isCallMessage) {
       final isVideo = (callType ?? '').toLowerCase() == 'video' ||
           content.toLowerCase().contains('video');
@@ -106,7 +119,6 @@ class ChatMessage {
         !content.startsWith('uploads/') &&
         !content.startsWith('api/');
 
-    final cleanContent = content.trim();
     final isDefaultCaption = cleanContent == 'Photo' ||
         cleanContent == 'Video' ||
         cleanContent == 'Sent a photo' ||
@@ -131,7 +143,7 @@ class ChatMessage {
       final docName = fileName?.isNotEmpty == true
           ? fileName!
           : (url.isNotEmpty ? url.split('/').last.split('?').first : 'Document');
-      return '${prefix}📄 $docName';
+      return '$prefix📄 $docName';
     }
 
     if (hasCustomText) {

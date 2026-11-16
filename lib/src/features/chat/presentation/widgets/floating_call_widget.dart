@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../../../core/widgets/ios_avatar.dart';
@@ -258,16 +260,28 @@ class _FloatingCallWidgetState extends State<FloatingCallWidget> {
               // 1. Live RTC Video Stream
               Positioned.fill(
                 child: GestureDetector(
-                  onTap: widget.onTap,
-                  child: callService.remoteVideoOn
+                  onTap: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+                    widget.onTap();
+                  },
+                  child: (callService.remoteVideoOn &&
+                          callService.state == CallState.active &&
+                          callService.remoteRenderer.srcObject != null &&
+                          callService.hasFirstRemoteFrame)
                       ? RTCVideoView(
                           callService.remoteRenderer,
+                          key: ValueKey('remote_${callService.callId}_${callService.remoteIsFrontCamera}_${callService.remoteRenderer.srcObject?.id}'),
+                          mirror: callService.remoteIsFrontCamera,
                           objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                         )
-                      : (callService.camOn
+                      : ((callService.camOn &&
+                              callService.localRenderer.srcObject != null &&
+                              callService.hasFirstLocalFrame)
                           ? RTCVideoView(
                               callService.localRenderer,
-                              mirror: true,
+                              key: ValueKey('local_${callService.callId}_${callService.isFrontCamera}_${callService.localRenderer.srcObject?.id}'),
+                              mirror: callService.isFrontCamera,
                               objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                             )
                           : Container(
@@ -344,7 +358,11 @@ class _FloatingCallWidgetState extends State<FloatingCallWidget> {
                     ),
                     // Expand Button
                     GestureDetector(
-                      onTap: widget.onTap,
+                      onTap: () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+                        widget.onTap();
+                      },
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: const BoxDecoration(
@@ -443,7 +461,11 @@ class _FloatingCallWidgetState extends State<FloatingCallWidget> {
     final callService = widget.callService;
 
     return GestureDetector(
-      onTap: widget.onTap,
+      onTap: () {
+        FocusManager.instance.primaryFocus?.unfocus();
+        unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+        widget.onTap();
+      },
       child: Material(
         color: Colors.transparent,
         elevation: 12,

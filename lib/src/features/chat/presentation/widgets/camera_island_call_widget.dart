@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../domain/services/call_service.dart';
 
@@ -86,7 +88,11 @@ class _CameraIslandCallWidgetState extends State<CameraIslandCallWidget>
             child: Material(
               color: Colors.transparent,
               child: GestureDetector(
-                onTap: widget.onTap,
+                onTap: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+                  widget.onTap();
+                },
                 child: Container(
                   height: 42,
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),

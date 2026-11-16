@@ -490,6 +490,10 @@ class AppPreferences {
     'sound_3': {'name': 'Tone 3 - Interface Start', 'file': 'sound_3.wav'},
     'sound_4': {'name': 'Tone 4 - Interface Back', 'file': 'sound_4.wav'},
     'sound_5': {'name': 'Tone 5 - Pop Alert', 'file': 'sound_5.mp3'},
+    'ios_antic_notification_9971': {
+      'name': 'Tone 6 - iOS Antic Notification',
+      'file': 'ios_antic_notification_9971.wav'
+    },
   };
 
   static String getNotificationSound() {
@@ -511,5 +515,19 @@ class AppPreferences {
     await p.setString(_keyNotificationSound, sound);
     notificationSoundNotifier.value = sound;
     await PushService.instance.updateNotificationSound(sound);
+  }
+
+  // --- Keyboard Height (for seamless WhatsApp-style panel transitions) ---
+  static const String _keyKeyboardHeight = 'PREF_KEYBOARD_HEIGHT';
+  static double get savedKeyboardHeight {
+    final h = _prefs?.getDouble(_keyKeyboardHeight);
+    if (h != null && h >= 200.0 && h <= 500.0) return h;
+    return Platform.isIOS ? 336.0 : 290.0;
+  }
+
+  static set savedKeyboardHeight(double value) {
+    if (value >= 200.0 && value <= 500.0) {
+      _prefs?.setDouble(_keyKeyboardHeight, value);
+    }
   }
 }

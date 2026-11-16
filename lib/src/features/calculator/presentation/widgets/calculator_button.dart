@@ -112,7 +112,9 @@ class _CalculatorButtonState extends State<CalculatorButton> {
         alignment: Alignment.center,
         color: Colors.transparent,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: _isPressed
+              ? Duration.zero
+              : const Duration(milliseconds: 250),
           width: widget.isZero ? double.infinity : height,
           height: height,
           alignment: widget.isZero ? Alignment.centerLeft : Alignment.center,

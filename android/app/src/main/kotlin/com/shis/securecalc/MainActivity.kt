@@ -24,6 +24,19 @@ class MainActivity : FlutterActivity() {
                     applySecureFlag(enable)
                     result.success(true)
                 }
+                "setKeepScreenOn" -> {
+                    val enable = call.argument<Boolean>("enable") ?: true
+                    runOnUiThread {
+                        try {
+                            if (enable) {
+                                window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            } else {
+                                window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            }
+                        } catch (_: Exception) {}
+                    }
+                    result.success(true)
+                }
                 "clearAllNotifications" -> {
                     try {
                         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
@@ -94,6 +107,42 @@ class MainActivity : FlutterActivity() {
 
         // 2. Fallback to Settings.Secure.ANDROID_ID
         return Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: ""
+    }
+
+    private var screenshotObserver: android.database.ContentObserver? = null
+
+    override fun onStart() {
+        super.onStart()
+        setupScreenshotObserver()
+    }
+
+    private fun setupScreenshotObserver() {
+        if (screenshotObserver != null) return
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        screenshotObserver = object : android.database.ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
+                super.onChange(selfChange, uri)
+                if (uri != null && uri.toString().contains(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI.toString())) {
+                    notifyScreenshotTaken()
+                }
+            }
+        }
+        try {
+            contentResolver.registerContentObserver(
+                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                true,
+                screenshotObserver!!
+            )
+        } catch (_: Exception) {}
+    }
+
+    private fun notifyScreenshotTaken() {
+        try {
+            flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
+                val channel = MethodChannel(messenger, CHANNEL)
+                channel.invokeMethod("onScreenshot", null)
+            }
+        } catch (_: Exception) {}
     }
 
     override fun onResume() {

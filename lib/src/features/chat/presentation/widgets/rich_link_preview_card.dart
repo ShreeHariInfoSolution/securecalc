@@ -1,20 +1,20 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-
-import '../../../../core/theme/app_theme.dart';
 import '../../domain/services/web_link_metadata_service.dart';
 
-/// WhatsApp-style Rich Link Preview Card with OpenGraph Image, Title, Description & Domain.
 class RichLinkPreviewCard extends StatefulWidget {
   final String url;
   final bool isMe;
   final bool isDark;
+  final double width;
 
   const RichLinkPreviewCard({
     super.key,
     required this.url,
     required this.isMe,
     required this.isDark,
+    required this.width,
   });
 
   @override
@@ -22,249 +22,427 @@ class RichLinkPreviewCard extends StatefulWidget {
 }
 
 class _RichLinkPreviewCardState extends State<RichLinkPreviewCard> {
-  late Future<WebLinkMetadata> _metadataFuture;
+  WebLinkMetadata? _data;
+  bool _isLoading = true;
+  double? _resolvedAspect;
+  String? _loadedImageUrl;
+
+  void _resolveImageAspect(WebLinkMetadata d) {
+    final localPath = d.localImagePath;
+    final url = (d.imageUrl ?? '').replaceAll('&amp;', '&').trim();
+    final key = localPath ?? url;
+    if (_loadedImageUrl == key || key.isEmpty) return;
+    _loadedImageUrl = key;
+
+    try {
+      final ImageProvider provider =
+          (localPath != null && File(localPath).existsSync())
+              ? FileImage(File(localPath))
+              : NetworkImage(url) as ImageProvider;
+
+      final stream = provider.resolve(const ImageConfiguration());
+      stream.addListener(ImageStreamListener(
+        (info, _) {
+          if (mounted && _loadedImageUrl == key) {
+            final w = info.image.width.toDouble();
+            final h = info.image.height.toDouble();
+            if (w > 0 && h > 0) {
+              final aspect = (w / h).clamp(0.68, 1.91);
+              if (_resolvedAspect != aspect) {
+                setState(() {
+                  _resolvedAspect = aspect;
+                });
+              }
+            }
+          }
+        },
+        onError: (exception, stackTrace) {
+          debugPrint('[LINK PREVIEW IMAGE LOAD ERROR] $exception');
+        },
+      ));
+    } catch (_) {}
+  }
 
   @override
   void initState() {
     super.initState();
-    _metadataFuture = WebLinkMetadataService.instance.getMetadata(widget.url);
+    _resolve();
   }
 
   @override
   void didUpdateWidget(RichLinkPreviewCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url) {
-      _metadataFuture =
-          WebLinkMetadataService.instance.getMetadata(widget.url);
+      _data = null;
+      _isLoading = true;
+      _resolvedAspect = null;
+      _loadedImageUrl = null;
+      _resolve();
+    }
+  }
+
+  void _resolve() {
+    final url = widget.url;
+    final cached = WebLinkMetadataService.instance.peek(url);
+    if (cached != null) {
+      _data = cached;
+      _isLoading = false;
+      return;
+    }
+
+    _isLoading = true;
+    WebLinkMetadataService.instance.getMetadata(url).then((d) {
+      if (mounted && widget.url == url) {
+        setState(() {
+          _data = d;
+          _isLoading = false;
+        });
+      }
+    }).catchError((_) {
+      if (mounted && widget.url == url) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    });
+  }
+
+  Future<void> _open() async {
+    var u = (_data?.cleanUrl ?? widget.url).trim();
+    if (!u.startsWith(RegExp(r'https?://', caseSensitive: false))) {
+      u = 'https://$u';
+    }
+    final uri = Uri.tryParse(u);
+    if (uri != null) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<WebLinkMetadata>(
-      future: _metadataFuture,
-      builder: (context, snapshot) {
-        final data = snapshot.data;
-        final isLoading =
-            snapshot.connectionState == ConnectionState.waiting && data == null;
-
-        return _buildCardContent(context, data, isLoading);
-      },
-    );
-  }
-
-  Widget _buildCardContent(
-    BuildContext context,
-    WebLinkMetadata? data,
-    bool isLoading,
-  ) {
-    final cleanUrl = data?.cleanUrl ?? widget.url;
-    final domain = data?.domain ?? _extractDomain(widget.url);
-    final title = data?.title ?? domain.toUpperCase();
-    final description = data?.description;
-    final imageUrl = data?.imageUrl;
-    final faviconUrl = data?.faviconUrl;
-
-    // WhatsApp style card colors
-    final cardBg = widget.isMe
-        ? const Color(0xFF025143).withValues(alpha: 0.88)
+    final fg = (widget.isMe || widget.isDark) ? Colors.white : const Color(0xFF111B21);
+    final bg = widget.isMe
+        ? Colors.black.withValues(alpha: .18)
         : (widget.isDark
-            ? const Color(0xFF1F2C34)
-            : const Color(0xFFE9EDEF));
+        ? Colors.white.withValues(alpha: .07)
+        : Colors.black.withValues(alpha: .06));
 
-    final titleColor = widget.isMe
-        ? Colors.white
-        : (widget.isDark ? Colors.white : const Color(0xFF111B21));
+    final uri = Uri.tryParse(
+      widget.url.startsWith('http') ? widget.url : 'https://${widget.url}',
+    );
+    final domain = _data?.domain.isNotEmpty == true
+        ? _data!.domain
+        : (uri?.host.replaceAll('www.', '') ?? widget.url);
+    final faviconUrl = _data?.faviconUrl ??
+        (uri != null
+            ? 'https://www.google.com/s2/favicons?domain=${uri.host}&sz=64'
+            : null);
 
-    final descColor = widget.isMe
-        ? Colors.white.withValues(alpha: 0.85)
-        : (widget.isDark ? Colors.white70 : const Color(0xFF667781));
+    Widget content;
 
-    final domainColor = widget.isMe
-        ? Colors.white.withValues(alpha: 0.90)
-        : AppTheme.primaryColor;
+    if (_isLoading && _data == null) {
+      content = _buildLoadingCard(fg, bg, domain, faviconUrl);
+    } else if (_data != null && _data!.hasContent) {
+      content = _buildRichCard(_data!, fg, bg, domain, faviconUrl);
+    } else {
+      content = _buildFallbackCard(fg, bg, domain, faviconUrl);
+    }
 
     return GestureDetector(
-      onTap: () async {
-        try {
-          final uri = Uri.tryParse(cleanUrl);
-          if (uri != null) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          }
-        } catch (e) {
-          debugPrint('[LINK LAUNCH ERROR] $e');
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.only(top: 6, bottom: 2),
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: widget.isMe
-                ? Colors.white.withValues(alpha: 0.15)
-                : (widget.isDark
-                    ? Colors.white.withValues(alpha: 0.1)
-                    : Colors.black.withValues(alpha: 0.08)),
-            width: 0.8,
+      onTap: _open,
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        alignment: Alignment.topCenter,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            width: widget.width,
+            color: bg,
+            child: content,
           ),
-          boxShadow: [
-            BoxShadow(
-              color:
-                  Colors.black.withValues(alpha: widget.isDark ? 0.25 : 0.05),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // ─── 1. TOP PREVIEW IMAGE (WhatsApp Style) ──────────────────────
-            if (imageUrl != null && imageUrl.isNotEmpty) ...[
-              SizedBox(
-                height: 185,
-                width: double.infinity,
-                child: Image.network(
-                  imageUrl,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return Container(
-                      color: widget.isDark ? Colors.white10 : Colors.black12,
-                      child: const Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppTheme.primaryColor,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                  errorBuilder: (context, error, stackTrace) {
-                    return const SizedBox.shrink();
-                  },
-                ),
-              ),
-            ] else if (isLoading) ...[
-              // Shimmer placeholder loading header
-              Container(
-                height: 110,
-                width: double.infinity,
-                color: widget.isDark
-                    ? Colors.white.withValues(alpha: 0.06)
-                    : Colors.black.withValues(alpha: 0.04),
-                child: const Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppTheme.primaryColor,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-
-            // ─── 2. TITLE & DESCRIPTION ────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.bold,
-                      height: 1.25,
-                      color: titleColor,
-                    ),
-                  ),
-                  if (description != null && description.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      description,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.32,
-                        color: descColor,
-                      ),
-                    ),
-                  ],
-
-                  const SizedBox(height: 8),
-
-                  // ─── 3. DOMAIN ROW (WhatsApp Style) ───────────────────────
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.link_rounded,
-                        size: 14,
-                        color: domainColor,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          domain,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: domainColor,
-                          ),
-                        ),
-                      ),
-                      if (faviconUrl != null && faviconUrl.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: Image.network(
-                            faviconUrl,
-                            width: 14,
-                            height: 14,
-                            errorBuilder: (context, error, stackTrace) => Icon(
-                              Icons.open_in_new_rounded,
-                              size: 13,
-                              color: domainColor,
-                            ),
-                          ),
-                        ),
-                      ] else ...[
-                        Icon(
-                          Icons.open_in_new_rounded,
-                          size: 13,
-                          color: domainColor,
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
         ),
       ),
     );
   }
 
-  String _extractDomain(String urlStr) {
-    var clean = urlStr.trim();
-    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
-      clean = 'https://$clean';
+  Widget _buildLoadingCard(
+      Color fg, Color bg, String domain, String? faviconUrl) {
+    return Padding(
+      padding: const EdgeInsets.all(10),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: fg.withValues(alpha: .10),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: fg.withValues(alpha: .7),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  domain,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Fetching preview…',
+                  style: TextStyle(
+                    color: fg.withValues(alpha: .5),
+                    fontSize: 11.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFallbackCard(
+      Color fg, Color bg, String domain, String? faviconUrl) {
+    return Padding(
+      padding: const EdgeInsets.all(10),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: fg.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: (faviconUrl != null && faviconUrl.isNotEmpty)
+                ? ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(
+                faviconUrl,
+                width: 38,
+                height: 38,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Icon(
+                  Icons.link_rounded,
+                  color: fg.withValues(alpha: .7),
+                  size: 20,
+                ),
+              ),
+            )
+                : Icon(
+              Icons.link_rounded,
+              color: fg.withValues(alpha: .7),
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  domain,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  widget.url,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: fg.withValues(alpha: .65),
+                    fontSize: 11.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            Icons.arrow_outward_rounded,
+            size: 16,
+            color: fg.withValues(alpha: .6),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRichCard(WebLinkMetadata d, Color fg, Color bg, String domain,
+      String? faviconUrl) {
+    final title = (d.title ?? '').trim();
+    final desc = (d.description ?? '').trim();
+    final showTitle =
+        title.isNotEmpty && title.toLowerCase() != domain.toLowerCase();
+    final hasImage = (d.imageUrl ?? '').isNotEmpty;
+    final compact = hasImage && d.imageWidth != null && d.imageWidth! < 300;
+
+    final body = Padding(
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (showTitle)
+            Text(
+              title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: fg,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w700,
+                height: 1.25,
+              ),
+            ),
+          if (desc.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                desc,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: fg.withValues(alpha: .65),
+                  fontSize: 12.5,
+                  height: 1.3,
+                ),
+              ),
+            ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(Icons.link_rounded, size: 14, color: fg.withValues(alpha: .7)),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  domain,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: fg.withValues(alpha: .85),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if ((d.faviconUrl ?? '').isNotEmpty)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.network(
+                    d.faviconUrl!,
+                    width: 16,
+                    height: 16,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    Widget networkImageFallback() {
+      final cleanUrl = (d.imageUrl ?? '').replaceAll('&amp;', '&').trim();
+      return Image.network(
+        cleanUrl,
+        fit: BoxFit.cover,
+        cacheWidth: 700,
+        loadingBuilder: (_, child, p) =>
+            p == null ? child : Container(color: fg.withValues(alpha: .08)),
+        errorBuilder: (_, __, ___) => Container(
+          color: fg.withValues(alpha: .08),
+          child: Icon(Icons.link_rounded, color: fg.withValues(alpha: .4)),
+        ),
+      );
     }
-    final uri = Uri.tryParse(clean);
-    return uri?.host.replaceAll('www.', '') ?? clean;
+
+    Widget image() {
+      final localPath = d.localImagePath;
+      if (localPath != null && File(localPath).existsSync()) {
+        return Image.file(
+          File(localPath),
+          fit: BoxFit.cover,
+          cacheWidth: 700,
+          errorBuilder: (_, __, ___) => networkImageFallback(),
+        );
+      }
+      return networkImageFallback();
+    }
+
+    if (hasImage && d.imageUrl != null) {
+      _resolveImageAspect(d);
+    }
+
+    final double effectiveAspect = _resolvedAspect ??
+        (d.imageAspect ?? (d.isVideo ? 0.8 : 1.3)).clamp(0.68, 1.91);
+
+    return compact
+        ? Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(width: 80, height: 80, child: image()),
+        Expanded(child: body),
+      ],
+    )
+        : Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasImage)
+          AspectRatio(
+            aspectRatio: effectiveAspect,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                image(),
+                if (d.isVideo)
+                  Center(
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: .88),
+                      ),
+                      child: const Icon(
+                        Icons.play_arrow_rounded,
+                        size: 32,
+                        color: Color(0xFF2C2C2E),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        body,
+      ],
+    );
   }
 }

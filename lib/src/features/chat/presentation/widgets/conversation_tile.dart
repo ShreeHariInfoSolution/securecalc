@@ -271,8 +271,8 @@ class ConversationTile extends StatelessWidget {
                                                     ],
                                                   ),
                                                 )
-                                              : Text(
-                                                  normalizeEmojiText(conversation.lastMessage),
+                                              : EmojiText(
+                                                  formatDisplayLastMessage(normalizeChatMessageText(conversation.lastMessage)),
                                                   maxLines: 1,
                                                   overflow: TextOverflow.ellipsis,
                                                   style: TextStyle(
@@ -339,4 +339,16 @@ class ConversationTile extends StatelessWidget {
       ),
     );
   }
+}
+
+String formatDisplayLastMessage(String msg) {
+  final s = msg.trim();
+  if (s.startsWith('{') &&
+      (s.contains('"latitude"') ||
+          s.contains('"location_id"') ||
+          s.contains('"longitude"'))) {
+    final isLive = s.contains('"is_live":true') || s.contains('"isLive":true');
+    return isLive ? '📍 Live location' : '📍 Location';
+  }
+  return msg;
 }

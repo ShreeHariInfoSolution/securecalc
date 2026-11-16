@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../domain/services/call_service.dart';
 
@@ -121,7 +123,11 @@ class _TopAppBarCallBannerState extends State<TopAppBarCallBanner> {
             // Center Area (Peer name & Status / Timer) - Tap to expand
             Expanded(
               child: GestureDetector(
-                onTap: widget.onTapExpand,
+                onTap: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+                  widget.onTapExpand();
+                },
                 behavior: HitTestBehavior.opaque,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),

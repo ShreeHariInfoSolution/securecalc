@@ -41,10 +41,11 @@ class CallKitService {
 
     final chatHeadId = int.tryParse(extra['chat_head_id']?.toString() ?? '0') ?? 0;
     final callerId = int.tryParse(extra['caller_id']?.toString() ?? '0') ?? 0;
-    final callTypeStr = extra['call_type']?.toString() ?? 'voice';
-    final callerName = extra['caller_name']?.toString() ?? 'Contact';
+    final rawType = extra['call_type']?.toString() ?? extra['type']?.toString();
+    final isVideo = rawType == 'video' || rawType == '1' || extra['type'] == 1;
+    final callerName = extra['caller_name']?.toString() ?? extra['nameCaller']?.toString() ?? 'Contact';
 
-    debugPrint('[CallKit] Processing call acceptance for callId: $callId');
+    debugPrint('[CallKit] Processing call acceptance for callId: $callId (isVideo: $isVideo)');
 
     // Connect socket immediately
     SocketChatService.instance.connect();
@@ -54,7 +55,7 @@ class CallKitService {
       callId: callId,
       chatHeadId: chatHeadId,
       callerId: callerId,
-      callType: callTypeStr == 'video' ? CallType.video : CallType.voice,
+      callType: isVideo ? CallType.video : CallType.voice,
       callerName: callerName,
     );
 
@@ -63,6 +64,36 @@ class CallKitService {
 
     // Trigger acceptance
     unawaited(CallService.instance.acceptCall());
+  }
+
+  void _handleCallStart(Map<String, dynamic> extra) {
+    if (CallService.instance.state != CallState.idle) {
+      final rawType = extra['call_type']?.toString() ?? extra['type']?.toString();
+      final isVideo = rawType == 'video' || rawType == '1' || extra['type'] == 1;
+      if (isVideo) {
+        debugPrint('[CallKit] Upgrading active call to video from native CallKit request');
+        unawaited(CallService.instance.switchCallType(CallType.video));
+      }
+      return;
+    }
+
+    final chatHeadId = int.tryParse(extra['chat_head_id']?.toString() ?? '0') ?? 0;
+    final callerId = int.tryParse(extra['caller_id']?.toString() ?? extra['peer_user_id']?.toString() ?? '0') ?? 0;
+    final rawType = extra['call_type']?.toString() ?? extra['type']?.toString();
+    final isVideo = rawType == 'video' || rawType == '1' || extra['type'] == 1;
+    final name = extra['caller_name']?.toString() ?? extra['nameCaller']?.toString() ?? 'Contact';
+    final avatar = extra['avatar']?.toString() ?? '';
+
+    if (chatHeadId > 0) {
+      debugPrint('[CallKit] Processing native call start for chatHeadId: $chatHeadId (isVideo: $isVideo)');
+      unawaited(CallService.instance.startCall(
+        chatHeadId: chatHeadId,
+        type: isVideo ? CallType.video : CallType.voice,
+        name: name,
+        avatar: avatar,
+        peerUserId: callerId > 0 ? callerId : null,
+      ));
+    }
   }
 
   Future<void> checkAndProcessInitialCall() async {
@@ -118,6 +149,13 @@ class CallKitService {
           }
           break;
 
+        case Event.actionCallStart:
+        case Event.actionCallCallback:
+        case Event.actionCallCustom:
+          debugPrint('[CallKit] Call action received natively for callId: $callId');
+          _handleCallStart(extra);
+          break;
+
         case Event.actionCallDecline:
           debugPrint('[CallKit] Call declined by user for callId: $callId');
           if (callId != null) {
@@ -139,6 +177,11 @@ class CallKitService {
               CallService.instance.state != CallState.idle) {
             unawaited(CallService.instance.hangUp());
           }
+          break;
+
+        case Event.actionCallToggleAudioSession:
+          debugPrint('[CallKit] Audio session toggle event received for callId: $callId');
+          unawaited(CallService.instance.reapplyRoute());
           break;
 
         default:
@@ -198,24 +241,24 @@ class CallKitService {
         isShowCallID: false,
         isShowFullLockedScreen: true,
       ),
-      ios: const IOSParams(
+      ios: IOSParams(
         iconName: 'AppIcon',
         handleType: 'generic',
-        supportsVideo: true,
+        supportsVideo: isVideo,
         maximumCallGroups: 1,
         maximumCallsPerCallGroup: 1,
-        audioSessionMode: 'voiceChat',
-        audioSessionActive: true,
+        configureAudioSession: false,   // NEW: AudioRouteManager owns the session
         supportsDTMF: true,
-        supportsHolding: false,
-        supportsGrouping: false,
-        supportsUngrouping: false,
+        supportsHolding: true,
+        supportsGrouping: true,
+        supportsUngrouping: true,
         ringtonePath: '',
       ),
     );
 
     try {
       final paramsMap = params.toJson();
+      paramsMap['includesCallsInRecents'] = false;
       if (paramsMap['ios'] is Map) {
         (paramsMap['ios'] as Map<String, dynamic>)['includesCallsInRecents'] = false;
       } else {
@@ -271,31 +314,32 @@ class CallKitService {
         isShowCallID: false,
         isShowFullLockedScreen: true,
       ),
-      ios: const IOSParams(
+      ios: IOSParams(
         iconName: 'AppIcon',
         handleType: 'generic',
-        supportsVideo: true,
+        supportsVideo: isVideo,
         maximumCallGroups: 1,
         maximumCallsPerCallGroup: 1,
-        audioSessionMode: 'voiceChat',
-        audioSessionActive: true,
+        configureAudioSession: false,
         supportsDTMF: true,
-        supportsHolding: false,
-        supportsGrouping: false,
-        supportsUngrouping: false,
+        supportsHolding: true,
+        supportsGrouping: true,
+        supportsUngrouping: true,
         ringtonePath: '',
       ),
     );
 
     try {
       final paramsMap = params.toJson();
+      paramsMap['includesCallsInRecents'] = false;
       if (paramsMap['ios'] is Map) {
         (paramsMap['ios'] as Map<String, dynamic>)['includesCallsInRecents'] = false;
       } else {
         paramsMap['ios'] = <String, dynamic>{'includesCallsInRecents': false};
       }
-      await FlutterCallkitIncoming.startCall(params);
-      debugPrint('[CallKit] Outgoing call presented via CallKit for callUuid: $callUuid');
+      await const MethodChannel('flutter_callkit_incoming')
+          .invokeMethod('startCall', paramsMap);
+      debugPrint('[CallKit] Outgoing call presented via CallKit (recents disabled) for callUuid: $callUuid');
     } catch (e) {
       debugPrint('[CallKit ERROR] Failed to start CallKit outgoing call: $e');
     }

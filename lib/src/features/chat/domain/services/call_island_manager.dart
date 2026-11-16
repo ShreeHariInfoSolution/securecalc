@@ -13,6 +13,7 @@ class CallIslandManager with WidgetsBindingObserver {
 
   final LiveActivities _liveActivities = LiveActivities();
   bool _initialized = false;
+  bool _creating = false;
   String? _activityId;
 
   Future<void> init() async {
@@ -68,6 +69,9 @@ class CallIslandManager with WidgetsBindingObserver {
       };
 
       if (_activityId == null) {
+        if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+        if (_creating) return;
+        _creating = true;
         try {
           const actId = "active_call_island";
           _activityId = await _liveActivities.createActivity(
@@ -77,6 +81,8 @@ class CallIslandManager with WidgetsBindingObserver {
           );
         } catch (e) {
           debugPrint('[LiveActivities] Create error: $e');
+        } finally {
+          _creating = false;
         }
       } else {
         try {

@@ -185,6 +185,20 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
     }
   }
 
+  Future<void> _rewind10s() async {
+    if (_audioPlayer == null) return;
+    final newPos = _position.value - const Duration(seconds: 10);
+    final target = newPos < Duration.zero ? Duration.zero : newPos;
+    await _audioPlayer!.seek(target);
+  }
+
+  Future<void> _forward10s() async {
+    if (_audioPlayer == null) return;
+    final newPos = _position.value + const Duration(seconds: 10);
+    final target = newPos > _duration.value ? _duration.value : newPos;
+    await _audioPlayer!.seek(target);
+  }
+
   Future<void> _openFileExternally() async {
     final path = await _downloadLocalFile();
     if (path != null) {
@@ -194,6 +208,53 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
       }
     } else {
       AppToast.show('Failed to download file for viewing.', isError: true);
+    }
+  }
+
+  Future<void> _renameFile() async {
+    final controller = TextEditingController(text: widget.item.fileName);
+    final newName = await showCupertinoDialog<String>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Rename File'),
+        content: Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: CupertinoTextField(
+            controller: controller,
+            placeholder: 'Enter new name',
+            autofocus: true,
+          ),
+        ),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (newName != null && newName.isNotEmpty && newName != widget.item.fileName) {
+      setState(() => _isLoadingFile = true);
+      final updated = await ServerApiService.instance.renameUpload(
+        id: widget.item.id,
+        newName: newName,
+      );
+      if (mounted) {
+        setState(() => _isLoadingFile = false);
+        if (updated != null) {
+          AppToast.show('File renamed to "$newName"');
+          Navigator.pop(context);
+          widget.onItemDeleted?.call();
+        } else {
+          AppToast.show('Failed to rename file', isError: true);
+        }
+      }
     }
   }
 
@@ -253,164 +314,185 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final item = widget.item;
 
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          children: [
-            // Drag Handle Bar
-            const SizedBox(height: 10),
-            Container(
-              width: 38,
-              height: 5,
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF3A3A3C) : const Color(0xFFD1D1D6),
-                borderRadius: BorderRadius.circular(2.5),
-              ),
-            ),
-            const SizedBox(height: 12),
+    return Material(
+      color: Colors.transparent,
+      child: DefaultTextStyle(
+        style: TextStyle(
+          decoration: TextDecoration.none,
+          fontFamily: '.SF Pro Text',
+          color: isDark ? Colors.white : const Color(0xFF1C1C1E),
+        ),
+        child: Container(
+          height: MediaQuery.of(context).size.height * 0.88,
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              children: [
+                // Drag Handle Bar
+                const SizedBox(height: 10),
+                Container(
+                  width: 38,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF3A3A3C) : const Color(0xFFD1D1D6),
+                    borderRadius: BorderRadius.circular(2.5),
+                  ),
+                ),
+                const SizedBox(height: 12),
 
-            // Navigation Header
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(CupertinoIcons.xmark_circle_fill),
-                    color: isDark ? const Color(0xFF8E8E93) : const Color(0xFF8E8E93),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        Text(
-                          item.fileName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: isDark ? Colors.white : const Color(0xFF1C1C1E),
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '${item.formattedSize}  •  ${item.formattedDate}',
-                          style: TextStyle(
-                            color: isDark ? const Color(0xFF8E8E93) : const Color(0xFF6C6C70),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(CupertinoIcons.arrow_down_circle, color: Color(0xFF34C759)),
-                    onPressed: _isDownloading ? null : _saveFileToDevice,
-                  ),
-                  IconButton(
-                    icon: const Icon(CupertinoIcons.trash, color: CupertinoColors.destructiveRed),
-                    onPressed: _deleteFile,
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, thickness: 0.5),
-
-            // Content Area
-            Expanded(
-              child: _isLoadingFile
-                  ? const Center(child: CupertinoActivityIndicator(radius: 14))
-                  : _buildMainPreviewContent(isDark),
-            ),
-
-            // Action Bar
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: CupertinoButton(
-                      color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      borderRadius: BorderRadius.circular(14),
-                      onPressed: _isDownloading ? null : _shareFile,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            CupertinoIcons.share,
-                            size: 18,
-                            color: isDark ? Colors.white : const Color(0xFF007AFF),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Share',
-                            style: TextStyle(
-                              color: isDark ? Colors.white : const Color(0xFF007AFF),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
+                // Navigation Header
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(CupertinoIcons.xmark_circle_fill),
+                        color: isDark ? const Color(0xFF8E8E93) : const Color(0xFF8E8E93),
+                        onPressed: () => Navigator.pop(context),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: CupertinoButton(
-                      color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      borderRadius: BorderRadius.circular(14),
-                      onPressed: _isDownloading ? null : _saveFileToDevice,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            CupertinoIcons.arrow_down_to_line,
-                            size: 18,
-                            color: isDark ? Colors.white : const Color(0xFF34C759),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Save',
-                            style: TextStyle(
-                              color: isDark ? Colors.white : const Color(0xFF34C759),
-                              fontWeight: FontWeight.w600,
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Text(
+                              item.fileName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: isDark ? Colors.white : const Color(0xFF1C1C1E),
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                decoration: TextDecoration.none,
+                              ),
                             ),
-                          ),
-                        ],
+                            Text(
+                              '${item.formattedSize}  •  ${item.formattedDate}',
+                              style: TextStyle(
+                                color: isDark ? const Color(0xFF8E8E93) : const Color(0xFF6C6C70),
+                                fontSize: 12,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                      IconButton(
+                        icon: const Icon(CupertinoIcons.pencil, color: Color(0xFF007AFF)),
+                        onPressed: _renameFile,
+                      ),
+                      IconButton(
+                        icon: const Icon(CupertinoIcons.arrow_down_circle, color: Color(0xFF34C759)),
+                        onPressed: _isDownloading ? null : _saveFileToDevice,
+                      ),
+                      IconButton(
+                        icon: const Icon(CupertinoIcons.trash, color: CupertinoColors.destructiveRed),
+                        onPressed: _deleteFile,
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: CupertinoButton.filled(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      borderRadius: BorderRadius.circular(14),
-                      onPressed: _isDownloading ? null : _openFileExternally,
-                      child: _isDownloading
-                          ? const CupertinoActivityIndicator(color: Colors.white, radius: 10)
-                          : const Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(CupertinoIcons.arrow_up_right_square, size: 18, color: Colors.white),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Open',
-                                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const Divider(height: 1, thickness: 0.5),
+
+                // Content Area
+                Expanded(
+                  child: _isLoadingFile
+                      ? const Center(child: CupertinoActivityIndicator(radius: 14))
+                      : _buildMainPreviewContent(isDark),
+                ),
+
+                // Action Bar
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: CupertinoButton(
+                          color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          borderRadius: BorderRadius.circular(14),
+                          onPressed: _isDownloading ? null : _shareFile,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                CupertinoIcons.share,
+                                size: 18,
+                                color: isDark ? Colors.white : const Color(0xFF007AFF),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Share',
+                                style: TextStyle(
+                                  color: isDark ? Colors.white : const Color(0xFF007AFF),
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.none,
                                 ),
-                              ],
-                            ),
-                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: CupertinoButton(
+                          color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          borderRadius: BorderRadius.circular(14),
+                          onPressed: _isDownloading ? null : _saveFileToDevice,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                CupertinoIcons.arrow_down_to_line,
+                                size: 18,
+                                color: isDark ? Colors.white : const Color(0xFF34C759),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Save',
+                                style: TextStyle(
+                                  color: isDark ? Colors.white : const Color(0xFF34C759),
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.none,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: CupertinoButton.filled(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          borderRadius: BorderRadius.circular(14),
+                          onPressed: _isDownloading ? null : _openFileExternally,
+                          child: _isDownloading
+                              ? const CupertinoActivityIndicator(color: Colors.white, radius: 10)
+                              : const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(CupertinoIcons.arrow_up_right_square, size: 18, color: Colors.white),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      'Open',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        decoration: TextDecoration.none,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -425,47 +507,53 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
           ? {'Authorization': 'Bearer ${ServerApiService.instance.authToken}'}
           : null;
 
+      final localPath = _localDownloadedPath;
+      final hasLocal = localPath != null && File(localPath).existsSync();
+
       return Container(
         color: Colors.black,
         child: Center(
           child: InteractiveViewer(
             minScale: 0.5,
             maxScale: 4.0,
-            child: Image.network(
-              url,
-              headers: headers,
-              fit: BoxFit.contain,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CupertinoActivityIndicator(radius: 14, color: Colors.white),
-                      SizedBox(height: 12),
-                      Text(
-                        'Loading image...',
-                        style: TextStyle(color: Colors.white70, fontSize: 13),
-                      ),
-                    ],
+            child: hasLocal
+                ? Image.file(
+                    File(localPath),
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) => _buildImageErrorView(),
+                  )
+                : Image.network(
+                    url,
+                    headers: headers,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CupertinoActivityIndicator(radius: 14, color: Colors.white),
+                            SizedBox(height: 12),
+                            Text(
+                              'Loading high resolution image...',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) => _buildImageErrorView(),
                   ),
-                );
-              },
-              errorBuilder: (context, error, stackTrace) => const Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(CupertinoIcons.exclamationmark_triangle, color: Colors.orange, size: 48),
-                  SizedBox(height: 12),
-                  Text('Failed to load image preview', style: TextStyle(color: Colors.white)),
-                ],
-              ),
-            ),
           ),
         ),
       );
     } else if (item.isAudio) {
       const accentColor = Color(0xFFFF9500);
-      
+
       return Center(
         child: SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
@@ -474,15 +562,35 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 90,
-                height: 90,
+                width: 100,
+                height: 100,
                 decoration: BoxDecoration(
-                  color: accentColor.withOpacity(0.15),
                   shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      accentColor,
+                      accentColor.withOpacity(0.7),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accentColor.withOpacity(_isPlaying ? 0.45 : 0.2),
+                      blurRadius: _isPlaying ? 24 : 12,
+                      spreadRadius: _isPlaying ? 4 : 0,
+                    ),
+                  ],
                 ),
-                child: _isDownloading
-                    ? const CupertinoActivityIndicator(radius: 18, color: accentColor)
-                    : const Icon(CupertinoIcons.waveform, color: accentColor, size: 48),
+                child: Center(
+                  child: _isDownloading
+                      ? const CupertinoActivityIndicator(radius: 18, color: Colors.white)
+                      : Icon(
+                          _isPlaying ? CupertinoIcons.waveform_path : CupertinoIcons.music_note_2,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                ),
               ),
               const SizedBox(height: 20),
               Text(
@@ -492,6 +600,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                   color: isDark ? Colors.white : const Color(0xFF1C1C1E),
                   fontSize: 17,
                   fontWeight: FontWeight.bold,
+                  decoration: TextDecoration.none,
                 ),
               ),
               const SizedBox(height: 6),
@@ -503,7 +612,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                     builder: (context, dur, _) {
                       final maxSec = dur.inSeconds > 0 ? dur.inSeconds.toDouble() : 1.0;
                       final curSec = pos.inSeconds.toDouble().clamp(0.0, maxSec);
-                      
+
                       return Column(
                         children: [
                           Text(
@@ -511,6 +620,8 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                             style: TextStyle(
                               color: isDark ? const Color(0xFF8E8E93) : const Color(0xFF6C6C70),
                               fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              decoration: TextDecoration.none,
                             ),
                           ),
                           if (_isDownloading)
@@ -522,6 +633,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                                   color: accentColor,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
+                                  decoration: TextDecoration.none,
                                 ),
                               ),
                             ),
@@ -544,19 +656,36 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                   );
                 },
               ),
-              const SizedBox(height: 16),
-              CupertinoButton(
-                color: accentColor,
-                padding: const EdgeInsets.all(16),
-                borderRadius: BorderRadius.circular(40),
-                onPressed: _isDownloading ? null : _toggleAudio,
-                child: _isDownloading
-                    ? const CupertinoActivityIndicator(radius: 13, color: Colors.white)
-                    : Icon(
-                        _isPlaying ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
-                        color: Colors.white,
-                        size: 26,
-                      ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    iconSize: 32,
+                    icon: const Icon(CupertinoIcons.gobackward_10, color: accentColor),
+                    onPressed: _isDownloading ? null : _rewind10s,
+                  ),
+                  const SizedBox(width: 16),
+                  CupertinoButton(
+                    color: accentColor,
+                    padding: const EdgeInsets.all(18),
+                    borderRadius: BorderRadius.circular(44),
+                    onPressed: _isDownloading ? null : _toggleAudio,
+                    child: _isDownloading
+                        ? const CupertinoActivityIndicator(radius: 14, color: Colors.white)
+                        : Icon(
+                            _isPlaying ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                  ),
+                  const SizedBox(width: 16),
+                  IconButton(
+                    iconSize: 32,
+                    icon: const Icon(CupertinoIcons.goforward_10, color: accentColor),
+                    onPressed: _isDownloading ? null : _forward10s,
+                  ),
+                ],
               ),
             ],
           ),
@@ -581,26 +710,81 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                   );
                 },
                 child: Container(
-                  height: 220,
+                  height: 230,
                   margin: const EdgeInsets.symmetric(horizontal: 24),
                   decoration: BoxDecoration(
                     color: Colors.black,
-                    borderRadius: BorderRadius.circular(18),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
                   ),
-                  child: VideoThumbnailCard(
-                    mediaUrl: url,
-                    width: double.infinity,
-                    height: 220,
-                    borderRadius: BorderRadius.circular(18),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        VideoThumbnailCard(
+                          mediaUrl: url,
+                          width: double.infinity,
+                          height: 230,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF007AFF).withOpacity(0.9),
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF007AFF).withOpacity(0.4),
+                                blurRadius: 12,
+                                spreadRadius: 2,
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            CupertinoIcons.play_fill,
+                            color: Colors.white,
+                            size: 30,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
               const SizedBox(height: 20),
-              Text(
-                'Tap video to play in app',
-                style: TextStyle(
-                  color: isDark ? const Color(0xFF8E8E93) : const Color(0xFF6C6C70),
-                  fontSize: 13,
+              CupertinoButton(
+                color: const Color(0xFF007AFF),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                borderRadius: BorderRadius.circular(20),
+                onPressed: () {
+                  AppVideoPlayerModal.open(
+                    context,
+                    mediaUrl: url,
+                    title: item.fileName,
+                  );
+                },
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(CupertinoIcons.play_circle_fill, color: Colors.white, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'Play Fullscreen Video',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -630,6 +814,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                       color: Color(0xFF34C759),
                       fontSize: 22,
                       fontWeight: FontWeight.w900,
+                      decoration: TextDecoration.none,
                     ),
                   ),
                 ),
@@ -644,6 +829,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                     color: isDark ? Colors.white : const Color(0xFF1C1C1E),
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
+                    decoration: TextDecoration.none,
                   ),
                 ),
               ),
@@ -653,6 +839,7 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
                 style: TextStyle(
                   color: isDark ? const Color(0xFF8E8E93) : const Color(0xFF6C6C70),
                   fontSize: 13,
+                  decoration: TextDecoration.none,
                 ),
               ),
             ],
@@ -660,6 +847,33 @@ class _FilePreviewDialogState extends State<FilePreviewDialog> {
         ),
       );
     }
+  }
+
+  Widget _buildImageErrorView() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(CupertinoIcons.exclamationmark_triangle_fill, color: Colors.amber, size: 44),
+          const SizedBox(height: 12),
+          const Text(
+            'Failed to load image preview',
+            style: TextStyle(color: Colors.white70, fontSize: 14, decoration: TextDecoration.none),
+          ),
+          const SizedBox(height: 12),
+          CupertinoButton(
+            color: Colors.white24,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            borderRadius: BorderRadius.circular(20),
+            onPressed: () {
+              setState(() => _localDownloadedPath = null);
+              _downloadLocalFile();
+            },
+            child: const Text('Retry Loading', style: TextStyle(color: Colors.white, fontSize: 13, decoration: TextDecoration.none)),
+          ),
+        ],
+      ),
+    );
   }
 
   String _formatDuration(Duration d) {

@@ -15,6 +15,7 @@
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */; };
 		7884E8692EC3CC0700C636F3 /* CallIslandWidgetLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E86A2EC3CC0400C636F3 /* CallIslandWidgetLiveActivity.swift */; };
+		7884E86B2EC3CC0400C636F4 /* AudioRouteManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E86C2EC3CC0400C636F4 /* AudioRouteManager.swift */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
 		78F123452C89000100000010 /* sound_1.wav in Resources */ = {isa = PBXBuildFile; fileRef = 78F123452C89000100000020 /* sound_1.wav */; };
 		78F123452C89000100000011 /* sound_2.wav in Resources */ = {isa = PBXBuildFile; fileRef = 78F123452C89000100000021 /* sound_2.wav */; };
@@ -22,6 +23,7 @@
 		78F123452C89000100000013 /* sound_4.wav in Resources */ = {isa = PBXBuildFile; fileRef = 78F123452C89000100000023 /* sound_4.wav */; };
 		78F123452C89000100000014 /* sound_5.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 78F123452C89000100000024 /* sound_5.mp3 */; };
 		78F123452C89000100000015 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 78F123452C89000100000025 /* GoogleService-Info.plist */; };
+		78F123452C89000100000016 /* ios_antic_notification_9971.wav in Resources */ = {isa = PBXBuildFile; fileRef = 78F123452C89000100000026 /* ios_antic_notification_9971.wav */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
@@ -62,6 +64,7 @@
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		7884E86A2EC3CC0400C636F3 /* CallIslandWidgetLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallIslandWidgetLiveActivity.swift; sourceTree = "<group>"; };
+		7884E86C2EC3CC0400C636F4 /* AudioRouteManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRouteManager.swift; sourceTree = "<group>"; };
 		78E0A7A72DC9AD7400C4905E /* FlutterGeneratedPluginSwiftPackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = FlutterGeneratedPluginSwiftPackage; path = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage; sourceTree = "<group>"; };
 		78F123452C89000100000020 /* sound_1.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = sound_1.wav; sourceTree = "<group>"; };
 		78F123452C89000100000021 /* sound_2.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = sound_2.wav; sourceTree = "<group>"; };
@@ -69,6 +72,7 @@
 		78F123452C89000100000023 /* sound_4.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = sound_4.wav; sourceTree = "<group>"; };
 		78F123452C89000100000024 /* sound_5.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = sound_5.mp3; sourceTree = "<group>"; };
 		78F123452C89000100000025 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
+		78F123452C89000100000026 /* ios_antic_notification_9971.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = ios_antic_notification_9971.wav; sourceTree = "<group>"; };
 		78F123452C89000100000030 /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = Runner.entitlements; path = Runner/Runner.entitlements; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		7C1A3EC005C81E46915EDF9C /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
@@ -169,12 +173,14 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				7884E86A2EC3CC0400C636F3 /* CallIslandWidgetLiveActivity.swift */,
+				7884E86C2EC3CC0400C636F4 /* AudioRouteManager.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				78F123452C89000100000020 /* sound_1.wav */,
 				78F123452C89000100000021 /* sound_2.wav */,
 				78F123452C89000100000022 /* sound_3.wav */,
 				78F123452C89000100000023 /* sound_4.wav */,
 				78F123452C89000100000024 /* sound_5.mp3 */,
+				78F123452C89000100000026 /* ios_antic_notification_9971.wav */,
 				78F123452C89000100000030 /* Runner.entitlements */,
 				78F123452C89000100000025 /* GoogleService-Info.plist */,
 			);
@@ -248,7 +254,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1510;
+				LastUpgradeCheck = 2710;
 				ORGANIZATIONNAME = "";
 				TargetAttributes = {
 					331C8080294A63A400263BE5 = {
@@ -304,6 +310,7 @@
 				78F123452C89000100000012 /* sound_3.wav in Resources */,
 				78F123452C89000100000013 /* sound_4.wav in Resources */,
 				78F123452C89000100000014 /* sound_5.mp3 in Resources */,
+				78F123452C89000100000016 /* ios_antic_notification_9971.wav in Resources */,
 				78F123452C89000100000015 /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -422,6 +429,7 @@
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				7884E8692EC3CC0700C636F3 /* CallIslandWidgetLiveActivity.swift in Sources */,
+				7884E86B2EC3CC0400C636F4 /* AudioRouteManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -479,6 +487,7 @@
 				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
@@ -519,6 +528,7 @@
 				DEVELOPMENT_TEAM = MRG558B6WM;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -544,6 +554,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.shis.securecalc.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -562,6 +573,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.shis.securecalc.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -578,6 +590,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.shis.securecalc.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -610,6 +623,7 @@
 				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
@@ -668,6 +682,7 @@
 				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
@@ -710,6 +725,7 @@
 				DEVELOPMENT_TEAM = MRG558B6WM;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -739,6 +755,7 @@
 				DEVELOPMENT_TEAM = MRG558B6WM;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

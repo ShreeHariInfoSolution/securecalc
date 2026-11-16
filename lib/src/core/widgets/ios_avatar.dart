@@ -432,6 +432,7 @@ class IosAvatar extends StatelessWidget {
           width: size,
           height: size,
           fit: BoxFit.cover,
+          alignment: const Alignment(0, -0.2),
           errorBuilder: (context, error, stackTrace) => fallbackInitials,
         ),
       );
@@ -575,6 +576,7 @@ class _CachedNetworkAvatarState extends State<_CachedNetworkAvatar> {
           width: widget.size,
           height: widget.size,
           fit: BoxFit.cover,
+          alignment: const Alignment(0, -0.2),
           errorBuilder: (context, error, stackTrace) => widget.fallback,
         ),
       );

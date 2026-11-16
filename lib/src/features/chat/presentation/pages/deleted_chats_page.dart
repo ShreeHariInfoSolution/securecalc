@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
 import 'package:securecalc/src/core/widgets/ios_avatar.dart';
@@ -865,6 +866,8 @@ class DeletedChatDetailPage extends StatefulWidget {
 
 class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
   late List<ServerMessageModel> _chatMessages;
+  bool _isSelectionMode = false;
+  final Set<int> _selectedMessageIds = {};
 
   @override
   void initState() {
@@ -962,6 +965,53 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
     return '$hour12:$minuteStr $period';
   }
 
+  void _onMessageLongPress(ServerMessageModel message) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (!_isSelectionMode) {
+        _isSelectionMode = true;
+        _selectedMessageIds.add(message.id);
+      } else {
+        _toggleMessageSelection(message.id);
+      }
+    });
+  }
+
+  void _onMessageTap(ServerMessageModel message) {
+    if (_isSelectionMode) {
+      HapticFeedback.selectionClick();
+      setState(() {
+        _toggleMessageSelection(message.id);
+      });
+    } else {
+      _showMessageOptionsSheet(message);
+    }
+  }
+
+  void _toggleMessageSelection(int messageId) {
+    if (_selectedMessageIds.contains(messageId)) {
+      _selectedMessageIds.remove(messageId);
+      if (_selectedMessageIds.isEmpty) {
+        _isSelectionMode = false;
+      }
+    } else {
+      _selectedMessageIds.add(messageId);
+    }
+  }
+
+  void _toggleSelectAll() {
+    setState(() {
+      if (_selectedMessageIds.length == _chatMessages.length) {
+        _selectedMessageIds.clear();
+        _isSelectionMode = false;
+      } else {
+        _selectedMessageIds.clear();
+        _selectedMessageIds.addAll(_chatMessages.map((m) => m.id));
+        _isSelectionMode = true;
+      }
+    });
+  }
+
   Future<void> _recoverChat() async {
     final displayName = _getChatName();
     showDialog(
@@ -1000,6 +1050,7 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
 
       if (success) {
+        await LocalChatStorage.instance.clearClearedAt(message.chatHeadId.toString());
         setState(() {
           _chatMessages.removeWhere((m) => m.id == message.id);
         });
@@ -1012,6 +1063,51 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
     } catch (e) {
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
       AppToast.show('Error recovering message: $e', isError: true);
+    }
+  }
+
+  Future<void> _recoverSelectedMessages() async {
+    if (_selectedMessageIds.isEmpty) return;
+    final idsToRecover = List<int>.from(_selectedMessageIds);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CupertinoActivityIndicator(radius: 16)),
+    );
+
+    int successCount = 0;
+    try {
+      for (final msgId in idsToRecover) {
+        final success = await ServerApiService.instance.recoverMessage(msgId);
+        if (success) {
+          successCount++;
+          setState(() {
+            _chatMessages.removeWhere((m) => m.id == msgId);
+          });
+          widget.onMessageRecovered(msgId);
+        }
+      }
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+      if (successCount > 0) {
+        AppToast.show('$successCount ${successCount == 1 ? "message" : "messages"} recovered successfully');
+        unawaited(ServerChatManager.instance.syncChats());
+      } else {
+        AppToast.show('Failed to recover selected message(s)', isError: true);
+      }
+
+      if (_chatMessages.isEmpty && mounted) {
+        Navigator.of(context).pop();
+      } else {
+        setState(() {
+          _isSelectionMode = false;
+          _selectedMessageIds.clear();
+        });
+      }
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      AppToast.show('Error recovering messages: $e', isError: true);
     }
   }
 
@@ -1046,6 +1142,23 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
                 Icon(CupertinoIcons.arrow_counterclockwise, size: 20),
                 SizedBox(width: 8),
                 Text('Recover Message'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(modalContext).pop();
+              setState(() {
+                _isSelectionMode = true;
+                _selectedMessageIds.add(message.id);
+              });
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.checkmark_circle, size: 20),
+                SizedBox(width: 8),
+                Text('Select Messages'),
               ],
             ),
           ),
@@ -1096,15 +1209,100 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
     );
 
     if (confirm == true && mounted) {
-      final success = await ServerApiService.instance.deleteMessagePermanently(message.id);
-      if (success) {
-        setState(() {
-          _chatMessages.removeWhere((m) => m.id == message.id);
-        });
-        widget.onMessageRecovered(message.id);
-        AppToast.show('Message permanently deleted');
-      } else {
-        AppToast.show('Failed to delete message', isError: true);
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(child: CupertinoActivityIndicator(radius: 16)),
+      );
+
+      try {
+        final result = await ServerApiService.instance.deleteMessagesPermanently([message.id]);
+        if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+        if (result.success && result.deletedIds.contains(message.id)) {
+          setState(() {
+            _chatMessages.removeWhere((m) => m.id == message.id);
+          });
+          widget.onMessageRecovered(message.id);
+          AppToast.show('Message permanently deleted');
+          if (_chatMessages.isEmpty && mounted) {
+            Navigator.of(context).pop();
+          }
+        } else if (result.errorMessages.isNotEmpty) {
+          AppToast.show(result.errorMessages.first, isError: true);
+        } else {
+          AppToast.show('Failed to delete message permanently', isError: true);
+        }
+      } catch (e) {
+        if (mounted) Navigator.of(context, rootNavigator: true).pop();
+        AppToast.show('Error deleting message: $e', isError: true);
+      }
+    }
+  }
+
+  Future<void> _confirmPermanentDeleteSelectedMessages() async {
+    if (_selectedMessageIds.isEmpty) return;
+    final idsToDelete = List<int>.from(_selectedMessageIds);
+    final count = idsToDelete.length;
+
+    final confirm = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: Text('Delete $count ${count == 1 ? "Message" : "Messages"} Permanently?'),
+        content: const Text(
+          'Are you sure you want to permanently delete the selected message(s)? This action cannot be undone.',
+        ),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('Cancel'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            child: const Text('Delete'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(child: CupertinoActivityIndicator(radius: 16)),
+      );
+
+      try {
+        final result = await ServerApiService.instance.deleteMessagesPermanently(idsToDelete);
+        if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+        if (result.success && result.deletedIds.isNotEmpty) {
+          setState(() {
+            _chatMessages.removeWhere((m) => result.deletedIds.contains(m.id));
+            _selectedMessageIds.removeAll(result.deletedIds);
+            if (_selectedMessageIds.isEmpty) {
+              _isSelectionMode = false;
+            }
+          });
+          for (final id in result.deletedIds) {
+            widget.onMessageRecovered(id);
+          }
+          AppToast.show('${result.deletedIds.length} ${result.deletedIds.length == 1 ? "message" : "messages"} permanently deleted');
+        }
+
+        if (result.errorMessages.isNotEmpty) {
+          AppToast.show(result.errorMessages.first, isError: true);
+        } else if (!result.success && result.deletedIds.isEmpty) {
+          AppToast.show('Failed to delete message(s) permanently', isError: true);
+        }
+
+        if (_chatMessages.isEmpty && mounted) {
+          Navigator.of(context).pop();
+        }
+      } catch (e) {
+        if (mounted) Navigator.of(context, rootNavigator: true).pop();
+        AppToast.show('Error deleting message(s): $e', isError: true);
       }
     }
   }
@@ -1120,56 +1318,116 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
       appBar: AppBar(
         backgroundColor: AppTheme.glassSurface(isDark),
         elevation: 0,
+        titleSpacing: 0,
         leading: IconButton(
-          icon: Icon(CupertinoIcons.chevron_left, color: AppTheme.primaryColor),
-          onPressed: () => Navigator.of(context).pop(),
+          icon: Icon(
+            _isSelectionMode ? CupertinoIcons.xmark : CupertinoIcons.chevron_left,
+            color: AppTheme.primaryColor,
+          ),
+          onPressed: () {
+            if (_isSelectionMode) {
+              setState(() {
+                _isSelectionMode = false;
+                _selectedMessageIds.clear();
+              });
+            } else {
+              Navigator.of(context).pop();
+            }
+          },
         ),
-        title: Row(
-          children: [
-            IosAvatar(
-              name: chatName,
-              imagePath: chatAvatar,
-              size: 36,
-              showOnline: false,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        title: _isSelectionMode
+            ? Text(
+                '${_selectedMessageIds.length} Selected',
+                style: TextStyle(
+                  color: AppTheme.primaryText(isDark),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  inherit: true,
+                ),
+              )
+            : Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    chatName,
-                    style: TextStyle(
-                      color: AppTheme.primaryText(isDark),
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  IosAvatar(
+                    name: chatName,
+                    imagePath: chatAvatar,
+                    size: 36,
+                    showOnline: false,
                   ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          chatName,
+                          style: TextStyle(
+                            color: AppTheme.primaryText(isDark),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            inherit: true,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          'Deleted Chat Preview',
+                          style: TextStyle(
+                            color: AppTheme.secondaryText(isDark),
+                            fontSize: 11,
+                            inherit: true,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+        actions: [
+          if (_isSelectionMode)
+            CupertinoButton(
+              key: const ValueKey('action_btn_select_all'),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              onPressed: _toggleSelectAll,
+              child: Text(
+                _selectedMessageIds.length == _chatMessages.length
+                    ? 'Deselect All'
+                    : 'Select All',
+                style: TextStyle(
+                  color: AppTheme.primaryColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  inherit: true,
+                ),
+              ),
+            )
+          else
+            CupertinoButton(
+              key: const ValueKey('action_btn_recover_chat'),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              onPressed: _recoverChat,
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    CupertinoIcons.arrow_counterclockwise,
+                    size: 16,
+                    color: Color(0xFF34C759),
+                  ),
+                  SizedBox(width: 4),
                   Text(
-                    'Deleted Chat Preview',
+                    'Recover',
                     style: TextStyle(
-                      color: AppTheme.secondaryText(isDark),
-                      fontSize: 11,
+                      color: Color(0xFF34C759),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      inherit: true,
                     ),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
-        actions: [
-          TextButton.icon(
-            onPressed: _recoverChat,
-            icon: const Icon(CupertinoIcons.arrow_counterclockwise, size: 16),
-            label: const Text('Recover'),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF34C759),
-              textStyle: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
         ],
       ),
       body: Column(
@@ -1184,7 +1442,9 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Tap or long press any message bubble to recover it individually.',
+                    _isSelectionMode
+                        ? 'Tap messages to toggle selection for bulk actions.'
+                        : 'Tap or hold any message to select single or multiple messages to recover or delete permanently.',
                     style: TextStyle(
                       fontSize: 12,
                       color: AppTheme.primaryText(isDark),
@@ -1233,6 +1493,77 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
                     },
                   ),
           ),
+
+          // Bottom Bar in Selection Mode
+          if (_isSelectionMode)
+            Container(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 10,
+                bottom: MediaQuery.of(context).padding.bottom + 10,
+              ),
+              decoration: BoxDecoration(
+                color: AppTheme.glassSurface(isDark),
+                border: Border(
+                  top: BorderSide(
+                    color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA),
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _selectedMessageIds.isEmpty
+                          ? null
+                          : _recoverSelectedMessages,
+                      icon: const Icon(CupertinoIcons.arrow_counterclockwise, size: 18),
+                      label: Text(
+                        'Recover (${_selectedMessageIds.length})',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13.5,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF34C759),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _selectedMessageIds.isEmpty
+                          ? null
+                          : _confirmPermanentDeleteSelectedMessages,
+                      icon: const Icon(CupertinoIcons.trash, size: 18),
+                      label: Text(
+                        'Delete (${_selectedMessageIds.length})',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13.5,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -1247,6 +1578,7 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
     final text = _getDecryptedMessageText(message);
     final dt = DateTime.tryParse(message.createdAt.toString());
     final timeStr = _formatMessageTime(dt);
+    final isSelected = _selectedMessageIds.contains(message.id);
 
     final bubbleColor = isMe
         ? AppTheme.primaryColor
@@ -1259,6 +1591,61 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
     final subTextColor = isMe
         ? Colors.white.withValues(alpha: 0.75)
         : AppTheme.secondaryText(isDark);
+
+    final bubbleWidget = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: bubbleColor,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(18),
+          topRight: const Radius.circular(18),
+          bottomLeft: Radius.circular(isMe ? 18 : 4),
+          bottomRight: Radius.circular(isMe ? 4 : 18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 15,
+              height: 1.25,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                timeStr,
+                style: TextStyle(
+                  color: subTextColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                CupertinoIcons.trash,
+                size: 11,
+                color: subTextColor,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -1273,61 +1660,27 @@ class _DeletedChatDetailPageState extends State<DeletedChatDetailPage> {
           color: Colors.transparent,
           child: InkWell(
             borderRadius: BorderRadius.circular(18),
-            onTap: () => _showMessageOptionsSheet(message),
-            onLongPress: () => _showMessageOptionsSheet(message),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: bubbleColor,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(18),
-                  topRight: const Radius.circular(18),
-                  bottomLeft: Radius.circular(isMe ? 18 : 4),
-                  bottomRight: Radius.circular(isMe ? 4 : 18),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment:
-                    isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    text,
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 15,
-                      height: 1.25,
+            onTap: () => _onMessageTap(message),
+            onLongPress: () => _onMessageLongPress(message),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (_isSelectionMode)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Icon(
+                      isSelected
+                          ? CupertinoIcons.checkmark_circle_fill
+                          : CupertinoIcons.circle,
+                      color: isSelected
+                          ? AppTheme.primaryColor
+                          : AppTheme.secondaryText(isDark),
+                      size: 22,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        timeStr,
-                        style: TextStyle(
-                          color: subTextColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        CupertinoIcons.trash,
-                        size: 11,
-                        color: subTextColor,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                Flexible(child: bubbleWidget),
+              ],
             ),
           ),
         ),

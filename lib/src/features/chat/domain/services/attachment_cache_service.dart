@@ -12,9 +12,13 @@ class AttachmentCacheService {
 
   static const _cacheIndexKey = 'chat_attachment_cache_index_v1';
   final Map<String, String> _urlToPathCache = {};
+  Map<String, String>? _dirIndex; // fileName -> full path
   bool _initialized = false;
   late Directory _attachmentDirectory;
   SharedPreferences? _prefs;
+
+  Timer? _persistTimer;
+  bool _persisting = false;
 
   Future<void> _initIfNeeded() async {
     if (_initialized) return;
@@ -49,27 +53,44 @@ class AttachmentCacheService {
   /// Restores the saved attachment index before a chat is displayed.
   Future<void> warmUp() => _initIfNeeded();
 
-  Future<void> _persistCacheIndex() async {
-    await _initIfNeeded();
-    final index = <String, String>{};
-    for (final entry in _urlToPathCache.entries) {
-      if (await File(entry.value).exists()) index[entry.key] = entry.value;
+  Future<void> _ensureDirIndex() async {
+    if (_dirIndex != null) return;
+    final idx = <String, String>{};
+    try {
+      await for (final f in _attachmentDirectory.list()) {
+        if (f is File) idx[f.path.split(Platform.pathSeparator).last] = f.path;
+      }
+    } catch (_) {}
+    _dirIndex = idx;
+  }
+
+  void _schedulePersist() {
+    _persistTimer?.cancel();
+    _persistTimer = Timer(const Duration(seconds: 2), _flush);
+  }
+
+  Future<void> _flush() async {
+    if (_persisting) {
+      _schedulePersist();
+      return;
     }
-    await _prefs?.setString(_cacheIndexKey, jsonEncode(index));
+    _persisting = true;
+    try {
+      await _initIfNeeded();
+      final snapshot = Map<String, String>.from(_urlToPathCache); // copy => no concurrent modification
+      await _prefs?.setString(_cacheIndexKey, jsonEncode(snapshot));
+    } catch (_) {
+    } finally {
+      _persisting = false;
+    }
   }
 
   Future<String?> resolveLocalPath(String? mediaUrl) async {
     if (mediaUrl == null || mediaUrl.isEmpty) return null;
 
-    // Fast path: cached memory lookup
-    if (_urlToPathCache.containsKey(mediaUrl)) {
-      final cachedPath = _urlToPathCache[mediaUrl];
-      if (cachedPath != null && await File(cachedPath).exists()) {
-        return cachedPath;
-      }
-    }
+    final cached = _urlToPathCache[mediaUrl];
+    if (cached != null && await File(cached).exists()) return cached;
 
-    // Is it a local path already?
     if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
       if (await File(mediaUrl).exists()) {
         _urlToPathCache[mediaUrl] = mediaUrl;
@@ -78,14 +99,8 @@ class AttachmentCacheService {
     }
 
     await _initIfNeeded();
-
-    // The persistent index is loaded during initialization. Check it again
-    // before walking the filesystem so cached avatars and attachments render
-    // without a new network request after an app restart.
-    final hydratedPath = _urlToPathCache[mediaUrl];
-    if (hydratedPath != null && await File(hydratedPath).exists()) {
-      return hydratedPath;
-    }
+    final hydrated = _urlToPathCache[mediaUrl];
+    if (hydrated != null && await File(hydrated).exists()) return hydrated;
 
     final mediaKey = mediaUrl
         .split('/')
@@ -94,42 +109,58 @@ class AttachmentCacheService {
         .last
         .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
 
-    try {
-      final files = await _attachmentDirectory.list().toList();
-      for (var f in files) {
-        if (f is File) {
-          final name = f.path.split(Platform.pathSeparator).last;
-          if (name == mediaKey || name.startsWith('${mediaKey}_')) {
-            updateCache(mediaUrl, f.path);
-            return f.path;
-          }
-        }
+    await _ensureDirIndex(); // one directory scan, ever
+    for (final e in _dirIndex!.entries) { // in-memory only
+      if (e.key == mediaKey || e.key.startsWith('${mediaKey}_')) {
+        updateCache(mediaUrl, e.value);
+        return e.value;
       }
-    } catch (_) {}
-
+    }
     return null;
   }
 
   String? resolveLocalPathSync(String? mediaUrl) {
     if (mediaUrl == null || mediaUrl.isEmpty) return null;
+
     if (_urlToPathCache.containsKey(mediaUrl)) {
-      return _urlToPathCache[mediaUrl];
+      final p = _urlToPathCache[mediaUrl];
+      if (p != null && File(p).existsSync()) return p;
     }
+
+    final altKey = mediaUrl.startsWith('/') ? mediaUrl.substring(1) : '/$mediaUrl';
+    if (_urlToPathCache.containsKey(altKey)) {
+      final p = _urlToPathCache[altKey];
+      if (p != null && File(p).existsSync()) return p;
+    }
+
+    final filename = mediaUrl.split('/').last.split('\\').last;
+    if (_urlToPathCache.containsKey(filename)) {
+      final p = _urlToPathCache[filename];
+      if (p != null && File(p).existsSync()) return p;
+    }
+
     if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
-      return mediaUrl;
+      if (File(mediaUrl).existsSync()) return mediaUrl;
     }
     return null;
   }
 
   bool isCachedInMemory(String? mediaUrl) {
     if (mediaUrl == null || mediaUrl.isEmpty) return false;
-    if (_urlToPathCache.containsKey(mediaUrl)) return true;
-    if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) return true;
-    return false;
+    return resolveLocalPathSync(mediaUrl) != null;
   }
 
   void updateCache(String mediaUrl, String localPath) {
+    if (mediaUrl.isEmpty || localPath.isEmpty) return;
     _urlToPathCache[mediaUrl] = localPath;
-    unawaited(_persistCacheIndex());
+    _dirIndex?[localPath.split(Platform.pathSeparator).last] = localPath;
+    if (mediaUrl.startsWith('/')) {
+      _urlToPathCache[mediaUrl.substring(1)] = localPath;
+    } else {
+      _urlToPathCache['/$mediaUrl'] = localPath;
+    }
+    final filename = mediaUrl.split('/').last.split('\\').last;
+    if (filename.isNotEmpty) _urlToPathCache[filename] = localPath;
+    _schedulePersist(); // debounced, never parallel
   }
 }

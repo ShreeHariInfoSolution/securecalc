@@ -75,8 +75,9 @@ class DeepLinkHandler {
 
     // Support both custom scheme and standard HTTPS fallback
     if (uri.scheme != 'securecalc' && uri.scheme != 'https') return;
-    if (uri.scheme == 'https' && uri.host != 'realragnardev-dotcom.github.io')
+    if (uri.scheme == 'https' && uri.host != 'realragnardev-dotcom.github.io') {
       return;
+    }
 
     // In https mode, the action is passed in query parameters via the redirect page
     // In securecalc:// mode, the action is the host (e.g. securecalc://chat)

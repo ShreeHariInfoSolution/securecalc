@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../../../core/theme/app_theme.dart';
@@ -15,6 +16,8 @@ class CallPage extends StatefulWidget {
   const CallPage({super.key});
 
   static Future<void> open(BuildContext context) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
     CallService.instance.setMinimized(false);
   }
 
@@ -31,14 +34,21 @@ class _CallPageState extends State<CallPage> {
   bool _showControls = true;
   _CallOverlayType _activeOverlay = _CallOverlayType.none;
 
+  double _baseZoomScale = 1.0;
+  bool _showZoomBadge = false;
+  Timer? _zoomBadgeTimer;
+
   @override
   void initState() {
     super.initState();
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
     _callService.addListener(_onCallStateChanged);
 
-    _callService.refreshAudioDevices().then((_) {
+    _callService.refreshAudioDevices().then((_) async {
+      await _callService.getAudioRouteInfo();
       if (mounted) {
-        _callService.initializeDefaultAudioRoute(_callService.callType);
+        setState(() {});
       }
     });
   }
@@ -92,23 +102,23 @@ class _CallPageState extends State<CallPage> {
   }
 
   void _handleAudioRouteTap() async {
-    await _callService.refreshAudioDevices();
-    if (!_callService.hasConnectedHeadphones) {
+    await _callService.getAudioRouteInfo();
+    if (!mounted) return;
+
+    if (_callService.hasConnectedHeadphones) {
+      setState(() {
+        _activeOverlay = _activeOverlay == _CallOverlayType.audioRoute
+            ? _CallOverlayType.none
+            : _CallOverlayType.audioRoute;
+      });
+    } else {
       final nextRoute = _callService.audioRoute == AudioRoute.speaker
           ? AudioRoute.earpiece
           : AudioRoute.speaker;
-      await _callService.setAudioRoute(nextRoute);
+      await _callService.setAudioRoute(nextRoute, isUserAction: true);
       if (mounted) {
         setState(() {
           _activeOverlay = _CallOverlayType.none;
-        });
-      }
-    } else {
-      if (mounted) {
-        setState(() {
-          _activeOverlay = _activeOverlay == _CallOverlayType.audioRoute
-              ? _CallOverlayType.none
-              : _CallOverlayType.audioRoute;
         });
       }
     }
@@ -118,15 +128,15 @@ class _CallPageState extends State<CallPage> {
     if (_activeOverlay == _CallOverlayType.audioRoute) {
       return true;
     }
-    if (!_callService.hasConnectedHeadphones) {
-      return _callService.audioRoute == AudioRoute.speaker;
-    }
     return _callService.audioRoute == AudioRoute.speaker ||
         _callService.audioRoute == AudioRoute.bluetooth;
   }
 
   Widget _buildRemoteVideoWidget() {
-    if (!_callService.remoteVideoOn) {
+    if (!_callService.remoteVideoOn ||
+        _callService.state != CallState.active ||
+        _callService.remoteRenderer.srcObject == null ||
+        !_callService.hasFirstRemoteFrame) {
       return Container(
         color: const Color(0xFF1C1C1E),
         child: Center(
@@ -163,12 +173,16 @@ class _CallPageState extends State<CallPage> {
     }
     return RTCVideoView(
       _callService.remoteRenderer,
+      key: ValueKey('remote_${_callService.callId}_${_callService.remoteIsFrontCamera}'),
+      mirror: _callService.remoteIsFrontCamera,
       objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
     );
   }
 
   Widget _buildLocalVideoWidget() {
-    if (!_callService.camOn) {
+    if (!_callService.camOn ||
+        _callService.localRenderer.srcObject == null ||
+        !_callService.hasFirstLocalFrame) {
       return Container(
         color: const Color(0xFF111113),
         child: const Center(
@@ -182,14 +196,38 @@ class _CallPageState extends State<CallPage> {
     }
     return RTCVideoView(
       _callService.localRenderer,
-      mirror: true,
+      key: ValueKey('local_${_callService.callId}_${_callService.isFrontCamera}'),
+      mirror: _callService.isFrontCamera,
       objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
     );
   }
 
+  Widget _buildZoomableLocalVideoWidget() {
+    return GestureDetector(
+      onScaleStart: (details) {
+        _baseZoomScale = _callService.cameraZoomScale;
+      },
+      onScaleUpdate: (details) {
+        if (details.scale != 1.0) {
+          final targetScale = (_baseZoomScale * details.scale).clamp(1.0, 5.0);
+          _callService.setCameraZoom(targetScale);
+          setState(() {
+            _showZoomBadge = true;
+          });
+          _zoomBadgeTimer?.cancel();
+          _zoomBadgeTimer = Timer(const Duration(milliseconds: 1500), () {
+            if (mounted) setState(() => _showZoomBadge = false);
+          });
+        }
+      },
+      behavior: HitTestBehavior.translucent,
+      child: _buildLocalVideoWidget(),
+    );
+  }
+
   Widget _buildPipWindow(Size screenSize, double topPadding, double bottomPadding) {
-    const pipWidth = 115.0;
-    const pipHeight = 155.0;
+    const pipWidth = 112.0;
+    const pipHeight = 198.0;
 
     if (_isCollapsedLeft) {
       return AnimatedPositioned(
@@ -321,7 +359,7 @@ class _CallPageState extends State<CallPage> {
             child: Stack(
               children: [
                 Positioned.fill(
-                  child: _isSwapped ? _buildRemoteVideoWidget() : _buildLocalVideoWidget(),
+                  child: _isSwapped ? _buildRemoteVideoWidget() : _buildZoomableLocalVideoWidget(),
                 ),
                 Positioned(
                   top: 6,
@@ -373,9 +411,35 @@ class _CallPageState extends State<CallPage> {
               // 1. Video Background or Voice Background
               if (isVideo && _callService.state == CallState.active) ...[
                 Positioned.fill(
-                  child: _isSwapped ? _buildLocalVideoWidget() : _buildRemoteVideoWidget(),
+                  child: _isSwapped ? _buildZoomableLocalVideoWidget() : _buildRemoteVideoWidget(),
                 ),
                 _buildPipWindow(screenSize, topPadding, bottomPadding),
+
+                if (_showZoomBadge || _callService.cameraZoomScale != 1.0)
+                  Positioned(
+                    top: topPadding + 70,
+                    left: screenSize.width / 2 - 30,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 200),
+                      opacity: _showZoomBadge ? 1.0 : 0.0,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.65),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white24, width: 1),
+                        ),
+                        child: Text(
+                          '${_callService.cameraZoomScale.toStringAsFixed(1)}x',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ] else ...[
                 Positioned.fill(
                   child: Container(
@@ -602,7 +666,7 @@ class _CallPageState extends State<CallPage> {
                                     if (isVideo) {
                                       _callService.switchCallType(CallType.voice);
                                     } else {
-                                      _callService.requestVideoCallSwitch();
+                                      _callService.requestVideoCallUpgrade();
                                     }
                                   },
                                 ),
@@ -733,45 +797,24 @@ class _CallPageState extends State<CallPage> {
   }
 
   Widget _buildAudioRouteCard() {
-    final currentRoute = _callService.audioRoute;
-    final hasHeadset = _callService.hasConnectedHeadphones;
-    final headsetName = _callService.connectedHeadsetName;
+    final options = _callService.getAvailableAudioOptions();
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _PopUpMenuTile(
-          icon: CupertinoIcons.speaker_3_fill,
-          title: 'Speaker',
-          isSelected: currentRoute == AudioRoute.speaker,
-          onTap: () {
-            _callService.setAudioRoute(AudioRoute.speaker);
-            setState(() {
-              _activeOverlay = _CallOverlayType.none;
-            });
-          },
-        ),
-        _PopUpMenuTile(
-          icon: CupertinoIcons.phone_fill,
-          title: 'Phone',
-          isSelected: currentRoute == AudioRoute.earpiece,
-          onTap: () {
-            _callService.setAudioRoute(AudioRoute.earpiece);
-            setState(() {
-              _activeOverlay = _CallOverlayType.none;
-            });
-          },
-        ),
-        if (hasHeadset)
+        for (final opt in options)
           _PopUpMenuTile(
-            icon: CupertinoIcons.headphones,
-            title: headsetName.isNotEmpty ? headsetName : 'Headphones / Bluetooth',
-            isSelected: currentRoute == AudioRoute.bluetooth,
+            icon: opt.icon,
+            title: opt.label,
+            subtitle: opt.subtitle,
+            isSelected: _callService.isAudioOptionSelected(opt),
             onTap: () {
-              _callService.setAudioRoute(AudioRoute.bluetooth);
-              setState(() {
-                _activeOverlay = _CallOverlayType.none;
-              });
+              _callService.selectAudioOption(opt);
+              if (mounted) {
+                setState(() {
+                  _activeOverlay = _CallOverlayType.none;
+                });
+              }
             },
           ),
       ],
@@ -814,12 +857,14 @@ class _CallPageState extends State<CallPage> {
 class _PopUpMenuTile extends StatelessWidget {
   final IconData icon;
   final String title;
+  final String? subtitle;
   final bool isSelected;
   final VoidCallback onTap;
 
   const _PopUpMenuTile({
     required this.icon,
     required this.title,
+    this.subtitle,
     required this.isSelected,
     required this.onTap,
   });
@@ -832,7 +877,7 @@ class _PopUpMenuTile extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
             children: [
               SizedBox(
@@ -853,13 +898,29 @@ class _PopUpMenuTile extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : Colors.white70,
-                    fontSize: 15,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.white70,
+                        fontSize: 15,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                      ),
+                    ),
+                    if (subtitle != null && subtitle!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle!,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.5),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],

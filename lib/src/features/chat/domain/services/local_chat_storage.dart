@@ -49,6 +49,13 @@ class LocalChatStorage {
     await _prefs!.setInt(_clearedAtKey(chatId), timestamp);
   }
 
+  Future<void> clearClearedAt(String chatId) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    if (chatId.isEmpty) return;
+    await _prefs!.remove(_clearedAtKey(chatId));
+    await markHistoryIncomplete(chatId);
+  }
+
   String? getDraft(String chatId) {
     if (_prefs == null || chatId.isEmpty) return null;
     return _prefs!.getString(_draftKey(chatId));
@@ -342,10 +349,13 @@ class LocalChatStorage {
           continue;
         }
 
+        final rawContent = m['content'] as String? ?? '';
+        final cleanContent = cleanMessageContentString(rawContent);
+
         final msg = ChatMessage(
           id: m['id'] as String,
           senderId: m['senderId'] as String,
-          content: m['content'] as String,
+          content: cleanContent,
           timestamp: DateTime.fromMillisecondsSinceEpoch(timestampMs),
           type: (m['type'] as String?) ?? 'text',
           mediaUrl: m['mediaUrl'] as String?,
@@ -514,11 +524,26 @@ class LocalChatStorage {
           message.type == 'image/gif';
 
       if (isMediaMsg) {
-        return isLocalId &&
-            m.senderId == message.senderId &&
-            m.mediaUrl != null &&
+        final sameSender = m.senderId == message.senderId ||
+            (m.senderId == 'user' && message.senderId == 'user');
+        final sameFileName = (m.fileName != null &&
+            message.fileName != null &&
+            m.fileName!.isNotEmpty &&
+            m.fileName == message.fileName);
+        final sameUrl = m.mediaUrl != null &&
             m.mediaUrl!.isNotEmpty &&
             m.mediaUrl == message.mediaUrl;
+        final sameContent = m.content.trim().isNotEmpty &&
+            m.content.trim() == message.content.trim() &&
+            m.content.trim() != '[Attachment]' &&
+            m.content.trim() != 'Photo' &&
+            m.content.trim() != 'Video';
+        final closeTime =
+            m.timestamp.difference(message.timestamp).inSeconds.abs() <= 60;
+
+        return isLocalId &&
+            sameSender &&
+            (sameUrl || sameFileName || (sameContent && closeTime));
       }
 
       return isLocalId &&
@@ -560,6 +585,7 @@ class LocalChatStorage {
         isDelivered: mergedIsDelivered,
         status: mergedStatus,
         isSaved: message.isSaved || existing.isSaved,
+        isForwarded: message.isForwarded || existing.isForwarded,
       );
     } else {
       messages.add(message);
@@ -672,6 +698,7 @@ class LocalChatStorage {
           'status': m.status,
           'isEdited': m.isEdited,
           'isDeleted': m.isDeleted,
+          'isForwarded': m.isForwarded,
           'reaction': m.reaction,
           'replyToId': m.replyToId,
         };
@@ -733,6 +760,8 @@ class LocalChatStorage {
           'isDelivered': m.isDelivered,
           'isEdited': m.isEdited,
           'isDeleted': m.isDeleted,
+          'isForwarded': m.isForwarded,
+          'status': m.status,
           'reaction': m.reaction,
           'replyToId': m.replyToId,
         };

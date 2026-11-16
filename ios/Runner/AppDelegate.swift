@@ -4,6 +4,10 @@ import Security
 import UserNotifications
 import FirebaseCore
 import FirebaseMessaging
+import AVFoundation
+import WebRTC
+import CallKit
+import flutter_callkit_incoming
 
 // MARK: - Keychain Helper
 
@@ -40,7 +44,7 @@ class KeychainHelper {
     let status = SecItemCopyMatching(query as CFDictionary, &dataTypeRef)
 
     if status == errSecSuccess,
-       let data = dataTypeRef as? Data,
+       let data = dataTypeRef as? Foundation.Data,
        let id = String(data: data, encoding: .utf8),
        !id.isEmpty {
       return id
@@ -52,7 +56,7 @@ class KeychainHelper {
 // MARK: - App Delegate
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, CallkitIncomingAppDelegate {
 
   static var activeChatId: String? = nil
   static var currentUserId: String? = nil
@@ -61,6 +65,10 @@ class KeychainHelper {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    let rtcAudio = RTCAudioSession.sharedInstance()
+    rtcAudio.useManualAudio = true
+    rtcAudio.isAudioEnabled = false
+
     FirebaseApp.configure()
     GeneratedPluginRegistrant.register(with: self)
 
@@ -76,16 +84,61 @@ class KeychainHelper {
     }
     application.registerForRemoteNotifications()
 
+    if let registrar = self.registrar(forPlugin: "AudioChannelPlugin") {
+      AppDelegate.setupAudioChannel(with: registrar.messenger())
+    }
+    if let registrar = self.registrar(forPlugin: "SecurityChannelPlugin") {
+      AppDelegate.setupSecurityChannel(with: registrar.messenger())
+    }
     if let controller = window?.rootViewController as? FlutterViewController {
       AppDelegate.setupSecurityChannel(with: controller.binaryMessenger)
+      AppDelegate.setupAudioChannel(with: controller.binaryMessenger)
     }
+
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(didTakeScreenshotNotification),
+      name: UIApplication.userDidTakeScreenshotNotification,
+      object: nil
+    )
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
+  // MARK: - CallkitIncomingAppDelegate
+
+  func didActivateAudioSession(_ audioSession: AVAudioSession) {
+    print("[AudioRoute] CallKit activated session")
+    let rtc = RTCAudioSession.sharedInstance()
+    rtc.audioSessionDidActivate(audioSession)
+    rtc.isAudioEnabled = true
+    AudioRouteManager.shared.reapply()     // re-apply route once the session is really live
+  }
+
+  func didDeactivateAudioSession(_ audioSession: AVAudioSession) {
+    let rtc = RTCAudioSession.sharedInstance()
+    rtc.audioSessionDidDeactivate(audioSession)
+    rtc.isAudioEnabled = false
+  }
+
+  func onAccept(_ call: Call, _ action: CXAnswerCallAction) { action.fulfill() }
+  func onDecline(_ call: Call, _ action: CXEndCallAction) { action.fulfill() }
+  func onEnd(_ call: Call, _ action: CXEndCallAction) { action.fulfill() }
+  func onTimeOut(_ call: Call) {}
+
+  @objc private func didTakeScreenshotNotification() {
+    if let controller = window?.rootViewController as? FlutterViewController {
+      let securityChannel = FlutterMethodChannel(
+        name: "com.shis.securecalc/security",
+        binaryMessenger: controller.binaryMessenger
+      )
+      securityChannel.invokeMethod("onScreenshot", arguments: nil)
+    }
+  }
+
   override func application(
     _ application: UIApplication,
-    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Foundation.Data
   ) {
     Messaging.messaging().apnsToken = deviceToken
     super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
@@ -213,6 +266,21 @@ class KeychainHelper {
       case "setSecureFlag":
         result(true)
 
+      case "setKeepScreenOn":
+        let enable: Bool
+        if let args = call.arguments as? [String: Any], let e = args["enable"] as? Bool {
+          enable = e
+        } else if let e = call.arguments as? Bool {
+          enable = e
+        } else {
+          enable = true
+        }
+        DispatchQueue.main.async {
+          UIApplication.shared.isIdleTimerDisabled = enable
+        }
+        print("[Native iOS] setKeepScreenOn updated to: \(enable)")
+        result(true)
+
       case "updateActiveChatId":
         if let args = call.arguments as? [String: Any], let id = args["activeChatId"] as? String {
           AppDelegate.activeChatId = id.isEmpty ? nil : id
@@ -279,6 +347,10 @@ class KeychainHelper {
         result(FlutterMethodNotImplemented)
       }
     }
+  }
+
+  static func setupAudioChannel(with messenger: FlutterBinaryMessenger) {
+    AudioRouteManager.shared.attach(messenger: messenger)
   }
 
   static private func getDeviceModel() -> String {

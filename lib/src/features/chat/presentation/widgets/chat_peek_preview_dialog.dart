@@ -4,8 +4,13 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
+import 'package:flutter/services.dart';
+import 'package:securecalc/src/core/config/app_preferences.dart';
 import 'package:securecalc/src/core/theme/app_theme.dart';
 import 'package:securecalc/src/core/utils/app_toast.dart';
+import 'package:securecalc/src/core/widgets/glass_kit.dart';
+import 'package:securecalc/src/core/widgets/ios_avatar.dart';
 
 import '../../domain/entities/chat_conversation.dart';
 import '../../domain/entities/chat_message.dart';
@@ -13,6 +18,7 @@ import '../../domain/services/attachment_cache_service.dart';
 import '../../domain/services/local_chat_storage.dart';
 import '../../domain/services/server_api_service.dart';
 import '../../domain/services/server_chat_manager.dart';
+import 'chat_bubble.dart';
 import 'chat_wallpaper_widget.dart';
 import 'sticker_picker_panel.dart';
 
@@ -21,11 +27,15 @@ class ChatPeekPreviewDialog extends StatefulWidget {
   final ChatConversation conversation;
   final VoidCallback onOpenChat;
   final bool isDuressMode;
+  final Rect? originRect;
+  final BuildContext? hostContext;
 
   const ChatPeekPreviewDialog({
     super.key,
     required this.conversation,
     required this.onOpenChat,
+    this.originRect,
+    this.hostContext,
     this.isDuressMode = false,
   });
 
@@ -33,69 +43,113 @@ class ChatPeekPreviewDialog extends StatefulWidget {
   State<ChatPeekPreviewDialog> createState() => _ChatPeekPreviewDialogState();
 }
 
-class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
-  final ScrollController _scrollController = ScrollController();
-  List<ChatMessage> _messages = [];
-  bool _isLoading = true;
-  bool _isDragging = false;
-  double _dragOffset = 0.0;
+class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog>
+    with TickerProviderStateMixin {
+  late final AnimationController _enter = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 380),
+  );
+  late final AnimationController _drag = AnimationController.unbounded(
+    vsync: this,
+  );
+
+  static const _dismissDistance = 110.0;
+  static const _spring = SpringDescription(mass: 1, stiffness: 420, damping: 30);
+  bool _closing = false;
+  bool _pastThreshold = false;
+
+  List<ChatMessage> _last = const []; // newest first
 
   @override
   void initState() {
     super.initState();
+    _enter.animateTo(1.0, curve: Curves.easeOutCubic);
     _loadMessages();
   }
 
   @override
   void dispose() {
-    _scrollController.dispose();
+    _enter.dispose();
+    _drag.dispose();
     super.dispose();
   }
 
   Future<void> _loadMessages() async {
-    // 1. Load cached local messages first
-    final cached = await LocalChatStorage.instance.loadMessages(
-      widget.conversation.id,
-    );
-    if (mounted) {
-      setState(() {
-        _messages = cached;
-        _isLoading = cached.isEmpty;
-      });
-      _scrollToBottom();
+    if (widget.isDuressMode) {
+      if (mounted) setState(() => _last = const []);
+      return;
     }
 
-    // 2. Fetch fresh messages from server
+    final id = widget.conversation.id;
+    // 1. Load local cached messages first so preview shows immediately
+    final localList = await LocalChatStorage.instance.loadMessages(id);
+    if (mounted && localList.isNotEmpty) {
+      final tail = localList.length > 8 ? localList.sublist(localList.length - 8) : localList;
+      setState(() => _last = tail.reversed.toList());
+    }
+
+    // 2. Fetch fresh messages from server for preview WITHOUT calling read API
     try {
-      final fresh = await ServerChatManager.instance.loadMessages(
-        widget.conversation.id,
-      );
-      if (mounted) {
-        setState(() {
-          _messages = fresh;
-          _isLoading = false;
-        });
-        _scrollToBottom();
+      final fresh = await ServerChatManager.instance.loadMessages(id);
+      if (!mounted) return;
+      if (fresh.isNotEmpty) {
+        final tail = fresh.length > 8 ? fresh.sublist(fresh.length - 8) : fresh;
+        setState(() => _last = tail.reversed.toList());
       }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+    } catch (_) {}
+  }
+
+  // ---------- Gestures (zero setState) ----------
+  void _onDragUpdate(DragUpdateDetails d) {
+    if (_closing) return;
+    final v = _drag.value;
+    final resist = (v <= 0 && d.delta.dy < 0) ? 0.25 : 1.0; // rubber band upward
+    _drag.value = (v + d.delta.dy * resist).clamp(-24.0, 600.0);
+    final past = _drag.value > _dismissDistance;
+    if (past != _pastThreshold) {
+      _pastThreshold = past;
+      HapticFeedback.selectionClick();
     }
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients &&
-          _scrollController.position.maxScrollExtent > 0) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-      }
-    });
+  void _onDragEnd(DragEndDetails d) {
+    if (_closing) return;
+    final vy = d.velocity.pixelsPerSecond.dy;
+    if (_drag.value > _dismissDistance || vy > 800) {
+      _dismiss(slide: true);
+    } else {
+      _drag.animateWith(SpringSimulation(_spring, _drag.value, 0, vy));
+    }
+  }
+
+  Future<void> _dismiss({bool slide = false}) async {
+    if (_closing) return;
+    _closing = true;
+    final h = MediaQuery.sizeOf(context).height;
+    if (slide) {
+      await _drag.animateTo(
+        h * 0.5,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeInCubic,
+      );
+    } else {
+      await _enter.animateTo(
+        0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeIn,
+      );
+    }
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  /// Run a menu action after the exit animation so it feels smooth.
+  Future<void> _act(FutureOr<void> Function() fn) async {
+    await _dismiss();
+    await fn();
   }
 
   bool _isMe(ChatMessage msg) {
-    final currentUserIdStr = ServerApiService.instance.currentUserId
-        ?.toString();
+    final currentUserIdStr = ServerApiService.instance.currentUserId?.toString();
     return msg.senderId == 'user' ||
         msg.senderId == 'me' ||
         (currentUserIdStr != null && msg.senderId == currentUserIdStr);
@@ -107,24 +161,6 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
     final min = date.minute.toString().padLeft(2, '0');
     final period = hour24 >= 12 ? 'PM' : 'AM';
     return '$hour:$min $period';
-  }
-
-  bool _isSingleEmoji(String text) {
-    return getEmojiOnlyCount(text) == 1;
-  }
-
-  bool _isImageMessage(ChatMessage msg) {
-    if (msg.isDeleted) return false;
-    final type = msg.type.toLowerCase();
-    if (type.startsWith('image/') || type == 'image') return true;
-    if (msg.mediaUrl != null && msg.mediaUrl!.isNotEmpty) {
-      final ext = msg.mediaUrl!.split('.').last.split('?').first.toLowerCase();
-      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].contains(ext) ||
-          msg.previewText == 'Photo') {
-        return true;
-      }
-    }
-    return false;
   }
 
   String _resolveRemoteMediaUrl(String path) {
@@ -142,8 +178,8 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
     final filePath = normalized.startsWith('api/files/')
         ? normalized.substring('api/files/'.length)
         : normalized.startsWith('files/')
-        ? normalized.substring('files/'.length)
-        : normalized;
+            ? normalized.substring('files/'.length)
+            : normalized;
     final encodedPath = filePath.split('/').map(Uri.encodeComponent).join('/');
     return '$apiBase/files/$encodedPath';
   }
@@ -160,7 +196,9 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
         File(url),
         fit: BoxFit.cover,
         width: double.infinity,
-        height: 140,
+        height: 120,
+        cacheWidth: 400,
+        cacheHeight: 300,
       );
     } else {
       final cached = AttachmentCacheService.instance.resolveLocalPathSync(url);
@@ -169,7 +207,9 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
           File(cached),
           fit: BoxFit.cover,
           width: double.infinity,
-          height: 140,
+          height: 120,
+          cacheWidth: 400,
+          cacheHeight: 300,
         );
       } else {
         final remoteUrl = _resolveRemoteMediaUrl(url);
@@ -177,7 +217,9 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
           remoteUrl,
           fit: BoxFit.cover,
           width: double.infinity,
-          height: 140,
+          height: 120,
+          cacheWidth: 400,
+          cacheHeight: 300,
           errorBuilder: (context, error, stackTrace) => Container(
             height: 90,
             color: Colors.black12,
@@ -196,633 +238,367 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
     return ClipRRect(borderRadius: BorderRadius.circular(10), child: imgWidget);
   }
 
-  Widget _buildMessageBubble(
-    BuildContext context,
-    ChatMessage msg,
-    bool isDark,
-    double previewWidth,
-  ) {
-    final isMe = _isMe(msg);
-    final isEmoji = _isSingleEmoji(msg.content);
-    final isImage = _isImageMessage(msg);
-
-    if (isEmoji) {
-      return Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4.0),
-          child: Column(
-            crossAxisAlignment: isMe
-                ? CrossAxisAlignment.end
-                : CrossAxisAlignment.start,
-            children: [
-              Text(normalizeEmojiText(msg.content.trim()), style: const TextStyle(fontSize: 48)),
-              Text(
-                _formatTime(msg.timestamp),
-                style: TextStyle(
-                  fontSize: 10.5,
-                  color: AppTheme.secondaryText(isDark),
-                ),
-              ),
-            ],
+  Widget _previewCard(bool isDark, double w, double h) {
+    final conv = widget.conversation;
+    return Container(
+      width: w,
+      height: h,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.30),
+            blurRadius: 30,
+            offset: const Offset(0, 12),
           ),
-        ),
-      );
-    }
-
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: previewWidth * 0.72),
-        margin: const EdgeInsets.symmetric(vertical: 3.5),
-        padding: isImage
-            ? const EdgeInsets.all(4)
-            : const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-        decoration: BoxDecoration(
-          color: isMe
-              ? (isDark ? const Color(0xFF005C4B) : const Color(0xFFDCF8C6))
-              : (isDark ? const Color(0xFF1F2C34) : Colors.white),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(14),
-            topRight: const Radius.circular(14),
-            bottomLeft: Radius.circular(isMe ? 14 : 2),
-            bottomRight: Radius.circular(isMe ? 2 : 14),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 3,
-              offset: const Offset(0, 1),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(26),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: Colors.white.withValues(alpha: isDark ? 0.14 : 0.7),
+              width: 0.8,
             ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (isImage) ...[
-              _buildImageWidget(msg),
-              if (msg.content.isNotEmpty && msg.content != 'Photo') ...[
-                const SizedBox(height: 3),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 4,
-                    vertical: 1,
-                  ),
-                  child: Text(
-                    msg.content,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: isDark ? Colors.white : Colors.black87,
+            borderRadius: BorderRadius.circular(26),
+          ),
+          child: Column(
+            children: [
+              // Glass header
+              Container(
+                height: 56,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: AppTheme.glassSurface(isDark),
+                  border: Border(
+                    bottom: BorderSide(
+                      color: AppTheme.glassBorder(isDark),
+                      width: 0.5,
                     ),
                   ),
                 ),
-              ],
-            ] else ...[
-              Text(
-                msg.content.isNotEmpty ? msg.content : msg.previewText,
-                style: TextStyle(
-                  fontSize: 14.5,
-                  color: isDark ? Colors.white : Colors.black87,
-                  height: 1.25,
+                child: Row(
+                  children: [
+                    IosAvatar(
+                      name: conv.name,
+                      imagePath: conv.avatarUrl,
+                      size: 34,
+                      showOnline: false,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        conv.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.primaryText(isDark),
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      CupertinoIcons.chevron_right,
+                      size: 15,
+                      color: AppTheme.secondaryText(isDark),
+                    ),
+                  ],
+                ),
+              ),
+              // Wallpaper and last messages
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ChatWallpaperWidget(
+                      chatId: conv.id,
+                      isDark: isDark,
+                      backgroundUrl: conv.backgroundUrl,
+                    ),
+                    if (_last.isEmpty)
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: (isDark ? Colors.black : Colors.white)
+                                .withValues(alpha: 0.7),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            'No messages yet',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.secondaryText(isDark),
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      ShaderMask(
+                        blendMode: BlendMode.dstIn,
+                        shaderCallback: (r) => const LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Colors.black],
+                          stops: [0.0, 0.12],
+                        ).createShader(r),
+                        child: ListView.builder(
+                          reverse: true, // newest at the bottom, shows what fits
+                          physics: const NeverScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(8, 18, 8, 10),
+                          itemCount: _last.length,
+                          itemBuilder: (_, i) {
+                            final m = _last[i];
+                            final showTail = i == 0 || _isMe(_last[i - 1]) != _isMe(m);
+                            return _PeekBubble(
+                              msg: m,
+                              isMe: _isMe(m),
+                              isDark: isDark,
+                              showTail: showTail,
+                              maxW: w * 0.74,
+                              chatId: conv.id,
+                              time: _formatTime(m.timestamp),
+                              imageBuilder: _buildImageWidget,
+                            );
+                          },
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ],
-            const SizedBox(height: 2),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Text(
-                  _formatTime(msg.timestamp),
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    color: isMe
-                        ? (isDark ? Colors.white70 : Colors.black54)
-                        : (isDark ? Colors.white54 : Colors.black45),
-                  ),
-                ),
-                if (isMe) ...[
-                  const SizedBox(width: 3),
-                  Icon(
-                    msg.isRead ? Icons.done_all : Icons.done,
-                    size: 13,
-                    color: msg.isRead
-                        ? (isDark ? const Color(0xFF53B147) : Colors.blue)
-                        : (isDark ? Colors.white54 : Colors.black45),
-                  ),
-                ],
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  List<_MenuItem> _menuItems(bool isDark) {
+    final c = widget.conversation;
+    final me = ServerApiService.instance.currentUserId;
+    final peer = c.peerUserId ?? (c.isGroup ? null : int.tryParse(c.id));
+    final canHide = !c.isGroup && peer != null && peer > 0 && peer != me;
+
+    return [
+      _MenuItem(
+        c.unreadCount > 0 ? 'Mark as read' : 'Mark as unread',
+        c.unreadCount > 0
+            ? CupertinoIcons.chat_bubble
+            : CupertinoIcons.chat_bubble_text,
+        () => _act(() => LocalChatStorage.instance.toggleUnreadConversation(c.id)),
+      ),
+      _MenuItem(
+        c.isArchived ? 'Unarchive' : 'Archive',
+        CupertinoIcons.archivebox,
+        () => _act(() => LocalChatStorage.instance.toggleArchiveConversation(c.id)),
+      ),
+      _MenuItem(
+        c.isMuted ? 'Unmute' : 'Mute',
+        c.isMuted ? CupertinoIcons.bell : CupertinoIcons.bell_slash,
+        () => _act(() => LocalChatStorage.instance.toggleMuteConversation(c.id)),
+      ),
+      if (canHide)
+        _MenuItem(
+          c.isProfileHidden ? 'Show My Profile' : 'Hide My Profile',
+          c.isProfileHidden ? CupertinoIcons.eye : CupertinoIcons.eye_slash,
+          () => _act(() async {
+            final hide = !c.isProfileHidden;
+            final ok = await ServerChatManager.instance
+                .toggleProfileVisibility(c.id, peer, hide);
+            if (ok) {
+              AppToast.show(
+                hide ? 'Profile hidden from user' : 'Profile visible to user',
+              );
+            }
+          }),
+        ),
+      _MenuItem(
+        c.isLocked ? 'Unlock chat' : 'Lock chat',
+        c.isLocked ? CupertinoIcons.lock_open : CupertinoIcons.lock,
+        () => _act(() async {
+          final id = int.tryParse(c.id);
+          if (id == null || id <= 0) return;
+          final ok = c.isLocked
+              ? await ServerChatManager.instance.unlockChat(id)
+              : await ServerChatManager.instance.lockChat(id);
+          AppToast.show(
+            ok
+                ? (c.isLocked ? 'Chat unlocked' : 'Chat locked')
+                : 'Failed to ${c.isLocked ? "unlock" : "lock"} chat',
+            isError: !ok,
+          );
+        }),
+      ),
+      _MenuItem(
+        'Delete Chat',
+        CupertinoIcons.trash,
+        () => _act(_confirmDelete),
+        destructive: true,
+      ),
+    ];
+  }
+
+  Future<void> _confirmDelete() async {
+    final targetCtx = widget.hostContext ?? context;
+    final ok = await showCupertinoDialog<bool>(
+      context: targetCtx,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Delete Chat'),
+        content: Text('Delete conversation with ${widget.conversation.name}?'),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final id = int.tryParse(widget.conversation.id);
+    if (id != null && id > 0) {
+      await ServerApiService.instance.deleteChatREST(id, deleteChat: true);
+    }
+    await LocalChatStorage.instance.deleteConversation(widget.conversation.id);
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final screenHeight = MediaQuery.of(context).size.height;
-    final screenWidth = MediaQuery.of(context).size.width;
+    final size = MediaQuery.sizeOf(context);
+    final safe = MediaQuery.paddingOf(context);
 
-    // Keep the preview at the same in-list position shown by WhatsApp.
-    final previewWidth = (screenWidth - 28.0).clamp(300.0, 420.0);
-    final preferredPreviewHeight = (screenHeight * 0.43).clamp(220.0, 390.0);
-    // Reserve space for the action sheet. On compact screens the preview
-    // shrinks instead of allowing the Column to overflow below the viewport.
-    final previewHeight =
-        (screenHeight - MediaQuery.paddingOf(context).vertical - 28.0 - 300.0)
-            .clamp(120.0, preferredPreviewHeight)
-            .toDouble();
+    final items = _menuItems(isDark);
+    final menuH = items.length * 46.0;
+    final previewW = (size.width - 28.0).clamp(300.0, 420.0);
+    final available = size.height - safe.top - safe.bottom - 24.0;
+    final previewH = (available - menuH - 12.0).clamp(220.0, 420.0);
+    final menuW = (size.width * 0.68).clamp(230.0, 275.0);
+    final top = safe.top + 12.0;
 
-    // Options Menu Card: Aligned to Left, compact glass design (~68% width)
-    final optionsWidth = (screenWidth * 0.68).clamp(230.0, 275.0);
+    // Center offset from origin tile rect
+    final originCenter = (widget.originRect != null && widget.originRect != Rect.zero)
+        ? widget.originRect!.center
+        : Offset(size.width / 2, size.height / 2);
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Dismiss on tap outside
-          GestureDetector(
-            onTap: () => Navigator.of(context).pop(),
-            behavior: HitTestBehavior.opaque,
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(color: Colors.black.withValues(alpha: 0.42)),
+    final fromOffset = originCenter -
+        Offset(size.width / 2, top + previewH / 2);
+
+    final previewCard = RepaintBoundary(
+      child: _previewCard(isDark, previewW, previewH),
+    );
+    final menu = _GlassMenu(items: items, width: menuW);
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _dismiss();
+      },
+      child: Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Backdrop: blur and dim follow enter and drag
+            AnimatedBuilder(
+              animation: Listenable.merge([_enter, _drag]),
+              builder: (_, __) {
+                final k = _enter.value *
+                    (1 - (_drag.value.clamp(0.0, 400.0) / 500.0)).clamp(0.0, 1.0);
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _dismiss,
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 18 * k, sigmaY: 18 * k),
+                    child: ColoredBox(
+                      color: Colors.black.withValues(alpha: 0.38 * k),
+                    ),
+                  ),
+                );
+              },
             ),
-          ),
 
-          // A short drag springs back; a decisive downward drag dismisses.
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 14.0,
-                vertical: 14.0,
-              ),
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onVerticalDragStart: (_) =>
-                      setState(() => _isDragging = true),
-                  onVerticalDragUpdate: (details) {
-                    if (details.delta.dy > 0 || _dragOffset > 0) {
-                      setState(() {
-                        _dragOffset = (_dragOffset + details.delta.dy).clamp(
-                          0.0,
-                          260.0,
-                        );
-                      });
-                    }
-                  },
-                  onVerticalDragEnd: (details) {
-                    final shouldDismiss =
-                        _dragOffset > 72 ||
-                        (details.primaryVelocity ?? 0) > 650;
-                    if (shouldDismiss) {
-                      Navigator.of(context).pop();
-                    } else {
-                      setState(() {
-                        _isDragging = false;
-                        _dragOffset = 0.0;
-                      });
-                    }
-                  },
-                  onVerticalDragCancel: () => setState(() {
-                    _isDragging = false;
-                    _dragOffset = 0.0;
-                  }),
-                  child: AnimatedSlide(
-                    duration: _isDragging
-                        ? Duration.zero
-                        : const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    offset: Offset(0, _dragOffset / previewHeight),
-                    child: AnimatedOpacity(
-                      duration: _isDragging
-                          ? Duration.zero
-                          : const Duration(milliseconds: 160),
-                      opacity: (1.0 - (_dragOffset / 260.0)).clamp(0.2, 1.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Top Box: Full Chat Preview Window
-                          GestureDetector(
-                            onTap: widget.onOpenChat,
-                            child: Container(
-                              height: previewHeight,
-                              width: previewWidth,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(22),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.28),
-                                    blurRadius: 22,
-                                    offset: const Offset(0, 8),
-                                  ),
-                                ],
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(22),
-                                child: Column(
-                                  children: [
-                                    // Chat Header Bar
-                                    Container(
-                                      height: 48,
-                                      width: double.infinity,
-                                      color: isDark
-                                          ? const Color(0xFF2C2C2E)
-                                          : const Color(0xFFF6F6F8),
-                                      alignment: Alignment.center,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                      ),
-                                      child: Text(
-                                        widget.conversation.name,
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          color: AppTheme.primaryText(isDark),
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-
-                                    // Chat Messages Area
-                                    Expanded(
-                                      child: Stack(
-                                        fit: StackFit.expand,
-                                        children: [
-                                          // Wallpaper background
-                                          ChatWallpaperWidget(
-                                            chatId: widget.conversation.id,
-                                            isDark: isDark,
-                                            backgroundUrl: widget
-                                                .conversation
-                                                .backgroundUrl,
-                                          ),
-
-                                          if (_isLoading)
-                                            const Center(
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                valueColor:
-                                                    AlwaysStoppedAnimation<
-                                                      Color
-                                                    >(AppTheme.primaryColor),
-                                              ),
-                                            )
-                                          else if (_messages.isEmpty)
-                                            Center(
-                                              child: Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 14,
-                                                      vertical: 6,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color:
-                                                      (isDark
-                                                              ? Colors.black
-                                                              : Colors.white)
-                                                          .withValues(
-                                                            alpha: 0.7,
-                                                          ),
-                                                  borderRadius:
-                                                      BorderRadius.circular(10),
-                                                ),
-                                                child: Text(
-                                                  'No messages yet',
-                                                  style: TextStyle(
-                                                    fontSize: 13,
-                                                    color:
-                                                        AppTheme.secondaryText(
-                                                          isDark,
-                                                        ),
-                                                  ),
-                                                ),
-                                              ),
-                                            )
-                                          else
-                                            ListView.builder(
-                                              controller: _scrollController,
-                                              physics:
-                                                  const NeverScrollableScrollPhysics(),
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 12,
-                                                    vertical: 10,
-                                                  ),
-                                              itemCount: _messages.length,
-                                              itemBuilder: (context, index) =>
-                                                  _buildMessageBubble(
-                                                    context,
-                                                    _messages[index],
-                                                    isDark,
-                                                    previewWidth,
-                                                  ),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
+            Positioned(
+              top: top,
+              left: 0,
+              right: 0,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // PREVIEW CARD
+                  Center(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onVerticalDragUpdate: _onDragUpdate,
+                      onVerticalDragEnd: _onDragEnd,
+                      onTap: widget.onOpenChat,
+                      child: AnimatedBuilder(
+                        animation: Listenable.merge([_enter, _drag]),
+                        child: previewCard,
+                        builder: (_, child) {
+                          final t = Curves.easeOutBack.transform(_enter.value);
+                          final d = _drag.value;
+                          final shrink = (d.clamp(0.0, 600.0) / 900.0).clamp(0.0, 0.12);
+                          final scale = lerpDouble(0.35, 1.0, t)! * (1 - shrink);
+                          final off = Offset.lerp(fromOffset, Offset.zero, t)! +
+                              Offset(0, d);
+                          return Opacity(
+                            opacity: (_enter.value *
+                                    (1 - (d.clamp(0.0, 400.0) / 420.0)))
+                                .clamp(0.0, 1.0),
+                            child: Transform.translate(
+                              offset: off,
+                              child: Transform.scale(
+                                scale: scale,
+                                child: child,
                               ),
                             ),
-                          ),
-
-                          const SizedBox(height: 10),
-
-                          // Bottom Box: Frosted Glass Options Action Menu (Left Aligned)
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(20),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-                              child: Container(
-                                width: optionsWidth,
-                                decoration: BoxDecoration(
-                                  color: isDark
-                                      ? Colors.black.withValues(alpha: 0.45)
-                                      : Colors.white.withValues(alpha: 0.68),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: isDark
-                                        ? Colors.white.withValues(alpha: 0.15)
-                                        : Colors.white.withValues(alpha: 0.6),
-                                    width: 0.8,
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.18,
-                                      ),
-                                      blurRadius: 18,
-                                      offset: const Offset(0, 6),
-                                    ),
-                                  ],
-                                ),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    // 1. Mark as unread / read
-                                    _buildActionTile(
-                                      context: context,
-                                      isDark: isDark,
-                                      icon: widget.conversation.unreadCount > 0
-                                          ? CupertinoIcons.chat_bubble
-                                          : CupertinoIcons.chat_bubble_text,
-                                      label: widget.conversation.unreadCount > 0
-                                          ? 'Mark as read'
-                                          : 'Mark as unread',
-                                      onTap: () async {
-                                        Navigator.pop(context);
-                                        await LocalChatStorage.instance
-                                            .toggleUnreadConversation(
-                                              widget.conversation.id,
-                                            );
-                                      },
-                                    ),
-                                    _buildDivider(isDark),
-
-                                    // 2. Archive
-                                    _buildActionTile(
-                                      context: context,
-                                      isDark: isDark,
-                                      icon: CupertinoIcons.archivebox,
-                                      label: widget.conversation.isArchived
-                                          ? 'Unarchive'
-                                          : 'Archive',
-                                      onTap: () async {
-                                        Navigator.pop(context);
-                                        await LocalChatStorage.instance
-                                            .toggleArchiveConversation(
-                                              widget.conversation.id,
-                                            );
-                                      },
-                                    ),
-                                    _buildDivider(isDark),
-
-                                    // 3. Mute
-                                    _buildActionTile(
-                                      context: context,
-                                      isDark: isDark,
-                                      icon: widget.conversation.isMuted
-                                          ? CupertinoIcons.bell
-                                          : CupertinoIcons.bell_slash,
-                                      label: widget.conversation.isMuted
-                                          ? 'Unmute'
-                                          : 'Mute',
-                                      onTap: () async {
-                                        Navigator.pop(context);
-                                        await LocalChatStorage.instance
-                                            .toggleMuteConversation(
-                                              widget.conversation.id,
-                                            );
-                                      },
-                                    ),
-                                    _buildDivider(isDark),
-
-                                    // Hide / Show Profile
-                                    () {
-                                      final currentUserId = ServerApiService.instance.currentUserId;
-                                      final effectivePeerId = widget.conversation.peerUserId ??
-                                          (widget.conversation.isGroup ? null : int.tryParse(widget.conversation.id));
-                                      if (!widget.conversation.isGroup &&
-                                          effectivePeerId != null &&
-                                          effectivePeerId > 0 &&
-                                          effectivePeerId != currentUserId) {
-                                        return Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            _buildActionTile(
-                                              context: context,
-                                              isDark: isDark,
-                                              icon: widget.conversation.isProfileHidden
-                                                  ? CupertinoIcons.eye
-                                                  : CupertinoIcons.eye_slash,
-                                              label: widget.conversation.isProfileHidden
-                                                  ? 'Show My Profile'
-                                                  : 'Hide My Profile',
-                                              onTap: () async {
-                                                Navigator.pop(context);
-                                                final hide = !widget.conversation.isProfileHidden;
-                                                final success = await ServerChatManager.instance
-                                                    .toggleProfileVisibility(widget.conversation.id, effectivePeerId, hide);
-                                                if (mounted && success) {
-                                                  AppToast.show(
-                                                    hide ? 'Profile hidden from user' : 'Profile visible to user',
-                                                  );
-                                                }
-                                              },
-                                            ),
-                                            _buildDivider(isDark),
-                                          ],
-                                        );
-                                      }
-                                      return const SizedBox.shrink();
-                                    }(),
-
-                                    // 4. Lock / Unlock chat
-                                    _buildActionTile(
-                                      context: context,
-                                      isDark: isDark,
-                                      icon: widget.conversation.isLocked
-                                          ? CupertinoIcons.lock_open
-                                          : CupertinoIcons.lock,
-                                      label: widget.conversation.isLocked
-                                          ? 'Unlock chat'
-                                          : 'Lock chat',
-                                      onTap: () async {
-                                        Navigator.pop(context);
-                                        final isLocked = widget.conversation.isLocked;
-                                        final chatIdInt = int.tryParse(widget.conversation.id);
-                                        if (chatIdInt != null && chatIdInt > 0) {
-                                          final success = isLocked
-                                              ? await ServerChatManager.instance.unlockChat(chatIdInt)
-                                              : await ServerChatManager.instance.lockChat(chatIdInt);
-                                          if (success) {
-                                            AppToast.show(isLocked ? 'Chat unlocked' : 'Chat locked');
-                                          } else {
-                                            AppToast.show(
-                                              'Failed to ${isLocked ? "unlock" : "lock"} chat',
-                                              isError: true,
-                                            );
-                                          }
-                                        }
-                                      },
-                                    ),
-                                    _buildDivider(isDark),
-
-                                    // 5. Add to Favourites
-                                    _buildActionTile(
-                                      context: context,
-                                      isDark: isDark,
-                                      icon: CupertinoIcons.heart,
-                                      label: 'Add to Favourites',
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                      },
-                                    ),
-                                    _buildDivider(isDark),
-
-                                    // 6. Add to list
-                                    _buildActionTile(
-                                      context: context,
-                                      isDark: isDark,
-                                      icon: CupertinoIcons.person_crop_square,
-                                      label: 'Add to list',
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                      },
-                                    ),
-                                    _buildDivider(isDark),
-
-                                    // 7. Block / Delete
-                                    _buildActionTile(
-                                      context: context,
-                                      isDark: isDark,
-                                      icon: CupertinoIcons.trash,
-                                      label: 'Delete Chat',
-                                      isDestructive: true,
-                                      onTap: () async {
-                                        Navigator.pop(context);
-                                        final confirm = await showDialog<bool>(
-                                          context: context,
-                                          builder: (ctx) => AlertDialog(
-                                            title: const Text('Delete Chat'),
-                                            content: Text(
-                                              'Delete conversation with ${widget.conversation.name}?',
-                                            ),
-                                            actions: [
-                                              TextButton(
-                                                onPressed: () =>
-                                                    Navigator.pop(ctx, false),
-                                                child: const Text('Cancel'),
-                                              ),
-                                              TextButton(
-                                                onPressed: () =>
-                                                    Navigator.pop(ctx, true),
-                                                style: TextButton.styleFrom(
-                                                  foregroundColor:
-                                                      Colors.redAccent,
-                                                ),
-                                                child: const Text('Delete'),
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                        if (confirm == true) {
-                                          final chatId = int.tryParse(
-                                            widget.conversation.id,
-                                          );
-                                          if (chatId != null && chatId > 0) {
-                                            await ServerApiService.instance
-                                                .deleteChatREST(
-                                                  chatId,
-                                                  deleteChat: true,
-                                                );
-                                          }
-                                          await LocalChatStorage.instance
-                                              .deleteConversation(
-                                                widget.conversation.id,
-                                              );
-                                        }
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                          );
+                        },
                       ),
                     ),
                   ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+                  const SizedBox(height: 12),
 
-  Widget _buildActionTile({
-    required BuildContext context,
-    required bool isDark,
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-    bool isDestructive = false,
-  }) {
-    final textColor = isDestructive
-        ? Colors.redAccent
-        : AppTheme.primaryText(isDark);
-    final iconColor = isDestructive ? Colors.redAccent : textColor;
-
-    return InkWell(
-      onTap: onTap,
-      splashColor: isDestructive
-          ? Colors.red.withValues(alpha: 0.1)
-          : AppTheme.primaryColor.withValues(alpha: 0.08),
-      highlightColor: Colors.black.withValues(alpha: 0.05),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 8.5),
-        child: Row(
-          children: [
-            Icon(icon, size: 18, color: iconColor),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.w500,
-                  color: textColor,
-                ),
+                  // MENU: hides on drag, returns when stable
+                  Padding(
+                    padding: EdgeInsets.only(left: (size.width - previewW) / 2),
+                    child: AnimatedBuilder(
+                      animation: Listenable.merge([_enter, _drag]),
+                      child: menu,
+                      builder: (_, child) {
+                        final land = Curves.easeOut.transform(
+                          ((_enter.value - 0.45) / 0.55).clamp(0.0, 1.0),
+                        );
+                        final dragFade = (1 - _drag.value.abs() / 60.0).clamp(0.0, 1.0);
+                        final m = land * dragFade;
+                        return IgnorePointer(
+                          ignoring: m < 0.9,
+                          child: Opacity(
+                            opacity: m,
+                            child: Transform.translate(
+                              offset: Offset(0, _drag.value * 0.35 - (1 - m) * 12),
+                              child: Transform.scale(
+                                scale: 0.94 + 0.06 * m,
+                                alignment: Alignment.topLeft,
+                                child: child,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -830,14 +606,225 @@ class _ChatPeekPreviewDialogState extends State<ChatPeekPreviewDialog> {
       ),
     );
   }
+}
 
-  Widget _buildDivider(bool isDark) {
-    return Divider(
-      height: 0.5,
-      thickness: 0.5,
-      color: isDark
-          ? Colors.white.withValues(alpha: 0.1)
-          : Colors.black.withValues(alpha: 0.06),
+class _PeekBubble extends StatelessWidget {
+  const _PeekBubble({
+    required this.msg,
+    required this.isMe,
+    required this.isDark,
+    required this.showTail,
+    required this.maxW,
+    required this.chatId,
+    required this.time,
+    required this.imageBuilder,
+  });
+
+  final ChatMessage msg;
+  final bool isMe, isDark, showTail;
+  final double maxW;
+  final String chatId, time;
+  final Widget Function(ChatMessage) imageBuilder;
+
+  bool get _isLocation =>
+      msg.type == 'location' ||
+      msg.type == 'live_location' ||
+      msg.msgType == 'location' ||
+      msg.msgType == 'live_location' ||
+      (msg.content.trim().startsWith('{') &&
+          (msg.content.contains('"latitude"') ||
+              msg.content.contains('"location_id"')));
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isMe
+        ? AppPreferences.getChatBubbleColor(chatId: chatId)
+        : AppTheme.receivedBubble(isDark);
+    final fg = isMe ? Colors.white : (isDark ? Colors.white : Colors.black87);
+    final fg2 = isMe ? Colors.white70 : (isDark ? Colors.white54 : Colors.black45);
+    final tail = showTail ? 6.0 : 0.0;
+
+    Widget body;
+    if (_isLocation) {
+      final live = msg.msgType == 'live_location' ||
+          msg.type == 'live_location' ||
+          msg.content.contains('"is_live":true') ||
+          msg.content.contains('"isLive":true');
+      body = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            live ? Icons.sensors_rounded : Icons.location_on_rounded,
+            size: 18,
+            color: live ? const Color(0xFFFF9500) : const Color(0xFFEA4335),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            live ? 'Live location' : 'Location',
+            style: TextStyle(fontSize: 14.5, color: fg),
+          ),
+        ],
+      );
+    } else if (msg.type.toLowerCase().contains('image') ||
+        msg.type.toLowerCase() == 'photo' ||
+        (msg.mediaUrl != null &&
+            ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].any(
+              (ext) => msg.mediaUrl!.toLowerCase().contains('.$ext'),
+            ))) {
+      body = SizedBox(
+        width: maxW - 20,
+        height: 120,
+        child: imageBuilder(msg),
+      );
+    } else {
+      body = EmojiText(
+        msg.previewText.isNotEmpty ? msg.previewText : msg.content,
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 14.5, height: 1.22, color: fg),
+      );
+    }
+
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: showTail ? 8 : 2,
+          left: isMe ? 0 : (showTail ? 0 : 6),
+          right: isMe ? (showTail ? 0 : 6) : 0,
+        ),
+        child: CustomPaint(
+          painter: IMessageBubblePainter(
+            color: color,
+            isOutgoing: isMe,
+            showTail: showTail,
+          ),
+          child: Container(
+            constraints: BoxConstraints(maxWidth: maxW),
+            padding: EdgeInsets.fromLTRB(
+              10 + (isMe ? 0 : tail),
+              6,
+              10 + (isMe ? tail : 0),
+              5,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                body,
+                const SizedBox(height: 1),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(time, style: TextStyle(fontSize: 10, color: fg2)),
+                    if (isMe) ...[
+                      const SizedBox(width: 3),
+                      Icon(
+                        msg.isRead ? Icons.done_all : Icons.done,
+                        size: 12,
+                        color: fg2,
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuItem {
+  const _MenuItem(this.label, this.icon, this.onTap, {this.destructive = false});
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool destructive;
+}
+
+class _GlassMenu extends StatelessWidget {
+  const _GlassMenu({required this.items, required this.width});
+  final List<_MenuItem> items;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return SizedBox(
+      width: width,
+      child: GlassSurface(
+        radius: 20,
+        blur: 30,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < items.length; i++) ...[
+              _MenuRow(item: items[i]),
+              if (i < items.length - 1)
+                Divider(
+                  height: 0.5,
+                  thickness: 0.5,
+                  color: (dark ? Colors.white : Colors.black)
+                      .withValues(alpha: 0.10),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuRow extends StatefulWidget {
+  const _MenuRow({required this.item});
+  final _MenuItem item;
+  @override
+  State<_MenuRow> createState() => _MenuRowState();
+}
+
+class _MenuRowState extends State<_MenuRow> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final c = widget.item.destructive
+        ? const Color(0xFFFF453A)
+        : (dark ? Colors.white : Colors.black87);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _down = true),
+      onTapCancel: () => setState(() => _down = false),
+      onTapUp: (_) => setState(() => _down = false),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        widget.item.onTap();
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 90),
+        height: 46,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        color: _down
+            ? (dark ? Colors.white : Colors.black).withValues(alpha: 0.10)
+            : Colors.transparent,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                widget.item.label,
+                style: TextStyle(
+                  fontSize: 16,
+                  color: c,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ),
+            Icon(widget.item.icon, size: 19, color: c),
+          ],
+        ),
+      ),
     );
   }
 }

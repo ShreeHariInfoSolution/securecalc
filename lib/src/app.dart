@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'core/config/app_preferences.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/font_size_controller.dart';
 import 'core/theme/theme_controller.dart';
+import 'core/utils/keyboard_dismiss_observer.dart';
 import 'features/calculator/presentation/pages/calculator_page.dart';
 import 'features/chat/domain/services/call_service.dart';
 import 'features/chat/domain/services/push_service.dart';
@@ -26,50 +28,75 @@ class SynqChatApp extends StatefulWidget {
 }
 
 class _SynqChatAppState extends State<SynqChatApp> with WidgetsBindingObserver {
+  static const _securityChannel = MethodChannel('com.shis.securecalc/security');
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _securityChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onScreenshot') {
+        _handleScreenshotTaken();
+      }
+    });
+  }
+
+  void _handleScreenshotTaken() {
+    hideKeyboardNow();
+    _lockToCalculator();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (AppPreferences.isPickerActive || AppPreferences.isChangingSettings) {
-      return;
-    }
-
     if (state == AppLifecycleState.resumed) {
       unawaited(PushService.instance.clearBadge());
       if (ServerApiService.instance.authToken != null) {
         SocketChatService.instance.connect();
         unawaited(ServerChatManager.instance.syncChats());
       }
+      return;
     }
 
-    // Lock back to Calculator when app is minimized, sent to background, inactive, or in Recents App switcher.
-    // Preserves active call state in CallService & GlobalCallOverlay while locking secret routes.
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden) {
+    // Lock back to Calculator on inactive (Recents App Switcher / Swipe Up / Screen Lock), paused, or hidden.
+    // ALWAYS reset picker flags and lock to Calculator immediately to protect Recents snapshot buffer,
+    // UNLESS a call is currently active or ringing.
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      AppPreferences.isPickerActive = false;
+      if (CallService.instance.state != CallState.idle) {
+        return;
+      }
       _lockToCalculator();
+      return;
+    }
+
+    if (state == AppLifecycleState.inactive) {
+      if (CallService.instance.state != CallState.idle) {
+        return;
+      }
+      if (!AppPreferences.isChangingSettings) {
+        _lockToCalculator();
+      }
     }
   }
 
   void _lockToCalculator() {
-    CallService.instance.isCalculatorVisibleNotifier.value = true;
-    final nav = navigatorKey.currentState;
-    if (nav != null) {
-      nav.pushAndRemoveUntil(
-        PageRouteBuilder(
-          transitionDuration: Duration.zero,
-          reverseTransitionDuration: Duration.zero,
-          pageBuilder: (context, animation, secondaryAnimation) {
-            return const CalculatorPage();
-          },
-        ),
-        (route) => false,
-      );
-    }
+    hideKeyboardNow();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      CallService.instance.isCalculatorVisibleNotifier.value = true;
+      final nav = navigatorKey.currentState;
+      if (nav != null) {
+        nav.pushAndRemoveUntil(
+          PageRouteBuilder(
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (context, animation, secondaryAnimation) {
+              return const CalculatorPage();
+            },
+          ),
+          (route) => false,
+        );
+      }
+    });
   }
 
   @override
@@ -89,6 +116,7 @@ class _SynqChatAppState extends State<SynqChatApp> with WidgetsBindingObserver {
           builder: (context, themeMode, child) {
             return MaterialApp(
               navigatorKey: navigatorKey,
+              navigatorObservers: [KeyboardDismissObserver()],
               title: 'Calculator',
               debugShowCheckedModeBanner: false,
               theme: AppTheme.lightTheme,

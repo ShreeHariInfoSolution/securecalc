@@ -39,14 +39,19 @@
 	<string>This app requires Bluetooth access to connect, discover, and communicate with nearby secure devices.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>This app requires Bluetooth access to connect, discover, and communicate with nearby secure devices.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_dartobservatory._tcp</string>
+		<string>_dartvm._tcp</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>This app requires camera access to capture photos and videos for your private vault storage, update profile avatars, participate in video calls, and scan QR codes.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>This app requires access to the local network to discover and establish direct connections with nearby devices on the same Wi-Fi network.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>This app requires location permission to discover nearby devices via Bluetooth and local network for secure P2P messaging.</string>
+	<string>Your location is shared with people in a chat when you choose to send your current or live location.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>This app requires location permission to discover nearby devices via Bluetooth and local network for secure P2P messaging.</string>
+	<string>Your location is shared with people in a chat when you choose to send your current or live location.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app requires microphone access to record voice messages in chat conversations and participate in voice and video calls.</string>
 	<key>NSMotionUsageDescription</key>
@@ -88,6 +93,7 @@
 	<array>
 		<string>audio</string>
 		<string>fetch</string>
+		<string>location</string>
 		<string>remote-notification</string>
 		<string>voip</string>
 	</array>

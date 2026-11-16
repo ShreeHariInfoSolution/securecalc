@@ -352,6 +352,10 @@ class _VaultEdgePanelWrapperState extends State<VaultEdgePanelWrapper>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.isDuressMode) {
+      return widget.child;
+    }
+
     return ValueListenableBuilder<bool>(
       valueListenable: AppPreferences.edgePanelEnabledNotifier,
       builder: (context, isEnabled, _) {

@@ -2,7 +2,7 @@ name: securecalc
 description: "A secure and private calculator application."
 publish_to: 'none'
 
-version: 1.0.4+5
+version: 1.0.0+28
 
 environment:
   sdk: '>=3.13.2 <4.0.0'
@@ -44,6 +44,18 @@ dependencies:
   flutter_webrtc: ^1.6.2+hotfix.4
   flutter_callkit_incoming: ^2.1.0
   live_activities: ^2.3.0
+  camera: ^0.12.2
+  flutter_image_compress: ^2.5.1
+  video_compress: ^3.1.4
+  pdfx: ^2.7.0
+  device_info_plus: ^13.3.0
+  geolocator: ^14.1.2
+  flutter_map: ^8.3.2
+  flutter_map_animations: ^0.11.0
+  apple_maps_flutter: ^1.4.0
+  latlong2: ^0.10.1
+  video_thumbnail: ^0.5.3
+  ffmpeg_kit_flutter_new: ^3.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
